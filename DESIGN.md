@@ -1,6 +1,6 @@
 # Fovea design system
 
-This document is the source of truth for Fovea's visual language and renderer UI contracts. It defines foundations only: Phase 2 does not import these styles into an existing renderer, implement React primitives, or redesign a screen.
+This document is the source of truth for Fovea's visual language and renderer UI contracts. Issue #13 establishes the foundations, shared primitives, renderer proof, and enforcement described here without redesigning a screen.
 
 ## Product character
 
@@ -25,11 +25,11 @@ No renderer should introduce a parallel colour scheme, radius scale, shadow fami
 
 Issue #13 has three deliberately separate outcomes:
 
-1. **Create the system:** tokens, foundations, component contracts, accessibility rules, glass/fallback behaviour, and enforcement. Phase 2 creates the tokens, foundations, and this document.
-2. **Prove the system:** later phases implement shared primitives and minimally migrate the existing Settings, capture overlay, and question/conversation renderers without changing their flows or layout concepts.
+1. **Create the system:** tokens, foundations, component contracts, accessibility rules, glass/fallback behaviour, and enforcement. Phases 2, 3, and 5 provide these foundations.
+2. **Prove the system:** Phase 4 minimally migrates the existing Settings, capture overlay, and question/conversation renderers without changing their flows or layout concepts.
 3. **Redesign screens:** later issues may reconsider information architecture, rounded-window infrastructure, layouts, or interaction design. Those changes do not belong to Issue #13.
 
-The present CSS is intentionally not imported by renderer entries until the proof/migration phase.
+All three renderer entries import the shared CSS before their renderer-owned layout styles. The proof migration is complete; renderer redesign remains deferred.
 
 ## Three-tier token architecture
 
@@ -260,9 +260,7 @@ Phase 2 documents these contracts; Phase 3 implements them. Native elements and 
 
 ## Primitive delivery scope
 
-No primitive is implemented in Phase 2.
-
-Planned for Phase 3 within Issue #13:
+Implemented in Phase 3 and proven in Phase 4:
 
 - Button, IconButton, TextInput, TextArea, Select, Switch
 - Card, GlassPanel
@@ -336,16 +334,22 @@ No animated gradient, animated noise, parallax, pulsing glow, or decorative cont
 - Avoid promoting every surface to its own compositor layer. Transform and `will-change` are temporary interaction tools, not default surface properties.
 - Never trade readable solid fallback surfaces for visual transparency.
 
-## Visual-literal policy
+## Visual-literal policy and enforcement
 
-Until the Phase 5 validator lands, review enforces these rules:
+`npm run lint:design` runs the zero-dependency renderer validator directly. The normal `npm run lint` command runs ESLint and then this validator, so design enforcement is mandatory rather than an optional review step.
 
-- Literal colours, semantic shadows/glows, radii, and motion timings live only in `tokens.css` or `theme-*.css` as appropriate.
+The validator enforces these rules:
+
+- Renderer literal colours, semantic shadows/glows, radii, and motion timings live only in `tokens.css` or `theme-*.css` as appropriate. The separately documented main-process startup canvas constant is the sole cross-language pairing.
 - Component and renderer CSS use Tier 2 semantic tokens. They may not use `--fovea-ref-*`.
 - TS/TSX must not carry visual colour, radius, shadow, animation, or transition literals. Dynamic layout geometry such as capture coordinates is allowed.
 - CSS-wide/system values such as `transparent`, `currentColor`, `inherit`, `Canvas`, `CanvasText`, `Highlight`, and `HighlightText` are allowed where semantically correct.
-- An unavoidable exception requires an immediately preceding `fovea-design-allow: <specific reason>` comment. Phase 5's validator will report every exception; broad directory/file exemptions are not allowed.
+- An unavoidable exception requires an immediately preceding `fovea-design-allow: <specific reason>` comment. CSS uses `/* fovea-design-allow: specific reason */`; TS/TSX may use that form or `// fovea-design-allow: specific reason`. Every accepted exception is printed by `lint:design`; broad directory/file exemptions are not allowed.
 - A new token requires documentation, a semantic use case, and applicable contrast evidence. Do not add aliases merely to make a local literal pass review.
+
+The validator is intentionally declaration-oriented rather than a full CSS or TypeScript parser. It checks direct CSS declarations, renderer TS/TSX colour strings, and literal values in inline `style={{ ... }}` blocks. It does not evaluate visual values assembled dynamically in arbitrary runtime objects; those remain a code-review boundary. The reduced-motion foundation's existing 0–1 ms near-zero declarations are the only contextual timing allowance outside `tokens.css`.
+
+No Windows 10 paint profiling was available during Issue #13. The 60 Hz capture-drag and long-transcript budgets remain explicit manual acceptance targets rather than measured passes.
 
 ## File and import contract
 
@@ -354,5 +358,6 @@ Until the Phase 5 validator lands, review enforces these rules:
 1. `styles/tokens.css`
 2. `styles/theme-dark.css`
 3. `styles/foundations.css`
+4. `styles/components.css`
 
-Phase 3 adds `styles/components.css` last. Phase 4 imports `index.css` once in each renderer entry before that renderer's local layout CSS. The design system never imports a renderer stylesheet.
+Each renderer imports `index.css` once before its local layout CSS. The design system never imports a renderer stylesheet.

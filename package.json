@@ -12,7 +12,8 @@
     "sidecar:smoke": "node scripts/smoke-codex-sidecar.mjs",
     "dev": "electron-vite dev",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint . --max-warnings=0",
+    "lint": "eslint . --max-warnings=0 && npm run lint:design",
+    "lint:design": "node scripts/validate-design-tokens.mjs",
     "test": "vitest run",
     "build": "electron-vite build",
     "package:win": "npm run build && electron-builder --win nsis"
