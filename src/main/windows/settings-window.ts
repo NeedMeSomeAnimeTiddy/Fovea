@@ -1,4 +1,5 @@
 import { BrowserWindow } from 'electron'
+import { WINDOW_BACKGROUND_COLOR } from './window-appearance'
 import { loadRenderer, secureWindow } from './window-factory'
 
 let settingsWindow: BrowserWindow | null = null
@@ -15,7 +16,7 @@ export async function showSettingsWindow(): Promise<BrowserWindow> {
     minWidth: 560,
     minHeight: 640,
     show: false,
-    backgroundColor: '#111318',
+    backgroundColor: WINDOW_BACKGROUND_COLOR,
     title: 'SnipChat Settings',
     autoHideMenuBar: true
   })

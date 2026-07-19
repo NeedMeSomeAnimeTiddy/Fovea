@@ -5,6 +5,7 @@ import type { QuestionViewState } from '@shared/contracts/ipc'
 import type { CompletedCapture } from '../capture/capture-service'
 import type { TempScreenshotStore } from '../storage/temp-screenshot-store'
 import type { CodexAppServerProvider } from '../providers/codex-app-server/codex-app-server-provider'
+import { WINDOW_BACKGROUND_COLOR } from './window-appearance'
 import { loadRenderer, secureWindow } from './window-factory'
 
 interface QuestionSession {
@@ -56,7 +57,7 @@ export class QuestionSessions {
       alwaysOnTop: true,
       skipTaskbar: false,
       show: false,
-      backgroundColor: '#111318',
+      backgroundColor: WINDOW_BACKGROUND_COLOR,
       title: 'SnipChat'
     })
     const session: QuestionSession = {

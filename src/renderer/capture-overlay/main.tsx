@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import type { Point, Rectangle } from '@shared/types/geometry'
+import { Button } from '../design-system'
+import '../design-system/index.css'
 import './overlay.css'
 
 function normalizeRectangle(start: Point, end: Point): Rectangle {
@@ -80,9 +82,9 @@ function Overlay(): React.JSX.Element {
       }}
     >
       {!rectangle && <div className="hint">{hint}</div>}
-      <button className="cancel" type="button" onPointerDown={(event) => event.stopPropagation()} onClick={cancel}>
+      <Button className="cancel" variant="secondary" onPointerDown={(event) => event.stopPropagation()} onClick={cancel}>
         Cancel · Esc
-      </button>
+      </Button>
       {rectangle && (
         <div className="selection" style={{ left: rectangle.x, top: rectangle.y, width: rectangle.width, height: rectangle.height }}>
           <span>{Math.round(rectangle.width)} × {Math.round(rectangle.height)}</span>
