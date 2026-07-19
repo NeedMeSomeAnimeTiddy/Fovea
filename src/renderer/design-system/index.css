@@ -1,0 +1,5 @@
+/* Fovea design-system foundation entrypoint.
+ * Renderer entries begin importing this in Phase 4. Keep this order stable. */
+@import './styles/tokens.css';
+@import './styles/theme-dark.css';
+@import './styles/foundations.css';

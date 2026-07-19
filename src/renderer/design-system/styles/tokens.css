@@ -1,0 +1,133 @@
+/*
+ * Tier 1: private reference values. Only this file and theme files may use
+ * --fovea-ref-* names. Renderer and component CSS consume semantic tokens.
+ *
+ * This file also owns theme-invariant public scales: typography, spacing,
+ * sizing, radii, border widths, motion, and layer order.
+ */
+
+:root {
+  /* Reference palette: neutral */
+  --fovea-ref-neutral-0: #ffffff;
+  --fovea-ref-neutral-50: #f3f6fb;
+  --fovea-ref-neutral-200: #cad2de;
+  --fovea-ref-neutral-300: #98a3b3;
+  --fovea-ref-neutral-400: #8591a2;
+  --fovea-ref-neutral-600: #495363;
+  --fovea-ref-neutral-700: #2a303b;
+  --fovea-ref-neutral-800: #181d26;
+  --fovea-ref-neutral-900: #0f131a;
+  --fovea-ref-neutral-950: #090b10;
+  --fovea-ref-neutral-1000: #05070a;
+
+  /* Reference palette: restrained accents */
+  --fovea-ref-cyan-200: #a9edfb;
+  --fovea-ref-cyan-300: #67d9f5;
+  --fovea-ref-cyan-400: #43c5e7;
+  --fovea-ref-cyan-600: #217c95;
+  --fovea-ref-cyan-800: #123e4c;
+
+  --fovea-ref-violet-200: #d5ceff;
+  --fovea-ref-violet-300: #aa9cff;
+  --fovea-ref-violet-500: #7c6ee6;
+  --fovea-ref-violet-800: #312867;
+
+  /* Reference palette: semantic states */
+  --fovea-ref-green-300: #7edca3;
+  --fovea-ref-green-700: #236a45;
+  --fovea-ref-green-900: #102a1f;
+
+  --fovea-ref-amber-300: #f3c677;
+  --fovea-ref-amber-700: #775113;
+  --fovea-ref-amber-900: #2a1d09;
+
+  --fovea-ref-red-300: #ff8f9b;
+  --fovea-ref-red-600: #c94d61;
+  --fovea-ref-red-800: #6f2635;
+  --fovea-ref-red-900: #35141c;
+
+  --fovea-ref-blue-300: #77c8ff;
+  --fovea-ref-blue-700: #276d9f;
+  --fovea-ref-blue-900: #0b2236;
+
+  /* Typography */
+  --fovea-font-ui: 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
+  --fovea-font-mono: 'Cascadia Mono', Consolas, monospace;
+
+  --fovea-type-caption: 0.6875rem;
+  --fovea-type-label: 0.75rem;
+  --fovea-type-body-sm: 0.8125rem;
+  --fovea-type-body: 0.875rem;
+  --fovea-type-title-sm: 1rem;
+  --fovea-type-title: 1.25rem;
+  --fovea-type-display: 1.75rem;
+
+  --fovea-leading-tight: 1.2;
+  --fovea-leading-ui: 1.35;
+  --fovea-leading-body: 1.55;
+
+  --fovea-weight-regular: 400;
+  --fovea-weight-medium: 500;
+  --fovea-weight-semibold: 600;
+  --fovea-weight-bold: 700;
+
+  --fovea-tracking-label: 0.02em;
+  --fovea-tracking-eyebrow: 0.12em;
+
+  /* Spacing */
+  --fovea-space-0: 0;
+  --fovea-space-1: 0.125rem;
+  --fovea-space-2: 0.25rem;
+  --fovea-space-3: 0.375rem;
+  --fovea-space-4: 0.5rem;
+  --fovea-space-6: 0.75rem;
+  --fovea-space-8: 1rem;
+  --fovea-space-10: 1.25rem;
+  --fovea-space-12: 1.5rem;
+  --fovea-space-16: 2rem;
+  --fovea-space-20: 2.5rem;
+
+  /* Interactive target sizes */
+  --fovea-control-target-minimum: 1.5rem;
+  --fovea-control-target-compact: 2rem;
+  --fovea-control-target-default: 2.25rem;
+  --fovea-control-target-icon: 2.25rem;
+
+  /* Radii */
+  --fovea-radius-xs: 0.375rem;
+  --fovea-radius-sm: 0.5rem;
+  --fovea-radius-md: 0.75rem;
+  --fovea-radius-lg: 1rem;
+  --fovea-radius-xl: 1.25rem;
+  --fovea-radius-round: 999px;
+
+  /* Border dimensions */
+  --fovea-border-width: 1px;
+  --fovea-border-width-strong: 2px;
+  --fovea-border-style: solid;
+
+  /* Motion */
+  --fovea-motion-instant: 120ms;
+  --fovea-motion-fast: 160ms;
+  --fovea-motion-standard: 200ms;
+  --fovea-motion-deliberate: 240ms;
+
+  --fovea-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --fovea-ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
+  --fovea-ease-exit: cubic-bezier(0.4, 0, 1, 1);
+
+  /* Focus geometry */
+  --fovea-focus-width: 2px;
+  --fovea-focus-offset: 2px;
+
+  /* Disabled and loading behaviour */
+  --fovea-disabled-opacity: 0.48;
+  --fovea-loading-opacity: 0.72;
+  --fovea-cursor-disabled: not-allowed;
+
+  /* Layer order. Elevation shadows are theme-owned. */
+  --fovea-z-content: 0;
+  --fovea-z-chrome: 100;
+  --fovea-z-overlay: 1000;
+  --fovea-z-tooltip: 1100;
+}
