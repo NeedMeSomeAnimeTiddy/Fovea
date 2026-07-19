@@ -1,5 +1,5 @@
-import { app, ipcMain, shell } from 'electron'
-import { IPC, type SettingsViewState } from '@shared/contracts/ipc'
+import { app, BrowserWindow, ipcMain, shell, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron'
+import { IPC, isWindowResizeEdge, type SettingsViewState } from '@shared/contracts/ipc'
 import type { Rectangle } from '@shared/types/geometry'
 import type { VisionModel } from '@shared/types/provider'
 import type { CaptureService } from '../capture/capture-service'
@@ -8,6 +8,11 @@ import type { SettingsStore } from '../storage/settings-store'
 import type { TempScreenshotStore } from '../storage/temp-screenshot-store'
 import type { QuestionSessions } from '../windows/question-sessions'
 import { getSettingsWindow } from '../windows/settings-window'
+import {
+  resolveWindowChromeController,
+  type WindowChromeController,
+  type WindowChromeIpcEvent
+} from '../windows/window-chrome'
 
 export interface IpcDependencies {
   provider: CodexAppServerProvider
@@ -105,12 +110,59 @@ export function registerIpc(dependencies: IpcDependencies): void {
   ipcMain.handle(IPC.questionNewSnip, (_event, sessionId: unknown) =>
     dependencies.questions.newSnip(requireSessionId(sessionId))
   )
+
+  ipcMain.handle(IPC.windowChromeGetState, (event) => requireWindowChromeController(event).getState())
+  ipcMain.on(IPC.windowChromeReady, (event) => {
+    getWindowChromeController(event)?.markRendererReady()
+  })
+  ipcMain.handle(IPC.windowChromeMinimize, (event) => {
+    requireWindowChromeController(event).minimizeWindow()
+  })
+  ipcMain.handle(IPC.windowChromeToggleMaximize, (event) => {
+    requireWindowChromeController(event).toggleMaximize()
+  })
+  ipcMain.handle(IPC.windowChromeClose, (event) => {
+    requireWindowChromeController(event).closeWindow()
+  })
+  ipcMain.handle(IPC.windowChromeBeginResize, (event, edge: unknown) => {
+    if (!isWindowResizeEdge(edge)) throw new Error('Invalid window resize edge.')
+    requireWindowChromeController(event).beginResize(edge)
+  })
+  ipcMain.on(IPC.windowChromeUpdateResize, (event) => {
+    getWindowChromeController(event)?.updateResize()
+  })
+  ipcMain.on(IPC.windowChromeEndResize, (event) => {
+    getWindowChromeController(event)?.endResize()
+  })
+
   ipcMain.handle(IPC.externalOpen, async (_event, urlValue: unknown) => {
     if (typeof urlValue !== 'string') throw new Error('Invalid link.')
     const url = new URL(urlValue)
     if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new Error('Only web links can be opened.')
     await shell.openExternal(url.toString())
   })
+}
+
+function requireWindowChromeController(event: IpcMainInvokeEvent | IpcMainEvent): WindowChromeController {
+  const controller = resolveWindowChromeController(event as WindowChromeIpcEvent)
+  const target = BrowserWindow.fromWebContents(event.sender)
+  if (
+    !target ||
+    target.isDestroyed() ||
+    target.id !== controller.windowId ||
+    target.webContents.id !== controller.webContentsId
+  ) {
+    throw new Error('Window chrome is unavailable for this sender.')
+  }
+  return controller
+}
+
+function getWindowChromeController(event: IpcMainEvent): WindowChromeController | null {
+  try {
+    return requireWindowChromeController(event)
+  } catch {
+    return null
+  }
 }
 
 function requireSessionId(value: unknown): string {

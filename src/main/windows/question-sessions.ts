@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto'
-import { BrowserWindow, nativeImage } from 'electron'
+import { BrowserWindow, nativeImage, screen } from 'electron'
 import type { ProviderEvent } from '@shared/types/provider'
 import type { QuestionViewState } from '@shared/contracts/ipc'
 import type { CompletedCapture } from '../capture/capture-service'
 import type { TempScreenshotStore } from '../storage/temp-screenshot-store'
 import type { CodexAppServerProvider } from '../providers/codex-app-server/codex-app-server-provider'
 import { WINDOW_BACKGROUND_COLOR } from './window-appearance'
+import { registerBrowserWindowChrome } from './window-chrome'
 import { loadRenderer, secureWindow } from './window-factory'
 
 interface QuestionSession {
@@ -59,6 +60,13 @@ export class QuestionSessions {
       show: false,
       backgroundColor: WINDOW_BACKGROUND_COLOR,
       title: 'SnipChat'
+    })
+    registerBrowserWindowChrome(window, screen, {
+      kind: 'question',
+      material: 'solid',
+      surfaceSize: { width, height },
+      minimumSurfaceSize: { width: 400, height: 480 },
+      fallbackRetryEligible: false
     })
     const session: QuestionSession = {
       id,

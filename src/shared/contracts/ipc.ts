@@ -19,8 +19,44 @@ export const IPC = {
   questionClose: 'question:close',
   questionNewSnip: 'question:new-snip',
   questionEvent: 'question:event',
+  windowChromeGetState: 'window-chrome:get-state',
+  windowChromeReady: 'window-chrome:ready',
+  windowChromeMinimize: 'window-chrome:minimize',
+  windowChromeToggleMaximize: 'window-chrome:toggle-maximize',
+  windowChromeClose: 'window-chrome:close',
+  windowChromeBeginResize: 'window-chrome:begin-resize',
+  windowChromeUpdateResize: 'window-chrome:update-resize',
+  windowChromeEndResize: 'window-chrome:end-resize',
+  windowChromeStateChanged: 'window-chrome:state-changed',
   externalOpen: 'external:open'
 } as const
+
+export const WINDOW_RESIZE_EDGES = [
+  'top',
+  'right',
+  'bottom',
+  'left',
+  'top-left',
+  'top-right',
+  'bottom-right',
+  'bottom-left'
+] as const
+
+export type WindowResizeEdge = (typeof WINDOW_RESIZE_EDGES)[number]
+export type WindowMaterial = 'transparent' | 'solid'
+
+export interface WindowChromeState {
+  focused: boolean
+  maximized: boolean
+  material: WindowMaterial
+  canMinimize: boolean
+  canMaximize: boolean
+  canResize: boolean
+}
+
+export function isWindowResizeEdge(value: unknown): value is WindowResizeEdge {
+  return typeof value === 'string' && WINDOW_RESIZE_EDGES.some((edge) => edge === value)
+}
 
 export interface SettingsViewState {
   provider: ProviderStatus
@@ -66,6 +102,17 @@ export interface SnipChatApi {
     close(sessionId: string): Promise<void>
     newSnip(sessionId: string): Promise<void>
     onEvent(callback: (sessionId: string, event: ProviderEvent) => void): () => void
+  }
+  windowChrome: {
+    getState(): Promise<WindowChromeState>
+    ready(): void
+    minimize(): Promise<void>
+    toggleMaximize(): Promise<void>
+    close(): Promise<void>
+    beginResize(edge: WindowResizeEdge): Promise<void>
+    updateResize(): void
+    endResize(): void
+    onStateChanged(callback: (state: WindowChromeState) => void): () => void
   }
   openExternal(url: string): Promise<void>
 }

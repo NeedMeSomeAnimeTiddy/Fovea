@@ -1,5 +1,10 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import { IPC, type SettingsViewState, type SnipChatApi } from '@shared/contracts/ipc'
+import {
+  IPC,
+  type SettingsViewState,
+  type SnipChatApi,
+  type WindowChromeState
+} from '@shared/contracts/ipc'
 import type { ProviderEvent } from '@shared/types/provider'
 
 const api: SnipChatApi = {
@@ -33,6 +38,26 @@ const api: SnipChatApi = {
         callback(sessionId, providerEvent)
       ipcRenderer.on(IPC.questionEvent, listener)
       return () => ipcRenderer.removeListener(IPC.questionEvent, listener)
+    }
+  },
+  windowChrome: {
+    getState: () => ipcRenderer.invoke(IPC.windowChromeGetState),
+    ready: () => ipcRenderer.send(IPC.windowChromeReady),
+    minimize: () => ipcRenderer.invoke(IPC.windowChromeMinimize),
+    toggleMaximize: () => ipcRenderer.invoke(IPC.windowChromeToggleMaximize),
+    close: () => ipcRenderer.invoke(IPC.windowChromeClose),
+    beginResize: (edge) => ipcRenderer.invoke(IPC.windowChromeBeginResize, edge),
+    updateResize: () => ipcRenderer.send(IPC.windowChromeUpdateResize),
+    endResize: () => ipcRenderer.send(IPC.windowChromeEndResize),
+    onStateChanged: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, state: WindowChromeState): void => callback({ ...state })
+      ipcRenderer.on(IPC.windowChromeStateChanged, listener)
+      let subscribed = true
+      return () => {
+        if (!subscribed) return
+        subscribed = false
+        ipcRenderer.removeListener(IPC.windowChromeStateChanged, listener)
+      }
     }
   },
   openExternal: (url) => ipcRenderer.invoke(IPC.externalOpen, url)
