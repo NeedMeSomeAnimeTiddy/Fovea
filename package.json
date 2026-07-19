@@ -1,0 +1,71 @@
+{
+  "name": "snipchat",
+  "version": "0.1.0",
+  "description": "Windows-first screenshot question assistant powered by the Codex App Server",
+  "author": "SnipChat contributors",
+  "main": "out/main/app.js",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "postinstall": "node scripts/fetch-codex-sidecar.mjs && electron-builder install-app-deps",
+    "sidecar:fetch": "node scripts/fetch-codex-sidecar.mjs",
+    "sidecar:smoke": "node scripts/smoke-codex-sidecar.mjs",
+    "dev": "electron-vite dev",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint . --max-warnings=0",
+    "test": "vitest run",
+    "build": "electron-vite build",
+    "package:win": "npm run build && electron-builder --win nsis"
+  },
+  "dependencies": {
+    "react": "19.1.1",
+    "react-dom": "19.1.1",
+    "react-markdown": "10.1.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.35.0",
+    "@types/node": "22.18.3",
+    "@types/react": "19.1.13",
+    "@types/react-dom": "19.1.9",
+    "@vitejs/plugin-react": "5.0.2",
+    "electron": "37.4.0",
+    "electron-builder": "26.0.12",
+    "electron-vite": "4.0.0",
+    "eslint": "9.35.0",
+    "eslint-plugin-react-hooks": "5.2.0",
+    "typescript": "5.9.2",
+    "typescript-eslint": "8.43.0",
+    "vite": "7.1.5",
+    "vitest": "3.2.4"
+  },
+  "build": {
+    "appId": "com.snipchat.prototype",
+    "productName": "SnipChat",
+    "asar": true,
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/sidecar",
+        "to": "sidecar",
+        "filter": ["codex.exe"]
+      },
+      {
+        "from": "resources/licences",
+        "to": "licences"
+      }
+    ],
+    "win": {
+      "target": ["nsis"],
+      "signAndEditExecutable": false,
+      "artifactName": "SnipChat-${version}-Setup.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false
+    }
+  }
+}

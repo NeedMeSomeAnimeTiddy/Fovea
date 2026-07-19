@@ -1,0 +1,10 @@
+* { box-sizing: border-box; user-select: none; }
+html,body,#root,.overlay { width: 100%; height: 100%; margin: 0; overflow: hidden; cursor: crosshair; touch-action: none; }
+.overlay { position: relative; background: rgba(4,8,14,.38); font-family: "Segoe UI",sans-serif; -webkit-app-region: no-drag; pointer-events: auto; }
+.overlay.selecting { background: transparent; }
+.selection { position: absolute; border: 2px solid #7c9cff; background: rgba(110,145,255,.08); box-shadow: 0 0 0 99999px rgba(4,8,14,.42); }
+.selection span,.hint { color: white; background: rgba(13,17,24,.9); border: 1px solid rgba(255,255,255,.15); border-radius: 7px; padding: 7px 9px; font-size: 12px; box-shadow: 0 4px 15px rgba(0,0,0,.25); }
+.selection span { position: absolute; top: -35px; left: -2px; white-space: nowrap; }
+.hint { position: absolute; left: 50%; top: 30px; transform: translateX(-50%); }
+.cancel { position: absolute; top: 22px; right: 22px; z-index: 2; border: 1px solid rgba(255,255,255,.42); border-radius: 7px; padding: 8px 11px; color: #fff; background: rgba(5,8,16,.8); font: 600 13px/1 system-ui,sans-serif; cursor: pointer; }
+.cancel:hover,.cancel:focus-visible { background: rgba(36,89,255,.9); outline: none; }
