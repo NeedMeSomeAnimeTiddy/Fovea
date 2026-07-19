@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { WINDOW_RESIZE_EDGES, type WindowResizeEdge } from '../src/shared/contracts/ipc'
 import type { Point, Rectangle } from '../src/shared/types/geometry'
-import { getWindowAppearanceSizes, WINDOW_SURFACE_INSET } from '../src/main/windows/window-appearance'
+import {
+  getWindowAppearanceOptions,
+  getWindowAppearanceSizes,
+  selectWindowMaterial,
+  WINDOW_SURFACE_INSET
+} from '../src/main/windows/window-appearance'
 import {
   containsPoint,
   createResizeSession,
@@ -50,6 +55,54 @@ describe('window appearance geometry', () => {
         { x: 0, y: 0, width: 800, height: 700 }
       )
     ).toEqual({ size: { width: 450, height: 350 }, minimumSize: { width: 450, height: 350 } })
+  })
+
+  it('builds distinct transparent and solid native option sets', () => {
+    const transparent = getWindowAppearanceOptions(settingsSizes, 'transparent')
+    const solid = getWindowAppearanceOptions(settingsSizes, 'solid')
+
+    expect(transparent).toMatchObject({
+      size: { width: 674, height: 784 },
+      minimumSize: { width: 584, height: 664 },
+      frame: false,
+      transparent: true,
+      backgroundColor: '#00000000',
+      show: false,
+      useContentSize: true,
+      hasShadow: false,
+      resizable: false,
+      maximizable: false,
+      minimizable: true,
+      closable: true,
+      movable: true,
+      fullscreenable: false,
+      thickFrame: false,
+      roundedCorners: false
+    })
+    expect(solid).toMatchObject({
+      size: { width: 650, height: 760 },
+      minimumSize: { width: 560, height: 640 },
+      frame: false,
+      transparent: false,
+      backgroundColor: '#090b10',
+      hasShadow: true,
+      resizable: true,
+      maximizable: true,
+      thickFrame: true
+    })
+  })
+
+  it('selects the support switch and development-only environment fallback', () => {
+    expect(selectWindowMaterial({ argv: [], environment: { NODE_ENV: 'production' } })).toBe('transparent')
+    expect(
+      selectWindowMaterial({ argv: ['--disable-transparent-windows'], environment: { NODE_ENV: 'production' } })
+    ).toBe('solid')
+    expect(
+      selectWindowMaterial({ argv: [], environment: { NODE_ENV: 'development', FOVEA_DISABLE_TRANSPARENT_WINDOWS: '1' } })
+    ).toBe('solid')
+    expect(
+      selectWindowMaterial({ argv: [], environment: { NODE_ENV: 'production', FOVEA_DISABLE_TRANSPARENT_WINDOWS: '1' } })
+    ).toBe('transparent')
   })
 })
 

@@ -19,6 +19,29 @@ export interface WindowAppearanceSizes extends FittedWindowSizes {
   inset: number
 }
 
+export interface WindowAppearanceOptions extends WindowAppearanceSizes {
+  frame: false
+  transparent: boolean
+  backgroundColor: string
+  show: false
+  useContentSize: true
+  hasShadow: boolean
+  resizable: boolean
+  maximizable: boolean
+  minimizable: true
+  closable: true
+  movable: true
+  fullscreenable: false
+  thickFrame: boolean
+  roundedCorners: false
+}
+
+export interface WindowMaterialSelectionOptions {
+  disableTransparentWindows?: boolean
+  argv?: readonly string[]
+  environment?: Readonly<Record<string, string | undefined>>
+}
+
 export function getWindowAppearanceSizes(
   sizes: WindowSurfaceSizes,
   material: WindowMaterial,
@@ -30,4 +53,47 @@ export function getWindowAppearanceSizes(
   const fitted = workArea ? fitWindowSizesToWorkArea(size, minimumSize, workArea) : { size, minimumSize }
 
   return { ...fitted, material, inset }
+}
+
+export function getWindowAppearanceOptions(
+  sizes: WindowSurfaceSizes,
+  material: WindowMaterial,
+  workArea?: Rectangle
+): WindowAppearanceOptions {
+  const appearance = getWindowAppearanceSizes(sizes, material, workArea)
+  const solid = material === 'solid'
+
+  return {
+    ...appearance,
+    frame: false,
+    transparent: !solid,
+    backgroundColor: solid ? WINDOW_BACKGROUND_COLOR : WINDOW_TRANSPARENT_BACKGROUND_COLOR,
+    show: false,
+    useContentSize: true,
+    hasShadow: solid,
+    resizable: solid,
+    maximizable: solid,
+    minimizable: true,
+    closable: true,
+    movable: true,
+    fullscreenable: false,
+    thickFrame: solid,
+    roundedCorners: false
+  }
+}
+
+export function selectWindowMaterial({
+  disableTransparentWindows = false,
+  argv = process.argv,
+  environment = process.env
+}: WindowMaterialSelectionOptions = {}): WindowMaterial {
+  const commandLineDisabled =
+    disableTransparentWindows || argv.some((argument) => argument === '--disable-transparent-windows')
+  const development = !environment.NODE_ENV || environment.NODE_ENV === 'development'
+  const environmentDisabled = development && isEnabledOverride(environment.FOVEA_DISABLE_TRANSPARENT_WINDOWS)
+  return commandLineDisabled || environmentDisabled ? 'solid' : 'transparent'
+}
+
+function isEnabledOverride(value: string | undefined): boolean {
+  return value === '1' || value?.toLowerCase() === 'true'
 }

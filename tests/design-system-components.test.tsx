@@ -15,6 +15,7 @@ import {
   TextInput,
   WindowControls
 } from '../src/renderer/design-system'
+import { WindowFrame } from '../src/renderer/window-chrome/WindowFrame'
 
 describe('Fovea design-system components', () => {
   it('renders actions as native buttons with stable loading semantics', () => {
@@ -151,5 +152,42 @@ describe('Fovea design-system components', () => {
     expect(markup).toContain('aria-hidden="true"')
     expect(markup).toContain('focusable="false"')
     expect(markup).toContain('stroke="currentColor"')
+  })
+
+  it('renders labelled minimize, maximize, restore, and close actions', () => {
+    const floating = renderToStaticMarkup(
+      <WindowControls onClose={vi.fn()} onMaximize={vi.fn()} onMinimize={vi.fn()} />
+    )
+    const maximized = renderToStaticMarkup(
+      <WindowControls maximized onClose={vi.fn()} onMaximize={vi.fn()} onMinimize={vi.fn()} />
+    )
+
+    expect(floating).toContain('aria-label="Minimize window"')
+    expect(floating).toContain('aria-label="Maximize window"')
+    expect(floating).toContain('aria-label="Close window"')
+    expect(floating).not.toContain('aria-label="Restore window"')
+    expect(maximized).toContain('aria-label="Restore window"')
+    expect(maximized).not.toContain('aria-label="Maximize window"')
+    expect(maximized).toContain('aria-hidden="true"')
+    expect(maximized).toContain('focusable="false"')
+  })
+
+  it('renders all eight unfocusable resize regions outside the application surface', () => {
+    const markup = renderToStaticMarkup(<WindowFrame title="Settings">Content</WindowFrame>)
+    const edges = [
+      'top',
+      'right',
+      'bottom',
+      'left',
+      'top-left',
+      'top-right',
+      'bottom-right',
+      'bottom-left'
+    ]
+
+    for (const edge of edges) expect(markup).toContain(`data-resize-edge="${edge}"`)
+    expect(markup.match(/data-resize-edge=/g)).toHaveLength(8)
+    expect(markup).not.toContain('tabindex=')
+    expect(markup.indexOf('data-resize-edge=')).toBeLessThan(markup.indexOf('class="window-surface"'))
   })
 })

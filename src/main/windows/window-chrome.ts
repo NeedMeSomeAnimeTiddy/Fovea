@@ -391,7 +391,10 @@ export function registerBrowserWindowChrome(
 
   window.on('ready-to-show', () => controller.markReadyToShow())
   window.on('focus', () => controller.setFocused(true))
-  window.on('blur', () => controller.setFocused(false))
+  window.on('blur', () => {
+    controller.endResize()
+    controller.setFocused(false)
+  })
   window.on('minimize', () => controller.handleMinimize())
   window.on('restore', () => controller.handleRestore())
   window.on('maximize', () => controller.handleNativeMaximize())

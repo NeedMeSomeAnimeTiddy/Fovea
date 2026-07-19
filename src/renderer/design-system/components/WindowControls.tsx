@@ -37,6 +37,15 @@ function MaximizeIcon(): React.JSX.Element {
   )
 }
 
+function RestoreIcon(): React.JSX.Element {
+  return (
+    <WindowIcon>
+      <rect height="10" rx="1" width="10" x="5" y="9" />
+      <path d="M9 9V5h10v10h-4" />
+    </WindowIcon>
+  )
+}
+
 function CloseIcon(): React.JSX.Element {
   return (
     <WindowIcon>
@@ -48,8 +57,10 @@ function CloseIcon(): React.JSX.Element {
 
 export interface WindowControlsProps extends Omit<HTMLAttributes<HTMLDivElement>, 'children'> {
   closeLabel?: string
+  maximized?: boolean
   maximizeLabel?: string
   minimizeLabel?: string
+  restoreLabel?: string
   onClose: () => void
   onMaximize?: () => void
   onMinimize?: () => void
@@ -58,8 +69,10 @@ export interface WindowControlsProps extends Omit<HTMLAttributes<HTMLDivElement>
 export function WindowControls({
   className,
   closeLabel = 'Close window',
+  maximized = false,
   maximizeLabel = 'Maximize window',
   minimizeLabel = 'Minimize window',
+  restoreLabel = 'Restore window',
   onClose,
   onMaximize,
   onMinimize,
@@ -79,8 +92,8 @@ export function WindowControls({
       {onMaximize ? (
         <IconButton
           className="fui-window-controls__button"
-          icon={<MaximizeIcon />}
-          label={maximizeLabel}
+          icon={maximized ? <RestoreIcon /> : <MaximizeIcon />}
+          label={maximized ? restoreLabel : maximizeLabel}
           onClick={onMaximize}
           variant="ghost"
         />

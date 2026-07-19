@@ -1,4 +1,4 @@
-.settings { max-width: 650px; margin: 0 auto; padding: 30px; }
+.settings { width: 100%; height: 100%; min-height: 0; max-width: 650px; margin: 0 auto; padding: 30px; overflow-x: hidden; overflow-y: auto; }
 .settings-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 22px; }
 .settings h1 { margin: var(--fovea-space-2) 0 0; font-size: var(--fovea-type-display); }
 .settings h2 { margin: 0 0 17px; font-size: var(--fovea-type-title-sm); }

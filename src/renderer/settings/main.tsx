@@ -2,6 +2,7 @@ import { StrictMode, useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import type { SettingsViewState } from '@shared/contracts/ipc'
 import { Badge, Button, Card, Select, StatusBanner, Switch, TextInput, type BadgeTone } from '../design-system'
+import { WindowFrame } from '../window-chrome/WindowFrame'
 import '../design-system/index.css'
 import './settings.css'
 
@@ -32,28 +33,31 @@ function SettingsApp(): React.JSX.Element {
 
   if (!state) {
     return (
-      <main className="settings">
-        <p>Starting SnipChat…</p>
-        {error ? <StatusBanner role="alert" tone="error">{error}</StatusBanner> : null}
-      </main>
+      <WindowFrame title="Settings">
+        <main className="settings">
+          <p>Starting SnipChat…</p>
+          {error ? <StatusBanner role="alert" tone="error">{error}</StatusBanner> : null}
+        </main>
+      </WindowFrame>
     )
   }
   const account = state.provider.account
 
   return (
-    <main className="settings">
-      <header className="settings-header">
-        <div>
-          <span className="eyebrow">SNIPCHAT PROTOTYPE</span>
-          <h1>Settings</h1>
-        </div>
-        <Badge className="provider-status" tone={providerTone(state.provider.state)}>{state.provider.state}</Badge>
-      </header>
+    <WindowFrame title="Settings">
+      <main className="settings">
+        <header className="settings-header">
+          <div>
+            <span className="eyebrow">SNIPCHAT PROTOTYPE</span>
+            <h1>Settings</h1>
+          </div>
+          <Badge className="provider-status" tone={providerTone(state.provider.state)}>{state.provider.state}</Badge>
+        </header>
 
-      {error ? <StatusBanner role="alert" tone="error">{error}</StatusBanner> : null}
-      {state.provider.error ? <StatusBanner role="alert" tone="error">{state.provider.error}</StatusBanner> : null}
+        {error ? <StatusBanner role="alert" tone="error">{error}</StatusBanner> : null}
+        {state.provider.error ? <StatusBanner role="alert" tone="error">{state.provider.error}</StatusBanner> : null}
 
-      <Card as="section" className="settings-section">
+        <Card as="section" className="settings-section">
         <h2>Authentication</h2>
         {account ? (
           <div className="account-row">
@@ -77,18 +81,18 @@ function SettingsApp(): React.JSX.Element {
             <p className="settings-muted small">API usage is billed separately from a ChatGPT subscription. The key is passed directly to Codex and is not saved by SnipChat.</p>
           </>
         )}
-      </Card>
+        </Card>
 
-      <Card as="section" className="settings-section">
+        <Card as="section" className="settings-section">
         <h2>Model</h2>
         <Select id="model" label="Image-capable model" disabled={working || state.models.length === 0} value={state.selectedModelId ?? ''} onChange={(event) => void run(() => window.snipchat.settings.setModel(event.target.value))}>
           {state.models.length === 0 && <option value="">Sign in to load models</option>}
           {state.models.map((model) => <option key={model.id} value={model.id}>{model.displayName}{model.isDefault ? ' — recommended' : ''}</option>)}
         </Select>
         <p className="settings-muted small">Only models reporting image input support are shown. SnipChat prefers low reasoning effort for responsiveness.</p>
-      </Card>
+        </Card>
 
-      <Card as="section" className="settings-section">
+        <Card as="section" className="settings-section">
         <h2>Application</h2>
         <div className="setting-row"><span>Global shortcut</span><kbd>{state.shortcut}</kbd></div>
         <div className="application-switch">
@@ -99,10 +103,11 @@ function SettingsApp(): React.JSX.Element {
           <Button variant="secondary" onClick={() => void window.snipchat.settings.deleteTemporaryFiles().then((count) => setCleanupMessage(`Deleted ${count} temporary screenshot${count === 1 ? '' : 's'}.`)).catch((reason) => setError(message(reason)))}>Delete temporary files now</Button>
           {cleanupMessage ? <StatusBanner className="cleanup-status" tone="success">{cleanupMessage}</StatusBanner> : null}
         </div>
-      </Card>
+        </Card>
 
-      <footer>Codex app-server {state.provider.version} · Local sidecar · No analytics</footer>
-    </main>
+        <footer>Codex app-server {state.provider.version} · Local sidecar · No analytics</footer>
+      </main>
+    </WindowFrame>
   )
 }
 
