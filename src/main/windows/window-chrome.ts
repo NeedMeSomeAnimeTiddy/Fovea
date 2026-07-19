@@ -18,6 +18,8 @@ import {
 export type WindowChromeKind = 'settings' | 'question'
 export type WindowPlacement = 'floating' | 'maximized'
 
+export const WINDOW_CHROME_READY_TIMEOUT_MS = 10_000
+
 export interface WindowChromeControllerOptions {
   kind: WindowChromeKind
   material: WindowMaterial
@@ -68,6 +70,25 @@ export interface WindowChromeScreenSource {
   getCursorScreenPoint(): Point
   getDisplayMatching(bounds: Rectangle): { workArea: Rectangle }
   getAllDisplays(): Array<{ workArea: Rectangle }>
+}
+
+export interface OpenBrowserWindowWithChromeOptions {
+  kind: WindowChromeKind
+  label: string
+  initialMaterial: WindowMaterial
+  surfaceSize: Size
+  minimumSurfaceSize: Size
+  screenSource: WindowChromeScreenSource
+  timeoutMs?: number
+  createWindow(material: WindowMaterial): BrowserWindow
+  loadRenderer(window: BrowserWindow): Promise<void>
+  isWindowCurrent?(window: BrowserWindow): boolean
+  beforeRetry?(window: BrowserWindow): void
+}
+
+export interface OpenedBrowserWindowWithChrome {
+  window: BrowserWindow
+  material: WindowMaterial
 }
 
 interface RegisteredSender {
@@ -359,6 +380,75 @@ export class WindowChromeRegistry {
 
 export const windowChromeRegistry = new WindowChromeRegistry()
 
+export async function openBrowserWindowWithChrome(
+  options: OpenBrowserWindowWithChromeOptions
+): Promise<OpenedBrowserWindowWithChrome> {
+  const openAttempt = async (
+    material: WindowMaterial,
+    fallbackRetryEligible: boolean
+  ): Promise<OpenedBrowserWindowWithChrome> => {
+    const window = options.createWindow(material)
+    let settled = false
+    let readinessTimer: ReturnType<typeof setTimeout> | null = null
+    let settleReadiness!: (outcome: WindowChromeReadinessOutcome) => void
+    const readiness = new Promise<WindowChromeReadinessOutcome>((resolve) => {
+      settleReadiness = (outcome): void => {
+        if (settled) return
+        settled = true
+        if (readinessTimer) clearTimeout(readinessTimer)
+        resolve(outcome)
+      }
+    })
+    const controller = registerBrowserWindowChrome(window, options.screenSource, {
+      kind: options.kind,
+      material,
+      surfaceSize: options.surfaceSize,
+      minimumSurfaceSize: options.minimumSurfaceSize,
+      fallbackRetryEligible,
+      onReady: () => settleReadiness('ready')
+    })
+
+    window.once('closed', () => settleReadiness('closed'))
+    readinessTimer = setTimeout(
+      () => settleReadiness('timeout'),
+      options.timeoutMs ?? WINDOW_CHROME_READY_TIMEOUT_MS
+    )
+
+    let outcome: WindowChromeReadinessOutcome
+    try {
+      const navigation = options.loadRenderer(window).then(() => readiness)
+      outcome = await Promise.race([readiness, navigation])
+    } catch (error) {
+      if (readinessTimer) clearTimeout(readinessTimer)
+      if (!window.isDestroyed()) window.destroy()
+      throw error
+    }
+
+    const current = options.isWindowCurrent?.(window) ?? true
+    if (outcome === 'ready' && current && !window.isDestroyed()) {
+      window.show()
+      return { window, material }
+    }
+
+    if (outcome === 'timeout') {
+      const snapshot = controller.getSnapshot()
+      console.warn(
+        `[window] ${options.label} readiness timed out (ready-to-show=${snapshot.readyToShow}, renderer-ready=${snapshot.rendererReady}).`
+      )
+      const shouldRetrySolid = controller.claimFallbackRetry()
+      if (shouldRetrySolid) options.beforeRetry?.(window)
+      if (!window.isDestroyed()) window.destroy()
+      if (shouldRetrySolid) return openAttempt('solid', false)
+      throw new Error(`${options.label} readiness timed out in solid mode.`)
+    }
+
+    if (!window.isDestroyed()) window.destroy()
+    throw new Error(`${options.label} closed before startup readiness completed.`)
+  }
+
+  return openAttempt(options.initialMaterial, options.initialMaterial === 'transparent')
+}
+
 export function resolveWindowChromeController(
   event: WindowChromeIpcEvent,
   registry: WindowChromeRegistry = windowChromeRegistry
@@ -380,11 +470,20 @@ export function registerBrowserWindowChrome(
   const adapter = createBrowserWindowChromeAdapter(window, screenSource)
   const controller = new WindowChromeController(adapter, options)
   const unregister = registry.register(controller)
+  const displayEvents = screenSource as WindowChromeScreenSource & {
+    on?: (event: string, listener: () => void) => void
+    off?: (event: string, listener: () => void) => void
+  }
+  const refitMaximizedBounds = (): void => controller.refitMaximizedBounds()
+  displayEvents.on?.('display-metrics-changed', refitMaximizedBounds)
+  displayEvents.on?.('display-removed', refitMaximizedBounds)
   let cleanedUp = false
 
   const cleanup = (): void => {
     if (cleanedUp) return
     cleanedUp = true
+    displayEvents.off?.('display-metrics-changed', refitMaximizedBounds)
+    displayEvents.off?.('display-removed', refitMaximizedBounds)
     unregister()
     controller.dispose()
   }
@@ -406,6 +505,8 @@ export function registerBrowserWindowChrome(
   controller.broadcastState()
   return controller
 }
+
+type WindowChromeReadinessOutcome = 'ready' | 'timeout' | 'closed'
 
 function createBrowserWindowChromeAdapter(
   window: BrowserWindow,

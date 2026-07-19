@@ -190,4 +190,14 @@ describe('Fovea design-system components', () => {
     expect(markup).not.toContain('tabindex=')
     expect(markup.indexOf('data-resize-edge=')).toBeLessThan(markup.indexOf('class="window-surface"'))
   })
+
+  it('gives question sessions the shared labelled title-bar controls', () => {
+    const markup = renderToStaticMarkup(<WindowFrame title="SnipChat">Question content</WindowFrame>)
+
+    expect(markup).toContain('<section aria-label="SnipChat" class="window-surface">')
+    expect(markup).toContain('aria-label="Minimize window"')
+    expect(markup).toContain('aria-label="Maximize window"')
+    expect(markup).toContain('aria-label="Close window"')
+    expect(markup).toContain('window-titlebar__title">SnipChat</span>')
+  })
 })

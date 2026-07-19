@@ -236,7 +236,7 @@ Glass is simulated over the opaque `--fovea-color-canvas`. A GlassPanel may comb
 3. one elevation recipe; and
 4. at most one static `--fovea-glass-highlight` layer.
 
-There is no desktop content behind the material and no blur dependency. Settings uses a transparent, frameless BrowserWindow with a renderer-owned application surface; question remains opaque until its separate migration phase. The capture overlay remains transparent for functional capture reasons.
+There is no desktop content behind the material and no blur dependency. Settings and question sessions use transparent, frameless BrowserWindows with renderer-owned application surfaces. The capture overlay remains transparent for functional capture reasons.
 
 `WindowFrame` is application chrome, not a `GlassPanel` variant. In transparent mode it owns a 12 CSS-pixel outer inset, a 20 CSS-pixel surface radius, the complete eight-region resize partition, and `--fovea-shadow-window`. The inset is interactive resize chrome rather than decorative padding. Maximized and solid modes remove the inset, radius, renderer shadow, and custom resize regions. The solid fallback uses the opaque `#090b10` native canvas and native opaque resize/maximize; it can be selected with `--disable-transparent-windows` or, in development, `FOVEA_DISABLE_TRANSPARENT_WINDOWS=1`. This native material fallback is independent of `data-transparency="off"`.
 
@@ -327,7 +327,7 @@ No animated gradient, animated noise, parallax, pulsing glow, or decorative cont
 
 ## Windows 10 and performance budgets
 
-- Settings uses the shared renderer-owned rounded window shell. Question remains opaque until its separately gated migration. The capture overlay remains transparent for functional capture behaviour.
+- Settings and question sessions use the shared renderer-owned rounded window shell. The capture overlay remains transparent for functional capture behaviour.
 - Do not use `backdrop-filter`, filter blur, native acrylic, Mica, vibrancy, or Windows 11 corner APIs.
 - A major surface may have one static background gradient, one local highlight, one fine border, and one elevation recipe. Do not stack full-window radial gradients.
 - Use at most two moderate shadow layers in a recipe. Do not put large blurred shadows on every transcript row or Markdown element.

@@ -1,8 +1,5 @@
 html,body,#root { height: 100%; overflow: hidden; }
-.panel { height: 100%; display: flex; flex-direction: column; border: var(--fovea-border-surface); background: var(--fovea-color-canvas); }
-.titlebar { -webkit-app-region: drag; height: 42px; flex: 0 0 42px; display: flex; align-items: center; justify-content: space-between; padding-left: 14px; border-bottom: var(--fovea-border-surface); background: var(--fovea-surface-base); }
-.titlebar .fui-window-controls { height: 100%; }
-.titlebar .fui-window-controls__button { width: 42px; min-width: 42px; height: 41px; }
+.panel { height: 100%; min-height: 0; display: flex; flex-direction: column; }
 .content { flex: 1; overflow-y: auto; padding: 15px; }
 .thumbnail { display: block; width: 100%; max-height: 255px; object-fit: contain; border: var(--fovea-border-surface); border-radius: var(--fovea-radius-md); background: var(--fovea-color-canvas-deep); }
 .thumbnail.compact { width: 112px; height: 72px; object-fit: cover; margin-bottom: 13px; }

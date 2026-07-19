@@ -49,6 +49,29 @@ export function fitWindowSizesToWorkArea(
   }
 }
 
+export function placeWindowAdjacentToSelection(
+  selectionBounds: Rectangle,
+  windowSize: Size,
+  workArea: Rectangle,
+  gap = 12
+): Rectangle {
+  const available = normalizeSize(workArea)
+  const requested = normalizeSize(windowSize)
+  const safeGap = normalizeGap(gap)
+  const width = Math.min(requested.width, available.width)
+  const height = Math.min(requested.height, available.height)
+  let x = Math.round(selectionBounds.x + selectionBounds.width + safeGap)
+
+  if (x + width > workArea.x + available.width) {
+    x = Math.round(selectionBounds.x - width - safeGap)
+  }
+
+  return fitBoundsToWorkArea(
+    { x, y: Math.round(selectionBounds.y), width, height },
+    workArea
+  )
+}
+
 export function getVisibleSurfaceBounds(outerSize: Size, inset: number): Rectangle {
   const size = requireResizeRegionSize(outerSize, inset)
   const safeInset = requireInset(inset)
@@ -249,6 +272,11 @@ function requireInset(inset: number): number {
     throw new RangeError('Window inset must be a non-negative integer.')
   }
   return inset
+}
+
+function normalizeGap(gap: number): number {
+  if (!Number.isFinite(gap) || gap < 0) throw new RangeError('Window placement gap must be non-negative.')
+  return Math.round(gap)
 }
 
 function normalizeSize(size: Size): Size {

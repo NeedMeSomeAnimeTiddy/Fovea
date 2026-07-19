@@ -15,6 +15,7 @@ import {
   getResizeRegions,
   getVisibleSurfaceBounds,
   getWorkAreaMaximizedBounds,
+  placeWindowAdjacentToSelection,
   recoverRestoreBounds,
   resizeBoundsFromCursor
 } from '../src/main/windows/window-geometry'
@@ -37,6 +38,19 @@ describe('window appearance geometry', () => {
       inset: 0,
       size: { width: 650, height: 760 },
       minimumSize: { width: 560, height: 640 }
+    })
+
+    const questionSizes = {
+      surfaceSize: { width: 480, height: 640 },
+      minimumSurfaceSize: { width: 400, height: 480 }
+    }
+    expect(getWindowAppearanceSizes(questionSizes, 'transparent')).toMatchObject({
+      size: { width: 504, height: 664 },
+      minimumSize: { width: 424, height: 504 }
+    })
+    expect(getWindowAppearanceSizes(questionSizes, 'solid')).toMatchObject({
+      size: { width: 480, height: 640 },
+      minimumSize: { width: 400, height: 480 }
     })
   })
 
@@ -103,6 +117,41 @@ describe('window appearance geometry', () => {
     expect(
       selectWindowMaterial({ argv: [], environment: { NODE_ENV: 'production', FOVEA_DISABLE_TRANSPARENT_WINDOWS: '1' } })
     ).toBe('transparent')
+  })
+})
+
+describe('selection-adjacent question placement', () => {
+  const workArea = { x: -1600, y: -120, width: 1600, height: 900 }
+  const outerSize = { width: 504, height: 664 }
+
+  it('places outer bounds to the right of a negative-coordinate selection when they fit', () => {
+    expect(
+      placeWindowAdjacentToSelection(
+        { x: -1450, y: -40, width: 300, height: 240 },
+        outerSize,
+        workArea
+      )
+    ).toEqual({ x: -1138, y: -40, width: 504, height: 664 })
+  })
+
+  it('falls back to the left and clamps the full outer height to the capture work area', () => {
+    expect(
+      placeWindowAdjacentToSelection(
+        { x: -300, y: 700, width: 250, height: 100 },
+        outerSize,
+        workArea
+      )
+    ).toEqual({ x: -816, y: 116, width: 504, height: 664 })
+  })
+
+  it('fits the complete question viewport into a smaller work area', () => {
+    expect(
+      placeWindowAdjacentToSelection(
+        { x: -480, y: 60, width: 100, height: 100 },
+        outerSize,
+        { x: -500, y: 40, width: 400, height: 450 }
+      )
+    ).toEqual({ x: -500, y: 40, width: 400, height: 450 })
   })
 })
 

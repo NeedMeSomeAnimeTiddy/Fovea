@@ -5,7 +5,10 @@ import {
   selectWindowMaterial,
   type WindowSurfaceSizes
 } from './window-appearance'
-import { registerBrowserWindowChrome } from './window-chrome'
+import {
+  openBrowserWindowWithChrome,
+  WINDOW_CHROME_READY_TIMEOUT_MS
+} from './window-chrome'
 import { loadRenderer, secureWindow } from './window-factory'
 
 const SETTINGS_WINDOW_SIZES: WindowSurfaceSizes = {
@@ -13,7 +16,7 @@ const SETTINGS_WINDOW_SIZES: WindowSurfaceSizes = {
   minimumSurfaceSize: { width: 560, height: 640 }
 }
 
-export const SETTINGS_WINDOW_READY_TIMEOUT_MS = 10_000
+export const SETTINGS_WINDOW_READY_TIMEOUT_MS = WINDOW_CHROME_READY_TIMEOUT_MS
 
 let settingsWindow: BrowserWindow | null = null
 let settingsWindowOpening: Promise<BrowserWindow> | null = null
@@ -30,7 +33,21 @@ export async function showSettingsWindow(): Promise<BrowserWindow> {
   const material = selectWindowMaterial({
     disableTransparentWindows: app.commandLine.hasSwitch('disable-transparent-windows')
   })
-  const opening = createSettingsWindowAttempt(material, material === 'transparent')
+  const opening = openBrowserWindowWithChrome({
+    kind: 'settings',
+    label: 'Settings',
+    initialMaterial: material,
+    surfaceSize: SETTINGS_WINDOW_SIZES.surfaceSize,
+    minimumSurfaceSize: SETTINGS_WINDOW_SIZES.minimumSurfaceSize,
+    screenSource: screen,
+    timeoutMs: SETTINGS_WINDOW_READY_TIMEOUT_MS,
+    createWindow: createSettingsBrowserWindow,
+    loadRenderer: (window) => loadRenderer(window, 'settings'),
+    isWindowCurrent: (window) => settingsWindow === window
+  }).then((opened) => {
+    logMaterialModeOnce(opened.material)
+    return opened.window
+  })
   settingsWindowOpening = opening
 
   try {
@@ -44,10 +61,7 @@ export function getSettingsWindow(): BrowserWindow | null {
   return settingsWindow && !settingsWindow.isDestroyed() ? settingsWindow : null
 }
 
-async function createSettingsWindowAttempt(
-  material: WindowMaterial,
-  fallbackRetryEligible: boolean
-): Promise<BrowserWindow> {
+function createSettingsBrowserWindow(material: WindowMaterial): BrowserWindow {
   const appearance = getWindowAppearanceOptions(
     SETTINGS_WINDOW_SIZES,
     material,
@@ -77,69 +91,11 @@ async function createSettingsWindowAttempt(
   })
   settingsWindow = window
 
-  let settled = false
-  let settleReadiness!: (outcome: SettingsReadinessOutcome) => void
-  const readiness = new Promise<SettingsReadinessOutcome>((resolve) => {
-    settleReadiness = (outcome): void => {
-      if (settled) return
-      settled = true
-      clearTimeout(readinessTimer)
-      resolve(outcome)
-    }
-  })
-
-  const controller = registerBrowserWindowChrome(window, screen, {
-    kind: 'settings',
-    material,
-    ...SETTINGS_WINDOW_SIZES,
-    fallbackRetryEligible,
-    onReady: () => settleReadiness('ready')
-  })
-  const refitMaximizedBounds = (): void => controller.refitMaximizedBounds()
-  screen.on('display-metrics-changed', refitMaximizedBounds)
-  screen.on('display-removed', refitMaximizedBounds)
-
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   window.once('closed', () => {
-    screen.off('display-metrics-changed', refitMaximizedBounds)
-    screen.off('display-removed', refitMaximizedBounds)
     if (settingsWindow === window) settingsWindow = null
-    settleReadiness('closed')
   })
-  const readinessTimer = setTimeout(
-    () => settleReadiness('timeout'),
-    SETTINGS_WINDOW_READY_TIMEOUT_MS
-  )
-
-  try {
-    const navigation = loadRenderer(window, 'settings').then(() => readiness)
-    const outcome = await Promise.race([readiness, navigation])
-
-    if (outcome === 'ready' && !window.isDestroyed() && settingsWindow === window) {
-      logMaterialModeOnce(material)
-      window.show()
-      return window
-    }
-
-    if (outcome === 'timeout') {
-      const snapshot = controller.getSnapshot()
-      console.warn(
-        `[window] Settings readiness timed out (ready-to-show=${snapshot.readyToShow}, renderer-ready=${snapshot.rendererReady}).`
-      )
-      const shouldRetrySolid = controller.claimFallbackRetry()
-      if (settingsWindow === window) settingsWindow = null
-      if (!window.isDestroyed()) window.destroy()
-      if (shouldRetrySolid) return createSettingsWindowAttempt('solid', false)
-      throw new Error('Settings window readiness timed out in solid mode.')
-    }
-
-    throw new Error('Settings window closed before startup readiness completed.')
-  } catch (error) {
-    clearTimeout(readinessTimer)
-    if (settingsWindow === window) settingsWindow = null
-    if (!window.isDestroyed()) window.destroy()
-    throw error
-  }
+  return window
 }
 
 function logMaterialModeOnce(material: WindowMaterial): void {
@@ -147,5 +103,3 @@ function logMaterialModeOnce(material: WindowMaterial): void {
   materialModeLogged = true
   console.info(`[window] Settings material mode: ${material}.`)
 }
-
-type SettingsReadinessOutcome = 'ready' | 'timeout' | 'closed'

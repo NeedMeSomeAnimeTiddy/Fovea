@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import ReactMarkdown from 'react-markdown'
 import type { ProviderEvent } from '@shared/types/provider'
-import { Button, StatusBanner, TextArea, WindowControls } from '../design-system'
+import { Button, StatusBanner, TextArea } from '../design-system'
+import { WindowFrame } from '../window-chrome/WindowFrame'
 import '../design-system/index.css'
 import './question.css'
 
@@ -57,35 +58,33 @@ function QuestionApp(): React.JSX.Element {
   const hasSent = exchanges.length > 0
 
   return (
-    <main className="panel">
-      <header className="titlebar">
-        <strong>SnipChat</strong>
-        <WindowControls closeLabel="Close" onClose={() => void window.snipchat.question.close(sessionId)} />
-      </header>
-      <div className="content" ref={scrollRef}>
-        {thumbnail && <img className={`thumbnail ${hasSent ? 'compact' : ''}`} src={thumbnail} alt="Selected screenshot" />}
+    <WindowFrame title="SnipChat">
+      <main className="panel">
+        <div className="content" ref={scrollRef}>
+          {thumbnail && <img className={`thumbnail ${hasSent ? 'compact' : ''}`} src={thumbnail} alt="Selected screenshot" />}
 
-        {!hasSent && <>
-          <div className="presets">{PRESETS.map((preset) => <Button className="preset-button" key={preset} size="compact" variant="secondary" onClick={() => void send(preset)}>{preset}</Button>)}</div>
-          <Composer text={text} setText={setText} send={send} busy={busy} autoFocus />
-          <div className="initial-actions"><Button variant="secondary" onClick={() => void window.snipchat.question.close(sessionId)}>Cancel</Button><Button disabled={!text.trim() || busy} onClick={() => void send()}>Send</Button></div>
-        </>}
+          {!hasSent && <>
+            <div className="presets">{PRESETS.map((preset) => <Button className="preset-button" key={preset} size="compact" variant="secondary" onClick={() => void send(preset)}>{preset}</Button>)}</div>
+            <Composer text={text} setText={setText} send={send} busy={busy} autoFocus />
+            <div className="initial-actions"><Button variant="secondary" onClick={() => void window.snipchat.question.close(sessionId)}>Cancel</Button><Button disabled={!text.trim() || busy} onClick={() => void send()}>Send</Button></div>
+          </>}
 
-        {hasSent && <div className="transcript">{exchanges.map((exchange, index) => <article key={index}><div className="question">{exchange.question}</div><div className="answer">{exchange.answer ? <ReactMarkdown components={{ a: ({ href, children }) => <a href={href} onClick={(event) => { event.preventDefault(); if (href) void window.snipchat.openExternal(href) }}>{children}</a> }}>{exchange.answer}</ReactMarkdown> : <span className="thinking">Thinking…</span>}</div></article>)}</div>}
-        {error ? <StatusBanner role="alert" tone="error">{error}</StatusBanner> : null}
-      </div>
-
-      {hasSent && <footer className="response-footer">
-        <Composer text={text} setText={setText} send={send} busy={busy} />
-        <div className="toolbar">
-          <Button size="compact" variant="secondary" onClick={() => void window.snipchat.question.newSnip(sessionId)}>New snip</Button>
-          {busy ? <Button size="compact" variant="danger" onClick={() => void window.snipchat.question.stop(sessionId)}>Stop</Button> : <Button size="compact" disabled={!text.trim()} onClick={() => void send()}>Send</Button>}
-          <span className="spacer" />
-          <Button size="compact" variant="secondary" disabled={!latestAnswer} onClick={() => void navigator.clipboard.writeText(latestAnswer)}>Copy</Button>
-          <Button size="compact" variant="secondary" onClick={() => void window.snipchat.question.close(sessionId)}>Close</Button>
+          {hasSent && <div className="transcript">{exchanges.map((exchange, index) => <article key={index}><div className="question">{exchange.question}</div><div className="answer">{exchange.answer ? <ReactMarkdown components={{ a: ({ href, children }) => <a href={href} onClick={(event) => { event.preventDefault(); if (href) void window.snipchat.openExternal(href) }}>{children}</a> }}>{exchange.answer}</ReactMarkdown> : <span className="thinking">Thinking…</span>}</div></article>)}</div>}
+          {error ? <StatusBanner role="alert" tone="error">{error}</StatusBanner> : null}
         </div>
-      </footer>}
-    </main>
+
+        {hasSent && <footer className="response-footer">
+          <Composer text={text} setText={setText} send={send} busy={busy} />
+          <div className="toolbar">
+            <Button size="compact" variant="secondary" onClick={() => void window.snipchat.question.newSnip(sessionId)}>New snip</Button>
+            {busy ? <Button size="compact" variant="danger" onClick={() => void window.snipchat.question.stop(sessionId)}>Stop</Button> : <Button size="compact" disabled={!text.trim()} onClick={() => void send()}>Send</Button>}
+            <span className="spacer" />
+            <Button size="compact" variant="secondary" disabled={!latestAnswer} onClick={() => void navigator.clipboard.writeText(latestAnswer)}>Copy</Button>
+            <Button size="compact" variant="secondary" onClick={() => void window.snipchat.question.close(sessionId)}>Close</Button>
+          </div>
+        </footer>}
+      </main>
+    </WindowFrame>
   )
 }
 
