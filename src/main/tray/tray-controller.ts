@@ -15,7 +15,7 @@ export class TrayController {
     if (this.tray) return
     this.tray = new Tray(this.icon('idle'))
     this.tray.setToolTip('Fovea')
-    this.tray.on('click', () => void this.openSettings())
+    this.tray.on('click', () => void this.openSettings().catch((error) => console.error('[window] Tray could not open Settings.', error)))
     this.tray.on('right-click', () => { this.refreshMenu(); this.tray?.popUpContextMenu() })
     this.refreshMenu()
   }
@@ -38,7 +38,7 @@ export class TrayController {
       { label: this.paused ? 'Resume shortcuts' : 'Pause shortcuts', click: () => { this.paused = !this.paused; if (this.paused) this.shortcuts.pause(); else this.shortcuts.resume(); this.tray?.setImage(this.icon(this.paused ? 'paused' : 'idle')); this.refreshMenu() } },
       { label: `Providers: ${available}/${total} available`, enabled: false },
       { label: 'Launch at login', type: 'checkbox', checked: this.settings.get().launchAtLogin, click: (item) => { app.setLoginItemSettings({ openAtLogin: item.checked, path: process.execPath }); void this.settings.update({ launchAtLogin: item.checked }) } },
-      { label: 'Settings', click: () => void this.openSettings() },
+      { label: 'Settings', click: () => void this.openSettings().catch((error) => console.error('[window] Tray could not open Settings.', error)) },
       { type: 'separator' },
       { label: 'Quit Fovea', click: () => app.quit() }
     ]))

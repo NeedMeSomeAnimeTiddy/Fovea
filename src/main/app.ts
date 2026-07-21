@@ -18,7 +18,11 @@ app.setName('Fovea')
 app.setPath('userData', join(app.getPath('appData'), 'Fovea'))
 
 if (!app.requestSingleInstanceLock()) app.quit()
-else void startApplication()
+else void startApplication().catch((error) => {
+  const message = error instanceof Error ? error.message : String(error)
+  console.error(`[app] Startup failed: ${redact(message)}`)
+  if (app.isReady()) dialog.showErrorBox('Fovea could not start', message)
+})
 
 async function startApplication(): Promise<void> {
   app.setAppUserModelId('com.fovea.desktop')
@@ -46,22 +50,30 @@ async function startApplication(): Promise<void> {
   const questions = new QuestionSessions(providers, screenshots, () => capture.begin('region'))
   services.questions = questions
 
+  let tray: TrayController | null = null
+  const openSettingsSafely = (): void => {
+    void showSettingsWindow(tray?.getBounds()).catch((error) => {
+      const message = error instanceof Error ? error.message : String(error)
+      console.error(`[window] Settings failed to open: ${redact(message)}`)
+      dialog.showErrorBox('Fovea Settings', message)
+    })
+  }
   const captureSafely = (mode: Parameters<CaptureService['begin']>[0]): void => { void capture.begin(mode).catch((error) => dialog.showErrorBox('Fovea capture', error instanceof Error ? error.message : String(error))) }
   const shortcuts = new ShortcutManager(globalShortcut, settings, {
-    region: () => captureSafely('region'), display: () => captureSafely('display'), window: () => captureSafely('window'), 'repeat-last': () => captureSafely('repeat-last'), settings: () => void showSettingsWindow()
+    region: () => captureSafely('region'), display: () => captureSafely('display'), window: () => captureSafely('window'), 'repeat-last': () => captureSafely('repeat-last'), settings: openSettingsSafely
   })
   shortcuts.initialise()
-  const tray = new TrayController(async (mode) => capture.begin(mode), shortcuts, providers, settings)
+  tray = new TrayController(async (mode) => capture.begin(mode), shortcuts, providers, settings)
   tray.initialise()
   registerIpc({ providers, settings, screenshots, capture, questions, shortcuts, appearance })
   app.setLoginItemSettings({ openAtLogin: settings.get().launchAtLogin, path: process.execPath })
 
   try { await providers.initialise() }
   catch (error) { console.warn(`[provider] ChatGPT adapter unavailable: ${redact(error instanceof Error ? error.message : String(error))}`) }
-  if (!settings.get().onboardingCompleted) await showSettingsWindow(tray.getBounds())
+  if (!settings.get().onboardingCompleted) openSettingsSafely()
 
-  app.on('second-instance', () => void showSettingsWindow(tray.getBounds()))
-  app.on('activate', () => void showSettingsWindow(tray.getBounds()))
+  app.on('second-instance', openSettingsSafely)
+  app.on('activate', openSettingsSafely)
   let shuttingDown = false
   app.on('before-quit', () => { if (shuttingDown) return; shuttingDown = true; capture.dispose(); shortcuts.dispose(); tray.dispose(); appearance.dispose(); void questions.dispose(); void providers.dispose() })
 }

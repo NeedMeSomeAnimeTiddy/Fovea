@@ -4,8 +4,23 @@ import type { AppearanceState } from '@shared/types/app'
 import type { ProviderEvent } from '@shared/types/provider'
 
 const initialAppearance = ipcRenderer.sendSync(IPC.appearanceGet) as AppearanceState
-document.documentElement.dataset.appearance = initialAppearance.preference
-document.documentElement.dataset.theme = initialAppearance.resolved
+applyInitialAppearance(initialAppearance)
+
+function applyInitialAppearance(appearance: AppearanceState): void {
+  const apply = (): boolean => {
+    const root = document.documentElement
+    if (!root) return false
+    root.dataset.appearance = appearance.preference
+    root.dataset.theme = appearance.resolved
+    return true
+  }
+  if (apply()) return
+  const observer = new MutationObserver(() => {
+    if (!apply()) return
+    observer.disconnect()
+  })
+  observer.observe(document, { childList: true, subtree: true })
+}
 
 const api: FoveaApi = {
   profiles: {
