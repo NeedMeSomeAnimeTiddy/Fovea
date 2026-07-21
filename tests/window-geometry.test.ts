@@ -10,6 +10,7 @@ import {
 import {
   containsPoint,
   createResizeSession,
+  fitBoundsToWorkArea,
   fitWindowSizesToWorkArea,
   getResizeEdgeAtPoint,
   getResizeRegions,
@@ -17,6 +18,7 @@ import {
   getWorkAreaMaximizedBounds,
   placeWindowAdjacentToSelection,
   recoverRestoreBounds,
+  refitBoundsToWorkAreas,
   resizeBoundsFromCursor
 } from '../src/main/windows/window-geometry'
 
@@ -69,6 +71,23 @@ describe('window appearance geometry', () => {
         { x: 0, y: 0, width: 800, height: 700 }
       )
     ).toEqual({ size: { width: 450, height: 350 }, minimumSize: { width: 450, height: 350 } })
+  })
+
+  it('contains integer DIP bounds inside fractional work-area metrics', () => {
+    expect(
+      fitBoundsToWorkArea(
+        { x: -1279.6, y: 0.4, width: 500.2, height: 600.2 },
+        { x: -1279.6, y: 0.4, width: 1279.6, height: 719.7 }
+      )
+    ).toEqual({ x: -1279, y: 1, width: 500, height: 600 })
+
+    expect(
+      fitWindowSizesToWorkArea(
+        { width: 674.4, height: 784.4 },
+        { width: 584.4, height: 664.4 },
+        { x: -1279.6, y: 0.4, width: 500.2, height: 600.2 }
+      )
+    ).toEqual({ size: { width: 499, height: 599 }, minimumSize: { width: 499, height: 599 } })
   })
 
   it('builds distinct transparent and solid native option sets', () => {
@@ -261,6 +280,21 @@ describe('custom resize geometry', () => {
     }
   })
 
+  it('normalizes fractional starting bounds without accumulating fractional resize edges', () => {
+    const resized = resizeBoundsFromCursor(
+      createResizeSession(
+        'bottom-right',
+        { x: -200.4, y: -100.6, width: 300.4, height: 200.6 },
+        { x: -50.25, y: 20.75 }
+      ),
+      { x: -39.65, y: 41.35 },
+      minimumSize
+    )!
+
+    expect(resized).toEqual({ x: -200, y: -101, width: 311, height: 222 })
+    expect(Object.values(resized).every(Number.isInteger)).toBe(true)
+  })
+
   it('does not produce an update without an active resize session', () => {
     expect(resizeBoundsFromCursor(null, { x: 50, y: 60 }, minimumSize)).toBeNull()
   })
@@ -291,5 +325,15 @@ describe('maximize and restore geometry', () => {
     const saved = { x: 2200, y: -200, width: 900, height: 800 }
     const smallWorkArea = { x: 0, y: 40, width: 640, height: 600 }
     expect(recoverRestoreBounds(saved, [smallWorkArea])).toEqual({ x: 0, y: 40, width: 640, height: 600 })
+  })
+
+  it('fully refits saved bounds when work-area or mixed-DPI metrics change', () => {
+    const changedSecondary = { x: -1280.4, y: 39.6, width: 1280.4, height: 720.4 }
+    expect(
+      refitBoundsToWorkAreas(
+        { x: -1550.4, y: -80.4, width: 900.4, height: 800.4 },
+        [primary, changedSecondary]
+      )
+    ).toEqual({ x: -1280, y: 40, width: 900, height: 720 })
   })
 })

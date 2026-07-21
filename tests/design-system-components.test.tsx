@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -16,6 +17,7 @@ import {
   WindowControls
 } from '../src/renderer/design-system'
 import { WindowFrame } from '../src/renderer/window-chrome/WindowFrame'
+import { WINDOW_SURFACE_INSET } from '../src/main/windows/window-appearance'
 
 describe('Fovea design-system components', () => {
   it('renders actions as native buttons with stable loading semantics', () => {
@@ -189,6 +191,18 @@ describe('Fovea design-system components', () => {
     expect(markup.match(/data-resize-edge=/g)).toHaveLength(8)
     expect(markup).not.toContain('tabindex=')
     expect(markup.indexOf('data-resize-edge=')).toBeLessThan(markup.indexOf('class="window-surface"'))
+  })
+
+  it('keeps the full-inset CSS partition on the one shared 12px metric', () => {
+    const tokens = readFileSync(new URL('../src/renderer/design-system/styles/tokens.css', import.meta.url), 'utf8')
+    const chrome = readFileSync(new URL('../src/renderer/window-chrome/window-chrome.css', import.meta.url), 'utf8')
+
+    expect(WINDOW_SURFACE_INSET).toBe(12)
+    expect(tokens).toMatch(/--fovea-space-6:\s*0\.75rem;/)
+    expect(chrome).toContain('--window-frame-inset: var(--fovea-space-6);')
+    expect(chrome.match(/var\(--window-frame-inset\)/g)).toHaveLength(13)
+    expect(chrome).toContain('pointer-events: auto;')
+    expect(chrome).not.toMatch(/window-resize-region[^}]+(?:11px|12px|0\.75rem)/s)
   })
 
   it('gives question sessions the shared labelled title-bar controls', () => {

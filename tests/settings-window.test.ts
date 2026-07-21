@@ -30,6 +30,10 @@ const mocks = vi.hoisted(() => {
       for (const listener of [...(this.listeners.get(event) ?? [])]) listener(...arguments_)
     }
 
+    listenerCount(event: string): number {
+      return this.listeners.get(event)?.size ?? 0
+    }
+
     removeAllListeners(): void {
       this.listeners.clear()
     }
@@ -49,6 +53,7 @@ const mocks = vi.hoisted(() => {
     destroyed = false
     showCalls = 0
     focusCalls = 0
+    readonly setBoundsCalls: Array<{ x: number; y: number; width: number; height: number }> = []
 
     constructor(options: Record<string, any>) {
       super()
@@ -68,8 +73,10 @@ const mocks = vi.hoisted(() => {
 
     setBounds(bounds: typeof this.bounds): void {
       this.bounds = { ...bounds }
+      this.setBoundsCalls.push({ ...bounds })
     }
 
+    setMinimumSize(): void {}
     setMovable(): void {}
     minimize(): void {}
     maximize(): void {}
@@ -100,16 +107,17 @@ const mocks = vi.hoisted(() => {
   }
 
   const screen = new FakeEmitter() as FakeEmitter & {
+    workArea: { x: number; y: number; width: number; height: number }
     getPrimaryDisplay(): { workArea: { x: number; y: number; width: number; height: number } }
     getCursorScreenPoint(): { x: number; y: number }
     getDisplayMatching(): { workArea: { x: number; y: number; width: number; height: number } }
     getAllDisplays(): Array<{ workArea: { x: number; y: number; width: number; height: number } }>
   }
-  const workArea = { x: 0, y: 0, width: 1920, height: 1040 }
-  screen.getPrimaryDisplay = () => ({ workArea: { ...workArea } })
+  screen.workArea = { x: 0, y: 0, width: 1920, height: 1040 }
+  screen.getPrimaryDisplay = () => ({ workArea: { ...screen.workArea } })
   screen.getCursorScreenPoint = () => ({ x: 0, y: 0 })
-  screen.getDisplayMatching = () => ({ workArea: { ...workArea } })
-  screen.getAllDisplays = () => [{ workArea: { ...workArea } }]
+  screen.getDisplayMatching = () => ({ workArea: { ...screen.workArea } })
+  screen.getAllDisplays = () => [{ workArea: { ...screen.workArea } }]
 
   const windows: FakeWindow[] = []
   const secureWindow = vi.fn((options: Record<string, any>) => {
@@ -131,6 +139,7 @@ const mocks = vi.hoisted(() => {
       loadRenderer.mockClear()
       hasSwitch.mockReset()
       hasSwitch.mockReturnValue(false)
+      screen.workArea = { x: 0, y: 0, width: 1920, height: 1040 }
       screen.removeAllListeners()
     },
     screen,
@@ -179,8 +188,8 @@ describe('Settings window startup lifecycle', () => {
 
   it('destroys a timed-out transparent attempt and retries once in solid mode', async () => {
     vi.useFakeTimers()
-    vi.spyOn(console, 'info').mockImplementation(() => undefined)
-    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     const { SETTINGS_WINDOW_READY_TIMEOUT_MS, showSettingsWindow } = await import(
       '../src/main/windows/settings-window'
     )
@@ -191,6 +200,16 @@ describe('Settings window startup lifecycle', () => {
     await vi.advanceTimersByTimeAsync(SETTINGS_WINDOW_READY_TIMEOUT_MS)
     expect(mocks.windows).toHaveLength(2)
     expect(mocks.windows[0]!.destroyed).toBe(true)
+    expect(warn).toHaveBeenNthCalledWith(
+      1,
+      expect.stringMatching(
+        /Settings readiness timed out \(kind=settings, attempt=1, material=transparent, window=1, web-contents=101, elapsed=10000ms, ready-to-show=false, renderer-ready=false, current=true, destroyed=false\)/
+      )
+    )
+    expect(warn).toHaveBeenNthCalledWith(
+      2,
+      '[window] Settings retrying once in solid mode after transparent readiness timeout.'
+    )
 
     const solid = mocks.windows[1]!
     expect(solid.options).toMatchObject({ transparent: false, resizable: true, maximizable: true })
@@ -198,9 +217,62 @@ describe('Settings window startup lifecycle', () => {
     solid.emit('ready-to-show')
     windowChromeRegistry.get(solid.webContents.id)!.markRendererReady()
     await expect(opening).resolves.toBe(solid)
+    expect(info).toHaveBeenCalledWith(expect.stringMatching(/Settings solid mode ready \(kind=settings, attempt=2, fallback=true/))
 
     await vi.advanceTimersByTimeAsync(SETTINGS_WINDOW_READY_TIMEOUT_MS * 2)
     expect(mocks.windows).toHaveLength(2)
     expect(solid.showCalls).toBe(1)
+  })
+
+  it('refits application-maximized bounds for relevant display metrics and tears listeners down', async () => {
+    vi.spyOn(console, 'info').mockImplementation(() => undefined)
+    const { showSettingsWindow } = await import('../src/main/windows/settings-window')
+    const opening = showSettingsWindow()
+    const window = mocks.windows[0]!
+    const { windowChromeRegistry } = await import('../src/main/windows/window-chrome')
+    window.emit('ready-to-show')
+    const controller = windowChromeRegistry.get(window.webContents.id)!
+    controller.markRendererReady()
+    await opening
+    controller.toggleMaximize()
+    expect(window.bounds).toEqual({ x: 0, y: 0, width: 1920, height: 1040 })
+
+    mocks.screen.workArea = { x: 48, y: 0, width: 1872, height: 1040 }
+    mocks.screen.emit('display-metrics-changed', {}, {}, ['rotation'])
+    expect(window.setBoundsCalls).toHaveLength(1)
+    mocks.screen.emit('display-metrics-changed', {}, {}, ['workArea'])
+    expect(window.bounds).toEqual(mocks.screen.workArea)
+    expect(window.setBoundsCalls).toHaveLength(2)
+
+    mocks.screen.workArea = { x: -1280, y: 40, width: 1280, height: 720 }
+    mocks.screen.emit('display-removed', {}, {})
+    expect(window.bounds).toEqual(mocks.screen.workArea)
+    expect(window.setBoundsCalls).toHaveLength(3)
+    expect(mocks.screen.listenerCount('display-metrics-changed')).toBe(1)
+    expect(mocks.screen.listenerCount('display-removed')).toBe(1)
+
+    window.destroy()
+    expect(mocks.screen.listenerCount('display-metrics-changed')).toBe(0)
+    expect(mocks.screen.listenerCount('display-removed')).toBe(0)
+    expect(windowChromeRegistry.get(window.webContents.id)).toBeNull()
+  })
+
+  it('does not retry a readiness timeout when solid mode was selected explicitly', async () => {
+    vi.useFakeTimers()
+    mocks.hasSwitch.mockReturnValue(true)
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const { SETTINGS_WINDOW_READY_TIMEOUT_MS, showSettingsWindow } = await import(
+      '../src/main/windows/settings-window'
+    )
+    const opening = showSettingsWindow()
+    const rejection = expect(opening).rejects.toThrow(
+      /Settings readiness timed out in solid mode \(ready-to-show=false, renderer-ready=false\)/
+    )
+
+    await vi.advanceTimersByTimeAsync(SETTINGS_WINDOW_READY_TIMEOUT_MS)
+    await rejection
+    expect(mocks.windows).toHaveLength(1)
+    expect(mocks.windows[0]!.options).toMatchObject({ transparent: false, resizable: true })
+    expect(mocks.windows[0]!.destroyed).toBe(true)
   })
 })

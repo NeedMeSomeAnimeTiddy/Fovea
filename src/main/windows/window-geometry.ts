@@ -32,7 +32,7 @@ export function fitWindowSizesToWorkArea(
   minimumSize: Size,
   workArea: Rectangle
 ): FittedWindowSizes {
-  const available = normalizeSize(workArea)
+  const available = normalizeWorkArea(workArea)
   const desired = normalizeSize(desiredSize)
   const minimum = normalizeSize(minimumSize)
   const effectiveMinimum = {
@@ -55,20 +55,20 @@ export function placeWindowAdjacentToSelection(
   workArea: Rectangle,
   gap = 12
 ): Rectangle {
-  const available = normalizeSize(workArea)
+  const available = normalizeWorkArea(workArea)
   const requested = normalizeSize(windowSize)
   const safeGap = normalizeGap(gap)
   const width = Math.min(requested.width, available.width)
   const height = Math.min(requested.height, available.height)
   let x = Math.round(selectionBounds.x + selectionBounds.width + safeGap)
 
-  if (x + width > workArea.x + available.width) {
+  if (x + width > available.x + available.width) {
     x = Math.round(selectionBounds.x - width - safeGap)
   }
 
   return fitBoundsToWorkArea(
     { x, y: Math.round(selectionBounds.y), width, height },
-    workArea
+    available
   )
 }
 
@@ -124,8 +124,8 @@ export function containsPoint(rectangle: Rectangle, point: Point): boolean {
 export function createResizeSession(edge: WindowResizeEdge, startBounds: Rectangle, startCursor: Point): ResizeSession {
   return {
     edge,
-    startBounds: copyRectangle(startBounds),
-    startCursor: { ...startCursor }
+    startBounds: normalizeBounds(startBounds),
+    startCursor: normalizePoint(startCursor)
   }
 }
 
@@ -140,13 +140,15 @@ export function resizeBoundsFromCursor(
     width: Math.ceil(normalizeDimension(minimumSize.width)),
     height: Math.ceil(normalizeDimension(minimumSize.height))
   }
-  const start = session.startBounds
+  const start = normalizeBounds(session.startBounds)
+  const startCursor = normalizePoint(session.startCursor)
+  const currentCursor = normalizePoint(cursor)
   const fixedLeft = start.x
   const fixedTop = start.y
   const fixedRight = start.x + start.width
   const fixedBottom = start.y + start.height
-  const deltaX = cursor.x - session.startCursor.x
-  const deltaY = cursor.y - session.startCursor.y
+  const deltaX = currentCursor.x - startCursor.x
+  const deltaY = currentCursor.y - startCursor.y
 
   let left = fixedLeft
   let top = fixedTop
@@ -175,28 +177,42 @@ export function resizeBoundsFromCursor(
 
 export function getWorkAreaMaximizedBounds(currentBounds: Rectangle, workAreas: readonly Rectangle[]): Rectangle {
   const workArea = selectWorkArea(currentBounds, workAreas)
-  return workArea ? copyRectangle(workArea) : copyRectangle(currentBounds)
+  return workArea ?? normalizeBounds(currentBounds)
 }
 
 export function recoverRestoreBounds(restoreBounds: Rectangle, workAreas: readonly Rectangle[]): Rectangle {
-  if (workAreas.length === 0 || isBoundsReachable(restoreBounds, workAreas)) {
-    return copyRectangle(restoreBounds)
+  const normalizedBounds = normalizeBounds(restoreBounds)
+  if (workAreas.length === 0 || isBoundsReachable(normalizedBounds, workAreas)) {
+    return normalizedBounds
   }
 
-  const workArea = selectWorkArea(restoreBounds, workAreas)
-  return workArea ? fitBoundsToWorkArea(restoreBounds, workArea) : copyRectangle(restoreBounds)
+  const workArea = selectWorkArea(normalizedBounds, workAreas)
+  return workArea ? fitBoundsToWorkArea(normalizedBounds, workArea) : normalizedBounds
+}
+
+/**
+ * Re-fits saved floating bounds after Windows changes display membership, work
+ * area, or scale. Unlike normal restore recovery this deliberately contains the
+ * complete window in its best current work area, because the previous DIP
+ * rectangle was measured against display metrics that are no longer valid.
+ */
+export function refitBoundsToWorkAreas(bounds: Rectangle, workAreas: readonly Rectangle[]): Rectangle {
+  const normalizedBounds = normalizeBounds(bounds)
+  const workArea = selectWorkArea(normalizedBounds, workAreas)
+  return workArea ? fitBoundsToWorkArea(normalizedBounds, workArea) : normalizedBounds
 }
 
 export function fitBoundsToWorkArea(bounds: Rectangle, workArea: Rectangle): Rectangle {
-  const available = normalizeSize(workArea)
-  const width = Math.min(normalizeDimension(bounds.width), available.width)
-  const height = Math.min(normalizeDimension(bounds.height), available.height)
-  const maximumX = workArea.x + available.width - width
-  const maximumY = workArea.y + available.height - height
+  const available = normalizeWorkArea(workArea)
+  const requested = normalizeBounds(bounds)
+  const width = Math.min(requested.width, available.width)
+  const height = Math.min(requested.height, available.height)
+  const maximumX = available.x + available.width - width
+  const maximumY = available.y + available.height - height
 
   return {
-    x: Math.round(clamp(bounds.x, workArea.x, maximumX)),
-    y: Math.round(clamp(bounds.y, workArea.y, maximumY)),
+    x: Math.round(clamp(requested.x, available.x, maximumX)),
+    y: Math.round(clamp(requested.y, available.y, maximumY)),
     width,
     height
   }
@@ -208,16 +224,17 @@ export function isBoundsReachable(
   reachableTitleBarWidth = DEFAULT_REACHABLE_TITLE_BAR_WIDTH,
   titleBarHeight = DEFAULT_TITLE_BAR_HEIGHT
 ): boolean {
+  const normalizedBounds = normalizeBounds(bounds)
   const titleBar = {
-    x: bounds.x,
-    y: bounds.y,
-    width: normalizeDimension(bounds.width),
-    height: Math.min(normalizeDimension(bounds.height), normalizeDimension(titleBarHeight))
+    x: normalizedBounds.x,
+    y: normalizedBounds.y,
+    width: normalizedBounds.width,
+    height: Math.min(normalizedBounds.height, normalizeDimension(titleBarHeight))
   }
   const requiredWidth = Math.min(titleBar.width, normalizeDimension(reachableTitleBarWidth))
 
   return workAreas.some((workArea) => {
-    const overlap = intersection(titleBar, workArea)
+    const overlap = intersection(titleBar, normalizeWorkArea(workArea))
     return overlap.width >= requiredWidth && overlap.height > 0
   })
 }
@@ -225,15 +242,17 @@ export function isBoundsReachable(
 export function selectWorkArea(bounds: Rectangle, workAreas: readonly Rectangle[]): Rectangle | null {
   if (workAreas.length === 0) return null
 
-  let bestArea = workAreas[0]!
-  let bestOverlap = intersectionArea(bounds, bestArea)
-  let bestDistance = rectangleDistanceSquared(bounds, bestArea)
+  const normalizedBounds = normalizeBounds(bounds)
+  let bestArea = normalizeWorkArea(workAreas[0]!)
+  let bestOverlap = intersectionArea(normalizedBounds, bestArea)
+  let bestDistance = rectangleDistanceSquared(normalizedBounds, bestArea)
 
   for (const workArea of workAreas.slice(1)) {
-    const overlap = intersectionArea(bounds, workArea)
-    const distance = rectangleDistanceSquared(bounds, workArea)
+    const normalizedWorkArea = normalizeWorkArea(workArea)
+    const overlap = intersectionArea(normalizedBounds, normalizedWorkArea)
+    const distance = rectangleDistanceSquared(normalizedBounds, normalizedWorkArea)
     if (overlap > bestOverlap || (overlap === bestOverlap && distance < bestDistance)) {
-      bestArea = workArea
+      bestArea = normalizedWorkArea
       bestOverlap = overlap
       bestDistance = distance
     }
@@ -286,9 +305,47 @@ function normalizeSize(size: Size): Size {
   }
 }
 
-function normalizeDimension(value: number): number {
+function normalizeBounds(bounds: Rectangle): Rectangle {
+  return {
+    x: normalizeCoordinate(bounds.x),
+    y: normalizeCoordinate(bounds.y),
+    width: normalizeDimension(bounds.width),
+    height: normalizeDimension(bounds.height)
+  }
+}
+
+function normalizeWorkArea(workArea: Rectangle): Rectangle {
+  const x = requireCoordinate(workArea.x)
+  const y = requireCoordinate(workArea.y)
+  const width = requireDimension(workArea.width)
+  const height = requireDimension(workArea.height)
+  const left = Math.ceil(x)
+  const top = Math.ceil(y)
+  const right = Math.max(left + 1, Math.floor(x + width))
+  const bottom = Math.max(top + 1, Math.floor(y + height))
+  return { x: left, y: top, width: right - left, height: bottom - top }
+}
+
+function normalizePoint(point: Point): Point {
+  return { x: requireCoordinate(point.x), y: requireCoordinate(point.y) }
+}
+
+function normalizeCoordinate(value: number): number {
+  return Math.round(requireCoordinate(value))
+}
+
+function requireCoordinate(value: number): number {
+  if (!Number.isFinite(value)) throw new RangeError('Window coordinates must be finite numbers.')
+  return value
+}
+
+function requireDimension(value: number): number {
   if (!Number.isFinite(value) || value <= 0) throw new RangeError('Window dimensions must be positive numbers.')
-  return Math.round(value)
+  return value
+}
+
+function normalizeDimension(value: number): number {
+  return Math.max(1, Math.round(requireDimension(value)))
 }
 
 function clamp(value: number, minimum: number, maximum: number): number {

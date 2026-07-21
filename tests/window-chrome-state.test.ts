@@ -21,6 +21,7 @@ class FakeWindowAdapter implements WindowChromeAdapter {
   ]
   destroyed = false
   readonly setBoundsCalls: Rectangle[] = []
+  readonly minimumSizeCalls: Array<{ width: number; height: number }> = []
   readonly movableCalls: boolean[] = []
   readonly broadcasts: Array<ReturnType<WindowChromeController['getState']>> = []
   minimizeCalls = 0
@@ -40,6 +41,10 @@ class FakeWindowAdapter implements WindowChromeAdapter {
   setBounds(bounds: Rectangle): void {
     this.bounds = { ...bounds }
     this.setBoundsCalls.push({ ...bounds })
+  }
+
+  setMinimumSize(size: { width: number; height: number }): void {
+    this.minimumSizeCalls.push({ ...size })
   }
 
   setMovable(movable: boolean): void {
@@ -171,6 +176,40 @@ describe('window chrome controller state', () => {
     expect(controller.getSnapshot().restoreBounds).toEqual(adapter.bounds)
   })
 
+  it('refits application-maximized and saved bounds after display removal', () => {
+    const { controller, adapter } = createController()
+    controller.toggleMaximize()
+    adapter.workAreas = [{ x: 0, y: 0, width: 1280, height: 720 }]
+
+    expect(controller.handleDisplayChange()).toBe(true)
+    expect(adapter.bounds).toEqual({ x: 0, y: 0, width: 1280, height: 720 })
+    expect(controller.getSnapshot().restoreBounds).toEqual({ x: 0, y: 0, width: 674, height: 720 })
+
+    controller.toggleMaximize()
+    expect(adapter.bounds).toEqual({ x: 0, y: 0, width: 674, height: 720 })
+  })
+
+  it('refits a maximized window when taskbar work-area metrics change', () => {
+    const { controller, adapter } = createController()
+    controller.toggleMaximize()
+    adapter.workAreas[1] = { x: -1600, y: -80, width: 1600, height: 860 }
+
+    expect(controller.handleDisplayChange()).toBe(true)
+    expect(adapter.bounds).toEqual(adapter.workAreas[1])
+    expect(controller.getState().maximized).toBe(true)
+  })
+
+  it('contains floating bounds and effective minimums after mixed-DPI work-area changes', () => {
+    const { controller, adapter } = createController()
+    adapter.bounds = { x: -1500.4, y: -100.4, width: 674.4, height: 784.4 }
+    adapter.workAreas = [{ x: -1279.6, y: 39.6, width: 1279.6, height: 720.4 }]
+
+    expect(controller.handleDisplayChange()).toBe(true)
+    expect(adapter.bounds).toEqual({ x: -1279, y: 40, width: 674, height: 720 })
+    expect(adapter.minimumSizeCalls.at(-1)).toEqual({ width: 584, height: 664 })
+    expect(controller.getSnapshot().restoreBounds).toEqual(adapter.bounds)
+  })
+
   it('uses native maximize in solid mode while exposing normalized state', () => {
     const { controller, adapter } = createController('solid')
 
@@ -240,6 +279,57 @@ describe('window chrome resize state', () => {
     expect(adapter.setBoundsCalls).toHaveLength(updatesAtEnd)
   })
 
+  it('coalesces main-process resize requests and flushes the final cursor on teardown', async () => {
+    vi.useFakeTimers()
+    try {
+      const { controller, adapter } = createController()
+      adapter.cursor = { x: -1200, y: 60 }
+      expect(controller.beginResize('right')).toBe(true)
+
+      for (const x of [-1180, -1140, -1100]) {
+        adapter.cursor = { x, y: 60 }
+        expect(controller.requestResizeUpdate()).toBe(true)
+      }
+      expect(adapter.setBoundsCalls).toEqual([{ x: -1200, y: 60, width: 694, height: 784 }])
+      expect(controller.getSnapshot().resizeUpdatePending).toBe(true)
+
+      await vi.advanceTimersByTimeAsync(16)
+      expect(adapter.setBoundsCalls.at(-1)).toEqual({ x: -1200, y: 60, width: 774, height: 784 })
+
+      adapter.cursor = { x: -1060, y: 60 }
+      controller.requestResizeUpdate()
+      expect(controller.endResize()).toBe(true)
+      expect(adapter.setBoundsCalls.at(-1)).toEqual({ x: -1200, y: 60, width: 814, height: 784 })
+      expect(controller.getSnapshot().resizeUpdatePending).toBe(false)
+
+      await vi.advanceTimersByTimeAsync(32)
+      expect(adapter.setBoundsCalls).toHaveLength(3)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('cancels queued resize work when the controller is disposed', async () => {
+    vi.useFakeTimers()
+    try {
+      const { controller, adapter } = createController()
+      expect(controller.beginResize('bottom')).toBe(true)
+      adapter.cursor = { x: -1200, y: 160 }
+      controller.requestResizeUpdate()
+      adapter.cursor = { x: -1200, y: 260 }
+      controller.requestResizeUpdate()
+      expect(controller.getSnapshot().resizeUpdatePending).toBe(true)
+      const appliedBeforeDispose = adapter.setBoundsCalls.length
+      controller.dispose()
+
+      await vi.advanceTimersByTimeAsync(32)
+      expect(adapter.setBoundsCalls).toHaveLength(appliedBeforeDispose)
+      expect(controller.getSnapshot()).toMatchObject({ resizeSession: null, resizeUpdatePending: false, disposed: true })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('enforces transparent outer minimums while keeping the opposite edge fixed', () => {
     const { controller, adapter } = createController()
     const fixedRight = adapter.bounds.x + adapter.bounds.width
@@ -257,6 +347,18 @@ describe('window chrome resize state', () => {
     })
     expect(adapter.bounds.x + adapter.bounds.width).toBe(fixedRight)
     expect(adapter.bounds.y + adapter.bounds.height).toBe(fixedBottom)
+  })
+
+  it('reduces the custom-resize minimum to a smaller current work area', () => {
+    const { controller, adapter } = createController()
+    adapter.workAreas = [{ x: -1200, y: 60, width: 500, height: 600 }]
+    adapter.cursor = { x: adapter.bounds.x, y: adapter.bounds.y }
+    expect(controller.beginResize('top-left')).toBe(true)
+
+    adapter.cursor = { x: 2000, y: 2000 }
+    expect(controller.updateResize()).toBe(true)
+    expect(adapter.bounds).toEqual({ x: -1026, y: 244, width: 500, height: 600 })
+    expect(adapter.minimumSizeCalls.at(-1)).toEqual({ width: 500, height: 600 })
   })
 
   it('rejects custom resize in solid mode and while application-maximized', () => {

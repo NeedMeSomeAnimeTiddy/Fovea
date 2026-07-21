@@ -10,7 +10,9 @@ import type { Point, Rectangle, Size } from '@shared/types/geometry'
 import { getWindowAppearanceSizes } from './window-appearance'
 import {
   createResizeSession,
+  fitWindowSizesToWorkArea,
   recoverRestoreBounds,
+  refitBoundsToWorkAreas,
   resizeBoundsFromCursor,
   type ResizeSession
 } from './window-geometry'
@@ -19,6 +21,7 @@ export type WindowChromeKind = 'settings' | 'question'
 export type WindowPlacement = 'floating' | 'maximized'
 
 export const WINDOW_CHROME_READY_TIMEOUT_MS = 10_000
+export const WINDOW_CHROME_RESIZE_INTERVAL_MS = 16
 
 export interface WindowChromeControllerOptions {
   kind: WindowChromeKind
@@ -39,6 +42,7 @@ export interface WindowChromeAdapter {
   readonly webContentsId: number
   getBounds(): Rectangle
   setBounds(bounds: Rectangle): void
+  setMinimumSize(size: Size): void
   setMovable(movable: boolean): void
   minimize(): void
   maximize(): void
@@ -63,6 +67,7 @@ export interface WindowChromeControllerSnapshot {
   readyToShow: boolean
   rendererReady: boolean
   fallbackRetryEligible: boolean
+  resizeUpdatePending: boolean
   disposed: boolean
 }
 
@@ -103,6 +108,7 @@ export interface WindowChromeIpcEvent {
 
 interface ActiveResizeSession extends ResizeSession {
   lastAppliedBounds: Rectangle
+  minimumSize: Size
 }
 
 export class WindowChromeController {
@@ -122,6 +128,10 @@ export class WindowChromeController {
   private placement: WindowPlacement
   private restoreBounds: Rectangle | null
   private resizeSession: ActiveResizeSession | null = null
+  private resizeUpdateTimer: ReturnType<typeof setTimeout> | null = null
+  private resizeUpdateQueued = false
+  private lastResizeUpdateAt: number | null = null
+  private appliedMinimumSize: Size | null = null
   private readyToShow = false
   private rendererReady = false
   private readySignalled = false
@@ -176,6 +186,7 @@ export class WindowChromeController {
       readyToShow: this.readyToShow,
       rendererReady: this.rendererReady,
       fallbackRetryEligible: this.fallbackRetryEligible,
+      resizeUpdatePending: this.resizeUpdateQueued,
       disposed: this.disposed
     }
   }
@@ -193,7 +204,9 @@ export class WindowChromeController {
 
   handleBoundsChanged(): void {
     if (this.disposed || this.placement !== 'floating' || this.adapter.isDestroyed()) return
-    this.restoreBounds = copyRectangle(this.adapter.getBounds())
+    const bounds = this.adapter.getBounds()
+    this.restoreBounds = copyRectangle(bounds)
+    this.syncMinimumSize(bounds)
   }
 
   handleMinimize(): void {
@@ -233,24 +246,54 @@ export class WindowChromeController {
     if (this.placement === 'floating') {
       const currentBounds = this.adapter.getBounds()
       this.restoreBounds = copyRectangle(currentBounds)
+      const maximizedBounds = this.adapter.getWorkAreaForBounds(currentBounds)
+      this.syncMinimumSize(maximizedBounds)
       this.setPlacement('maximized')
       this.adapter.setMovable(false)
-      this.adapter.setBounds(copyRectangle(this.adapter.getWorkAreaForBounds(currentBounds)))
+      this.adapter.setBounds(copyRectangle(maximizedBounds))
       return
     }
 
     const restoreBounds = this.restoreBounds ?? this.adapter.getBounds()
     const recoveredBounds = recoverRestoreBounds(restoreBounds, this.adapter.getWorkAreas())
+    this.syncMinimumSize(recoveredBounds)
     this.adapter.setBounds(recoveredBounds)
     this.restoreBounds = copyRectangle(recoveredBounds)
     this.adapter.setMovable(true)
     this.setPlacement('floating')
   }
 
-  refitMaximizedBounds(): void {
-    if (this.disposed || this.material !== 'transparent' || this.placement !== 'maximized') return
+  handleDisplayChange(): boolean {
+    if (this.disposed || this.adapter.isDestroyed()) return false
+    this.endResize()
+
+    const workAreas = this.adapter.getWorkAreas()
+    if (workAreas.length === 0) return false
+
+    if (this.restoreBounds) {
+      this.restoreBounds = refitBoundsToWorkAreas(this.restoreBounds, workAreas)
+    }
+
     const currentBounds = this.adapter.getBounds()
-    this.adapter.setBounds(copyRectangle(this.adapter.getWorkAreaForBounds(currentBounds)))
+    if (this.placement === 'maximized') {
+      if (this.material !== 'transparent') {
+        this.syncMinimumSize(this.restoreBounds ?? currentBounds)
+        return false
+      }
+
+      const maximizedBounds = this.adapter.getWorkAreaForBounds(currentBounds)
+      this.syncMinimumSize(maximizedBounds)
+      if (rectanglesEqual(maximizedBounds, currentBounds)) return false
+      this.adapter.setBounds(copyRectangle(maximizedBounds))
+      return true
+    }
+
+    const fittedBounds = refitBoundsToWorkAreas(currentBounds, workAreas)
+    this.syncMinimumSize(fittedBounds)
+    this.restoreBounds = copyRectangle(fittedBounds)
+    if (rectanglesEqual(fittedBounds, currentBounds)) return false
+    this.adapter.setBounds(fittedBounds)
+    return true
   }
 
   closeWindow(): void {
@@ -266,23 +309,59 @@ export class WindowChromeController {
       this.placement !== 'floating' ||
       !this.canResize ||
       !isWindowResizeEdge(edge) ||
-      this.adapter.isDestroyed()
+      this.adapter.isDestroyed() ||
+      this.resizeSession !== null
     ) {
       return false
     }
 
     const startBounds = this.adapter.getBounds()
+    const minimumSize = this.getEffectiveMinimumSize(startBounds)
+    this.setMinimumSize(minimumSize)
     const session = createResizeSession(edge, startBounds, this.adapter.getCursorPoint())
-    this.resizeSession = { ...session, lastAppliedBounds: copyRectangle(startBounds) }
+    this.resizeSession = {
+      ...session,
+      lastAppliedBounds: copyRectangle(session.startBounds),
+      minimumSize
+    }
+    this.lastResizeUpdateAt = null
     return true
   }
 
   updateResize(): boolean {
+    return this.applyResizeUpdate()
+  }
+
+  requestResizeUpdate(): boolean {
+    if (this.disposed || !this.resizeSession || this.adapter.isDestroyed()) return false
+    this.resizeUpdateQueued = true
+    const now = Date.now()
+    const elapsed = this.lastResizeUpdateAt === null ? WINDOW_CHROME_RESIZE_INTERVAL_MS : now - this.lastResizeUpdateAt
+    if (elapsed >= WINDOW_CHROME_RESIZE_INTERVAL_MS) {
+      this.resizeUpdateQueued = false
+      this.lastResizeUpdateAt = now
+      this.applyResizeUpdate()
+      return true
+    }
+
+    if (this.resizeUpdateTimer !== null) return true
+    const delay = Math.max(1, WINDOW_CHROME_RESIZE_INTERVAL_MS - Math.max(0, elapsed))
+    this.resizeUpdateTimer = setTimeout(() => {
+      this.resizeUpdateTimer = null
+      if (!this.resizeUpdateQueued) return
+      this.resizeUpdateQueued = false
+      this.lastResizeUpdateAt = Date.now()
+      this.applyResizeUpdate()
+    }, delay)
+    return true
+  }
+
+  private applyResizeUpdate(): boolean {
     if (this.disposed || !this.resizeSession || this.adapter.isDestroyed()) return false
     const nextBounds = resizeBoundsFromCursor(
       this.resizeSession,
       this.adapter.getCursorPoint(),
-      this.minimumOuterSize
+      this.resizeSession.minimumSize
     )
     if (!nextBounds || rectanglesEqual(nextBounds, this.resizeSession.lastAppliedBounds)) return false
     this.adapter.setBounds(nextBounds)
@@ -292,7 +371,14 @@ export class WindowChromeController {
 
   endResize(): boolean {
     if (!this.resizeSession) return false
+    if (this.resizeUpdateTimer !== null) {
+      clearTimeout(this.resizeUpdateTimer)
+      this.resizeUpdateTimer = null
+    }
+    this.resizeUpdateQueued = false
+    this.applyResizeUpdate()
     this.resizeSession = null
+    this.lastResizeUpdateAt = null
     return true
   }
 
@@ -314,6 +400,10 @@ export class WindowChromeController {
 
   dispose(): void {
     if (this.disposed) return
+    if (this.resizeUpdateTimer !== null) clearTimeout(this.resizeUpdateTimer)
+    this.resizeUpdateTimer = null
+    this.resizeUpdateQueued = false
+    this.lastResizeUpdateAt = null
     this.resizeSession = null
     this.disposed = true
   }
@@ -335,6 +425,21 @@ export class WindowChromeController {
     if (this.placement === placement) return
     this.placement = placement
     this.broadcastState()
+  }
+
+  private getEffectiveMinimumSize(bounds: Rectangle): Size {
+    const workArea = this.adapter.getWorkAreaForBounds(bounds)
+    return fitWindowSizesToWorkArea(this.minimumOuterSize, this.minimumOuterSize, workArea).minimumSize
+  }
+
+  private syncMinimumSize(bounds: Rectangle): void {
+    this.setMinimumSize(this.getEffectiveMinimumSize(bounds))
+  }
+
+  private setMinimumSize(size: Size): void {
+    if (this.appliedMinimumSize && sizesEqual(this.appliedMinimumSize, size)) return
+    this.appliedMinimumSize = copySize(size)
+    this.adapter.setMinimumSize(size)
   }
 
   private maybeSignalReady(): boolean {
@@ -385,8 +490,10 @@ export async function openBrowserWindowWithChrome(
 ): Promise<OpenedBrowserWindowWithChrome> {
   const openAttempt = async (
     material: WindowMaterial,
-    fallbackRetryEligible: boolean
+    fallbackRetryEligible: boolean,
+    attempt: number
   ): Promise<OpenedBrowserWindowWithChrome> => {
+    const startedAt = Date.now()
     const window = options.createWindow(material)
     let settled = false
     let readinessTimer: ReturnType<typeof setTimeout> | null = null
@@ -427,26 +534,45 @@ export async function openBrowserWindowWithChrome(
     const current = options.isWindowCurrent?.(window) ?? true
     if (outcome === 'ready' && current && !window.isDestroyed()) {
       window.show()
+      if (material === 'solid') {
+        console.info(
+          `[window] ${options.label} solid mode ready (kind=${options.kind}, attempt=${attempt}, fallback=${attempt > 1}, ` +
+          `window=${window.id}, web-contents=${window.webContents.id}, elapsed=${Date.now() - startedAt}ms).`
+        )
+      }
       return { window, material }
     }
 
     if (outcome === 'timeout') {
       const snapshot = controller.getSnapshot()
+      const elapsed = Date.now() - startedAt
       console.warn(
-        `[window] ${options.label} readiness timed out (ready-to-show=${snapshot.readyToShow}, renderer-ready=${snapshot.rendererReady}).`
+        `[window] ${options.label} readiness timed out (kind=${options.kind}, attempt=${attempt}, material=${material}, ` +
+        `window=${snapshot.windowId}, web-contents=${snapshot.webContentsId}, elapsed=${elapsed}ms, ` +
+        `ready-to-show=${snapshot.readyToShow}, renderer-ready=${snapshot.rendererReady}, ` +
+        `current=${current}, destroyed=${window.isDestroyed()}).`
       )
       const shouldRetrySolid = controller.claimFallbackRetry()
-      if (shouldRetrySolid) options.beforeRetry?.(window)
+      if (shouldRetrySolid) {
+        console.warn(`[window] ${options.label} retrying once in solid mode after transparent readiness timeout.`)
+        options.beforeRetry?.(window)
+      }
       if (!window.isDestroyed()) window.destroy()
-      if (shouldRetrySolid) return openAttempt('solid', false)
-      throw new Error(`${options.label} readiness timed out in solid mode.`)
+      if (shouldRetrySolid) return openAttempt('solid', false, attempt + 1)
+      throw new Error(
+        `${options.label} readiness timed out in ${material} mode ` +
+        `(ready-to-show=${snapshot.readyToShow}, renderer-ready=${snapshot.rendererReady}).`
+      )
     }
 
     if (!window.isDestroyed()) window.destroy()
-    throw new Error(`${options.label} closed before startup readiness completed.`)
+    throw new Error(
+      `${options.label} closed before startup readiness completed ` +
+      `(attempt=${attempt}, material=${material}, current=${current}).`
+    )
   }
 
-  return openAttempt(options.initialMaterial, options.initialMaterial === 'transparent')
+  return openAttempt(options.initialMaterial, options.initialMaterial === 'transparent', 1)
 }
 
 export function resolveWindowChromeController(
@@ -471,35 +597,86 @@ export function registerBrowserWindowChrome(
   const controller = new WindowChromeController(adapter, options)
   const unregister = registry.register(controller)
   const displayEvents = screenSource as WindowChromeScreenSource & {
-    on?: (event: string, listener: () => void) => void
-    off?: (event: string, listener: () => void) => void
+    on?: (event: string, listener: (...arguments_: unknown[]) => void) => void
+    off?: (event: string, listener: (...arguments_: unknown[]) => void) => void
   }
-  const refitMaximizedBounds = (): void => controller.refitMaximizedBounds()
-  displayEvents.on?.('display-metrics-changed', refitMaximizedBounds)
-  displayEvents.on?.('display-removed', refitMaximizedBounds)
+  const handleDisplayMetricsChanged = (
+    _event: unknown,
+    _display: unknown,
+    changedMetrics?: unknown
+  ): void => {
+    if (
+      Array.isArray(changedMetrics) &&
+      !changedMetrics.some((metric) =>
+        metric === 'bounds' || metric === 'workArea' || metric === 'scaleFactor'
+      )
+    ) {
+      return
+    }
+    controller.handleDisplayChange()
+  }
+  const handleDisplayRemoved = (): void => {
+    controller.handleDisplayChange()
+  }
+  const handleReadyToShow = (): void => {
+    controller.markReadyToShow()
+  }
+  const handleFocus = (): void => {
+    controller.setFocused(true)
+  }
+  const handleBlur = (): void => {
+    controller.endResize()
+    controller.setFocused(false)
+  }
+  const handleMinimize = (): void => {
+    controller.handleMinimize()
+  }
+  const handleRestore = (): void => {
+    controller.handleRestore()
+  }
+  const handleMaximize = (): void => {
+    controller.handleNativeMaximize()
+  }
+  const handleUnmaximize = (): void => {
+    controller.handleNativeUnmaximize()
+  }
+  const handleBoundsChanged = (): void => {
+    controller.handleBoundsChanged()
+  }
+
+  displayEvents.on?.('display-metrics-changed', handleDisplayMetricsChanged)
+  displayEvents.on?.('display-removed', handleDisplayRemoved)
   let cleanedUp = false
 
   const cleanup = (): void => {
     if (cleanedUp) return
     cleanedUp = true
-    displayEvents.off?.('display-metrics-changed', refitMaximizedBounds)
-    displayEvents.off?.('display-removed', refitMaximizedBounds)
+    displayEvents.off?.('display-metrics-changed', handleDisplayMetricsChanged)
+    displayEvents.off?.('display-removed', handleDisplayRemoved)
+    window.off('ready-to-show', handleReadyToShow)
+    window.off('focus', handleFocus)
+    window.off('blur', handleBlur)
+    window.off('minimize', handleMinimize)
+    window.off('restore', handleRestore)
+    window.off('maximize', handleMaximize)
+    window.off('unmaximize', handleUnmaximize)
+    window.off('move', handleBoundsChanged)
+    window.off('resize', handleBoundsChanged)
+    window.off('closed', cleanup)
+    window.webContents.off('destroyed', cleanup)
     unregister()
     controller.dispose()
   }
 
-  window.on('ready-to-show', () => controller.markReadyToShow())
-  window.on('focus', () => controller.setFocused(true))
-  window.on('blur', () => {
-    controller.endResize()
-    controller.setFocused(false)
-  })
-  window.on('minimize', () => controller.handleMinimize())
-  window.on('restore', () => controller.handleRestore())
-  window.on('maximize', () => controller.handleNativeMaximize())
-  window.on('unmaximize', () => controller.handleNativeUnmaximize())
-  window.on('move', () => controller.handleBoundsChanged())
-  window.on('resize', () => controller.handleBoundsChanged())
+  window.on('ready-to-show', handleReadyToShow)
+  window.on('focus', handleFocus)
+  window.on('blur', handleBlur)
+  window.on('minimize', handleMinimize)
+  window.on('restore', handleRestore)
+  window.on('maximize', handleMaximize)
+  window.on('unmaximize', handleUnmaximize)
+  window.on('move', handleBoundsChanged)
+  window.on('resize', handleBoundsChanged)
   window.once('closed', cleanup)
   window.webContents.once('destroyed', cleanup)
   controller.broadcastState()
@@ -519,6 +696,7 @@ function createBrowserWindowChromeAdapter(
     webContentsId,
     getBounds: () => copyRectangle(window.getBounds()),
     setBounds: (bounds) => window.setBounds(copyRectangle(bounds)),
+    setMinimumSize: (size) => window.setMinimumSize(size.width, size.height),
     setMovable: (movable) => window.setMovable(movable),
     minimize: () => window.minimize(),
     maximize: () => window.maximize(),
@@ -543,6 +721,10 @@ function rectanglesEqual(first: Rectangle, second: Rectangle): boolean {
     first.width === second.width &&
     first.height === second.height
   )
+}
+
+function sizesEqual(first: Size, second: Size): boolean {
+  return first.width === second.width && first.height === second.height
 }
 
 function copyRectangle(rectangle: Rectangle): Rectangle {

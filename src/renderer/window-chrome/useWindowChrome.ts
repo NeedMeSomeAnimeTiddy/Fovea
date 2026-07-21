@@ -43,8 +43,13 @@ export function useWindowChrome(): WindowChromeController {
       pendingResizeFrame.current = null
     }
     window.snipchat.windowChrome.endResize()
-    if (active.target.hasPointerCapture(active.pointerId)) {
-      active.target.releasePointerCapture(active.pointerId)
+    try {
+      if (active.target.hasPointerCapture(active.pointerId)) {
+        active.target.releasePointerCapture(active.pointerId)
+      }
+    } catch {
+      // The browser can revoke capture between the check and release while the
+      // native window is minimizing, closing, or crossing a display boundary.
     }
   }, [])
 
@@ -86,10 +91,16 @@ export function useWindowChrome(): WindowChromeController {
       event.preventDefault()
       event.stopPropagation()
       const target = event.currentTarget
-      target.setPointerCapture(event.pointerId)
+      try {
+        target.setPointerCapture(event.pointerId)
+      } catch {
+        window.snipchat.windowChrome.endResize()
+        return
+      }
       activeResize.current = { pointerId: event.pointerId, target }
       void window.snipchat.windowChrome.beginResize(edge).catch(() => {
-        if (activeResize.current?.pointerId === event.pointerId) endResize(event)
+        const active = activeResize.current
+        if (active?.pointerId === event.pointerId && active.target === target) endResize(event)
       })
     },
     [endResize, state.canResize, state.material, state.maximized]
@@ -97,9 +108,10 @@ export function useWindowChrome(): WindowChromeController {
 
   const updateResize = useCallback((event: ReactPointerEvent<HTMLElement>): void => {
     if (activeResize.current?.pointerId !== event.pointerId || pendingResizeFrame.current !== null) return
+    const pointerId = event.pointerId
     pendingResizeFrame.current = requestAnimationFrame(() => {
       pendingResizeFrame.current = null
-      if (activeResize.current?.pointerId === event.pointerId) {
+      if (activeResize.current?.pointerId === pointerId) {
         window.snipchat.windowChrome.updateResize()
       }
     })

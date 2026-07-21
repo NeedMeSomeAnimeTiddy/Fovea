@@ -10,6 +10,8 @@ body,
 }
 
 .window-shell {
+  --window-frame-inset: var(--fovea-space-6);
+
   position: relative;
   width: 100%;
   height: 100%;
@@ -19,7 +21,7 @@ body,
 
 .window-surface {
   position: absolute;
-  inset: var(--fovea-space-6);
+  inset: var(--window-frame-inset);
   z-index: var(--fovea-z-content);
   display: flex;
   min-width: 0;
@@ -91,31 +93,33 @@ body,
 .window-resize-region {
   position: absolute;
   z-index: var(--fovea-z-chrome);
+  pointer-events: auto;
   touch-action: none;
+  user-select: none;
   -webkit-app-region: no-drag;
 }
 
 .window-resize-region--top {
-  inset: 0 var(--fovea-space-6) auto;
-  height: var(--fovea-space-6);
+  inset: 0 var(--window-frame-inset) auto;
+  height: var(--window-frame-inset);
   cursor: ns-resize;
 }
 
 .window-resize-region--right {
-  inset: var(--fovea-space-6) 0 var(--fovea-space-6) auto;
-  width: var(--fovea-space-6);
+  inset: var(--window-frame-inset) 0 var(--window-frame-inset) auto;
+  width: var(--window-frame-inset);
   cursor: ew-resize;
 }
 
 .window-resize-region--bottom {
-  inset: auto var(--fovea-space-6) 0;
-  height: var(--fovea-space-6);
+  inset: auto var(--window-frame-inset) 0;
+  height: var(--window-frame-inset);
   cursor: ns-resize;
 }
 
 .window-resize-region--left {
-  inset: var(--fovea-space-6) auto var(--fovea-space-6) 0;
-  width: var(--fovea-space-6);
+  inset: var(--window-frame-inset) auto var(--window-frame-inset) 0;
+  width: var(--window-frame-inset);
   cursor: ew-resize;
 }
 
@@ -123,8 +127,8 @@ body,
 .window-resize-region--top-right,
 .window-resize-region--bottom-right,
 .window-resize-region--bottom-left {
-  width: var(--fovea-space-6);
-  height: var(--fovea-space-6);
+  width: var(--window-frame-inset);
+  height: var(--window-frame-inset);
 }
 
 .window-resize-region--top-left {

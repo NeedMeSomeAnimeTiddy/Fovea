@@ -129,7 +129,7 @@ export function registerIpc(dependencies: IpcDependencies): void {
     requireWindowChromeController(event).beginResize(edge)
   })
   ipcMain.on(IPC.windowChromeUpdateResize, (event) => {
-    getWindowChromeController(event)?.updateResize()
+    getWindowChromeController(event)?.requestResizeUpdate()
   })
   ipcMain.on(IPC.windowChromeEndResize, (event) => {
     getWindowChromeController(event)?.endResize()

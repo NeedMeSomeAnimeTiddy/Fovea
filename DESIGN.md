@@ -238,11 +238,17 @@ Glass is simulated over the opaque `--fovea-color-canvas`. A GlassPanel may comb
 
 There is no desktop content behind the material and no blur dependency. Settings and question sessions use transparent, frameless BrowserWindows with renderer-owned application surfaces. The capture overlay remains transparent for functional capture reasons.
 
-`WindowFrame` is application chrome, not a `GlassPanel` variant. In transparent mode it owns a 12 CSS-pixel outer inset, a 20 CSS-pixel surface radius, the complete eight-region resize partition, and `--fovea-shadow-window`. The inset is interactive resize chrome rather than decorative padding. Maximized and solid modes remove the inset, radius, renderer shadow, and custom resize regions. The solid fallback uses the opaque `#090b10` native canvas and native opaque resize/maximize; it can be selected with `--disable-transparent-windows` or, in development, `FOVEA_DISABLE_TRANSPARENT_WINDOWS=1`. This native material fallback is independent of `data-transparency="off"`.
+`WindowFrame` is application chrome, not a `GlassPanel` variant. Settings and every question session use this same frame. In transparent mode it owns a 12 CSS-pixel outer inset, a 20 CSS-pixel surface radius, the complete eight-region resize partition, and `--fovea-shadow-window`. One local `--window-frame-inset` property references `--fovea-space-6` for the surface and all eight regions, so fractional physical-pixel mapping cannot make their logical boundaries drift. The inset is interactive resize chrome rather than decorative padding. Maximized and solid modes remove the inset, radius, renderer shadow, and custom resize regions. The solid fallback uses the opaque `#090b10` native canvas and native opaque resize/maximize; it can be selected with `--disable-transparent-windows` or, in development, `FOVEA_DISABLE_TRANSPARENT_WINDOWS=1`. This native material fallback is independent of `data-transparency="off"`.
+
+Both window kinds remain hidden until Electron `ready-to-show` and the renderer-ready handshake have arrived. A bounded readiness timeout records the window kind, attempt, material, native identifiers, elapsed time, each readiness flag, current-window status, and destruction status. A failed transparent attempt is destroyed and retried once in solid mode; an explicitly selected or retrying solid attempt never loops. Successful solid startup also records whether it was an automatic fallback. These diagnostics contain no capture, question, provider, or user data.
+
+Window bounds, work areas, restore bounds, minimums, and cursor sampling stay in Electron DIP. Fractional metrics are normalized to integer BrowserWindow bounds contained within the reported work area. Relevant `bounds`, `workArea`, and `scaleFactor` display-metric changes, plus display removal, end active resize; re-fit saved floating bounds; update the effective minimum for small work areas; and re-fit application-maximized transparent bounds. This covers taskbar edge/work-area changes and removal of the display that owned restore bounds while preserving negative desktop coordinates.
+
+Transparent resize begins only for one of the eight closed resize-edge values. Renderer pointer moves are coalesced to one animation-frame request, and main additionally coalesces requests to a 16 ms interval before sampling the current cursor. Resize end flushes the final cursor position, cancels queued work, and clears the session. Pointer up, cancellation, capture loss, blur, minimize, close, renderer teardown, controller disposal, and relevant display changes all terminate resize; pointer-capture release tolerates Windows revoking capture during native lifecycle changes.
 
 When `[data-transparency='off']` is present, or increased contrast is requested, translucent fills resolve to solid fallbacks, decorative gradients/glows are removed, and borders strengthen. Forced-colours mode lets the user agent replace authored colours and uses system `Canvas`, `CanvasText`, `Highlight`, and `HighlightText` for the page, selection, and focus outline.
 
-The Phase 4 main-process constant `WINDOW_BACKGROUND_COLOR` must be `#090b10`, matching `--fovea-color-canvas`. This intentional cross-language duplicate prevents a bright startup flash and must be reviewed whenever the canvas anchor changes.
+The main-process constant `WINDOW_BACKGROUND_COLOR` must be `#090b10`, matching `--fovea-color-canvas`. This intentional cross-language duplicate prevents a bright startup flash and must be reviewed whenever the canvas anchor changes.
 
 ## Component state contracts
 
@@ -334,6 +340,7 @@ No animated gradient, animated noise, parallax, pulsing glow, or decorative cont
 - No noise ships in the initial system. Any later static texture needs paint profiling and a demonstrated banding benefit.
 - Spinner is the only planned continuous animation: small, transform-only, and replaced by a static indicator under reduced motion.
 - Capture drag and long-transcript scrolling should sustain responsive 60 Hz interaction on representative Windows 10 hardware. Profile paint flashing and layer growth before changing the existing capture mask.
+- Transparent resize requests are capped by renderer animation frames and a 16 ms main-process coalescing interval; bounds state remains outside React rendering.
 - Avoid promoting every surface to its own compositor layer. Transform and `will-change` are temporary interaction tools, not default surface properties.
 - Never trade readable solid fallback surfaces for visual transparency.
 

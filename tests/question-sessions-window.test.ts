@@ -75,6 +75,8 @@ const mocks = vi.hoisted(() => {
       this.bounds = { ...bounds }
     }
 
+    setMinimumSize(): void {}
+
     setMovable(movable: boolean): void {
       this.movable = movable
     }
@@ -321,6 +323,7 @@ describe('question-session window migration', () => {
 
   it('replaces one timed-out transparent attempt with one solid attempt without cleaning the session', async () => {
     vi.useFakeTimers()
+    vi.spyOn(console, 'info').mockImplementation(() => undefined)
     vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     const sessions = await createSessions()
     const { QUESTION_WINDOW_READY_TIMEOUT_MS } = await import('../src/main/windows/question-sessions')
