@@ -9,6 +9,16 @@ body,
   background: transparent;
 }
 
+/* The shared design foundation owns the normal opaque application canvas.
+ * Window renderers opt into this stronger contextual rule so their transparent
+ * BrowserWindow background cannot be repainted by stylesheet injection order
+ * in the Vite development server. */
+html:has(.window-shell),
+html:has(.window-shell) body,
+html:has(.window-shell) #root {
+  background: transparent;
+}
+
 .window-shell {
   --window-frame-inset: var(--fovea-space-6);
 
