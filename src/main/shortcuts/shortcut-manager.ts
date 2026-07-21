@@ -37,7 +37,12 @@ export class ShortcutManager {
     const next = accelerator?.trim() || null
     if (next && next.length > 100) throw new Error('Shortcut is too long.')
     const currentSettings = this.settings.get()
-    const duplicate = (Object.entries(currentSettings.shortcuts) as Array<[ShortcutAction, string | null]>).find(([other, value]) => other !== action && value?.toLowerCase() === next?.toLowerCase())
+    if (currentSettings.shortcuts[action] === next) return
+    const duplicate = next
+      ? (Object.entries(currentSettings.shortcuts) as Array<[ShortcutAction, string | null]>).find(
+          ([other, value]) => other !== action && value?.toLowerCase() === next.toLowerCase()
+        )
+      : undefined
     if (duplicate) throw new Error(`That shortcut is already assigned to ${duplicate[0]}.`)
     const previous = this.registered.get(action) ?? null
     if (previous === next) return
@@ -54,7 +59,45 @@ export class ShortcutManager {
   }
 
   async reset(): Promise<void> {
-    for (const action of Object.keys(DEFAULT_SHORTCUTS) as ShortcutAction[]) await this.set(action, DEFAULT_SHORTCUTS[action])
+    const desired = { ...DEFAULT_SHORTCUTS }
+    const previousRegistered = new Map(this.registered)
+    let activeAccelerators = new Set(previousRegistered.values())
+    if (!this.paused) {
+      try {
+        for (const [action, accelerator] of Object.entries(desired) as Array<[ShortcutAction, string | null]>) {
+          if (!accelerator || hasAccelerator(activeAccelerators, accelerator)) continue
+          if (!this.registrar.register(accelerator, this.handlers[action])) {
+            throw new Error(`The default shortcut for ${action} is unavailable.`)
+          }
+          activeAccelerators.add(accelerator)
+        }
+        for (const [action, accelerator] of previousRegistered) {
+          if (sameAccelerator(desired[action], accelerator)) continue
+          this.registrar.unregister(accelerator)
+          activeAccelerators = withoutAccelerator(activeAccelerators, accelerator)
+        }
+        for (const [action, accelerator] of Object.entries(desired) as Array<[ShortcutAction, string | null]>) {
+          if (!accelerator || hasAccelerator(activeAccelerators, accelerator)) continue
+          if (!this.registrar.register(accelerator, this.handlers[action])) {
+            throw new Error(`The default shortcut for ${action} is unavailable.`)
+          }
+          activeAccelerators.add(accelerator)
+        }
+        this.registered.clear()
+        for (const [action, accelerator] of Object.entries(desired) as Array<[ShortcutAction, string | null]>) {
+          if (accelerator) this.registered.set(action, accelerator)
+        }
+      } catch (error) {
+        this.restoreRegistrations(activeAccelerators, previousRegistered)
+        throw error
+      }
+    }
+    try {
+      await this.settings.update({ shortcuts: desired })
+    } catch (error) {
+      if (!this.paused) this.restoreRegistrations(activeAccelerators, previousRegistered)
+      throw error
+    }
   }
 
   pause(): void {
@@ -71,4 +114,27 @@ export class ShortcutManager {
   }
 
   dispose(): void { this.pause() }
+
+  private restoreRegistrations(
+    activeAccelerators: ReadonlySet<string>,
+    previous: ReadonlyMap<ShortcutAction, string>
+  ): void {
+    for (const accelerator of activeAccelerators) this.registrar.unregister(accelerator)
+    this.registered.clear()
+    for (const [action, accelerator] of previous) {
+      if (this.registrar.register(accelerator, this.handlers[action])) this.registered.set(action, accelerator)
+    }
+  }
+}
+
+function sameAccelerator(left: string | null, right: string): boolean {
+  return left?.toLowerCase() === right.toLowerCase()
+}
+
+function hasAccelerator(accelerators: ReadonlySet<string>, target: string): boolean {
+  return [...accelerators].some((accelerator) => accelerator.toLowerCase() === target.toLowerCase())
+}
+
+function withoutAccelerator(accelerators: ReadonlySet<string>, target: string): Set<string> {
+  return new Set([...accelerators].filter((accelerator) => accelerator.toLowerCase() !== target.toLowerCase()))
 }

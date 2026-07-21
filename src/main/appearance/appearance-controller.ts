@@ -1,10 +1,9 @@
 import { BrowserWindow, nativeTheme } from 'electron'
 import { IPC } from '@shared/contracts/ipc'
-import type { AppearancePreference, AppearanceState, ResolvedAppearance } from '@shared/types/app'
+import type { AppearancePreference, AppearanceState } from '@shared/types/app'
 import type { SettingsStore } from '../storage/settings-store'
-import { setWindowBackgroundAppearance } from '../windows/window-appearance'
-
-const BACKGROUNDS: Record<ResolvedAppearance, string> = { dark: '#0F131A', light: '#F3F6FA' }
+import { resolveWindowBackgroundColor, setWindowBackgroundAppearance } from '../windows/window-appearance'
+import { getCreatedWindowMaterial } from '../windows/window-factory'
 
 export class AppearanceController {
   constructor(private readonly settings: SettingsStore) {}
@@ -36,7 +35,7 @@ export class AppearanceController {
     setWindowBackgroundAppearance(state.resolved)
     for (const window of BrowserWindow.getAllWindows()) {
       if (window.isDestroyed()) continue
-      window.setBackgroundColor(BACKGROUNDS[state.resolved])
+      window.setBackgroundColor(resolveWindowBackgroundColor(getCreatedWindowMaterial(window), state.resolved))
       if (!window.webContents.isDestroyed()) window.webContents.send(IPC.appearanceChanged, state)
     }
   }

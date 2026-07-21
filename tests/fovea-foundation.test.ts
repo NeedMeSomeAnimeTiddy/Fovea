@@ -69,10 +69,39 @@ describe('independent shortcut registration', () => {
     const handler = (): void => undefined
     const manager = new ShortcutManager(registrar, settings, { region: handler, display: handler, window: handler, 'repeat-last': handler, settings: handler })
     manager.initialise(); expect(active.has('CommandOrControl+Alt+Shift+Space')).toBe(true)
+    await expect(manager.reset()).resolves.toBeUndefined()
     await expect(manager.set('display', 'CommandOrControl+Alt+Shift+Space')).rejects.toThrow(/already assigned to region/)
     await expect(manager.set('display', 'Ctrl+X')).rejects.toThrow(/display is unavailable/)
     expect(active.has('CommandOrControl+Alt+Shift+Space')).toBe(true)
     await manager.set('display', 'Ctrl+D'); expect(active.has('Ctrl+D')).toBe(true)
+    await expect(manager.set('display', null)).resolves.toBeUndefined()
+    expect(active.has('Ctrl+D')).toBe(false)
+    await manager.set('display', 'Ctrl+D')
     manager.pause(); expect(active.size).toBe(0); manager.resume(); expect(active.size).toBe(2)
+  })
+
+  it('resets all bindings atomically and restores registrations when persistence fails', async () => {
+    const { settings } = await stores()
+    await settings.update({ shortcuts: { region: 'Ctrl+R', display: null, window: 'CommandOrControl+Alt+Shift+Space', 'repeat-last': null, settings: null } })
+    const active = new Set<string>()
+    const registrar: ShortcutRegistrar = {
+      register: vi.fn((accelerator) => {
+        if (active.has(accelerator)) return false
+        active.add(accelerator)
+        return true
+      }),
+      unregister: vi.fn((accelerator) => { active.delete(accelerator) })
+    }
+    const handler = (): void => undefined
+    const manager = new ShortcutManager(registrar, settings, { region: handler, display: handler, window: handler, 'repeat-last': handler, settings: handler })
+    manager.initialise()
+    const persistence = vi.spyOn(settings, 'update').mockRejectedValueOnce(new Error('disk unavailable'))
+    await expect(manager.reset()).rejects.toThrow(/disk unavailable/)
+    expect(active).toEqual(new Set(['Ctrl+R', 'CommandOrControl+Alt+Shift+Space']))
+    expect(settings.get().shortcuts.region).toBe('Ctrl+R')
+    persistence.mockRestore()
+    await manager.reset()
+    expect(active).toEqual(new Set(['CommandOrControl+Alt+Shift+Space']))
+    expect(settings.get().shortcuts).toEqual({ region: 'CommandOrControl+Alt+Shift+Space', display: null, window: null, 'repeat-last': null, settings: null })
   })
 })

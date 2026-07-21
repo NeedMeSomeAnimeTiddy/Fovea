@@ -1,5 +1,6 @@
 import { BrowserWindow, type BrowserWindowConstructorOptions } from 'electron'
 import { join } from 'node:path'
+import type { WindowMaterial } from '@shared/contracts/ipc'
 
 const preload = join(__dirname, '../preload/index.js')
 const rendererDirectory = {
@@ -7,9 +8,10 @@ const rendererDirectory = {
   overlay: 'capture-overlay',
   question: 'question-window'
 } as const
+const windowMaterials = new WeakMap<BrowserWindow, WindowMaterial>()
 
 export function secureWindow(options: BrowserWindowConstructorOptions): BrowserWindow {
-  return new BrowserWindow({
+  const window = new BrowserWindow({
     ...options,
     webPreferences: {
       preload,
@@ -20,6 +22,12 @@ export function secureWindow(options: BrowserWindowConstructorOptions): BrowserW
       ...options.webPreferences
     }
   })
+  windowMaterials.set(window, options.transparent === true ? 'transparent' : 'solid')
+  return window
+}
+
+export function getCreatedWindowMaterial(window: BrowserWindow): WindowMaterial {
+  return windowMaterials.get(window) ?? 'solid'
 }
 
 export async function loadRenderer(
