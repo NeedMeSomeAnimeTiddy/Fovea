@@ -20,10 +20,17 @@ export interface VisionModel {
   inputModalities: string[]
 }
 
+export interface VisionTurnInput {
+  text: string
+  imagePath?: string
+  modelId: string
+  reasoningEffort?: string | null
+  history?: Array<{ role: 'user' | 'assistant'; text: string }>
+}
+
 export type ProviderEvent =
   | { type: 'started'; turnId: string }
   | { type: 'delta'; text: string }
   | { type: 'completed' }
   | { type: 'cancelled' }
   | { type: 'error'; message: string }
-

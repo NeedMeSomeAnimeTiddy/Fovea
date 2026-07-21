@@ -1,4 +1,5 @@
 import { mkdir, readFile, stat } from 'node:fs/promises'
+import { Buffer } from 'node:buffer'
 import { resolve } from 'node:path'
 import process from 'node:process'
 import sharp from 'sharp'

@@ -14,7 +14,7 @@ export function WindowFrame({ children, title }: WindowFrameProps): React.JSX.El
 
   useEffect(() => {
     if (!chrome.stateResolved) return
-    const frame = requestAnimationFrame(() => window.snipchat.windowChrome.ready())
+    const frame = requestAnimationFrame(() => window.fovea.windowChrome.ready())
     return () => cancelAnimationFrame(frame)
   }, [chrome.stateResolved])
 

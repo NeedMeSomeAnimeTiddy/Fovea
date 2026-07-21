@@ -77,7 +77,7 @@
       "target": [
         "nsis"
       ],
-      "signAndEditExecutable": false,
+      "signExecutable": false,
       "icon": "resources/assets/generated/fovea.ico",
       "artifactName": "Fovea-${version}-Setup.${ext}"
     },

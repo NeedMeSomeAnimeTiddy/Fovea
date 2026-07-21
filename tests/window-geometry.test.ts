@@ -117,7 +117,7 @@ describe('window appearance geometry', () => {
       minimumSize: { width: 560, height: 640 },
       frame: false,
       transparent: false,
-      backgroundColor: '#090b10',
+      backgroundColor: '#f3f6fa',
       hasShadow: true,
       resizable: true,
       maximizable: true,

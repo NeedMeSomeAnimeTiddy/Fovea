@@ -3,7 +3,7 @@ import { mkdir, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import readline from 'node:readline'
-import type { ProviderEvent, ProviderStatus, VisionModel } from '@shared/types/provider'
+import type { ProviderEvent, ProviderStatus, VisionModel, VisionTurnInput } from '@shared/types/provider'
 import type { VisionProvider } from '../vision-provider'
 import { AsyncQueue } from './async-queue'
 import { JsonlRpcClient } from './jsonl-rpc-client'
@@ -117,10 +117,10 @@ export class CodexAppServerProvider extends EventEmitter implements VisionProvid
     }
   }
 
-  async createConversation(): Promise<string> {
+  async createConversation(selectedModelId?: string): Promise<string> {
     const rpc = await this.requireRpc()
     const models = await this.listModels()
-    const model = this.options.getSelectedModel() ?? models.find((entry) => entry.isDefault)?.id ?? models[0]?.id
+    const model = selectedModelId ?? this.options.getSelectedModel() ?? models.find((entry) => entry.isDefault)?.id ?? models[0]?.id
     if (!model) throw new Error('No image-capable Codex model is available for this account.')
     const params: ThreadStartParams = {
       model,
@@ -129,7 +129,7 @@ export class CodexAppServerProvider extends EventEmitter implements VisionProvid
       sandbox: 'read-only',
       developerInstructions: VISUAL_ASSISTANT_INSTRUCTION,
       ephemeral: true,
-      serviceName: 'snipchat'
+      serviceName: 'fovea'
     }
     const result = await rpc.request<ThreadStartResponse>('thread/start', params)
     return result.thread.id
@@ -137,7 +137,7 @@ export class CodexAppServerProvider extends EventEmitter implements VisionProvid
 
   async *sendMessage(
     conversationId: string,
-    input: { text: string; imagePath?: string }
+    input: VisionTurnInput
   ): AsyncIterable<ProviderEvent> {
     const rpc = await this.requireRpc()
     const queue = new AsyncQueue<ProviderEvent>()
@@ -145,15 +145,13 @@ export class CodexAppServerProvider extends EventEmitter implements VisionProvid
     if (input.imagePath) items.push({ type: 'localImage', path: input.imagePath })
 
     const models = await this.listModels()
-    const modelId = this.options.getSelectedModel() ?? models.find((model) => model.isDefault)?.id ?? models[0]?.id
+    const modelId = input.modelId ?? this.options.getSelectedModel() ?? models.find((model) => model.isDefault)?.id ?? models[0]?.id
     if (!modelId) throw new Error('No image-capable Codex model is available for this account.')
     const model = models.find((entry) => entry.id === modelId)
     const efforts = model?.supportedReasoningEfforts ?? []
-    const effort: TurnStartParams['effort'] = efforts.includes('low')
-      ? 'low'
-      : efforts.includes('medium')
-        ? 'medium'
-        : (model?.defaultReasoningEffort as TurnStartParams['effort'])
+    const effort: TurnStartParams['effort'] = input.reasoningEffort && efforts.includes(input.reasoningEffort)
+      ? input.reasoningEffort as TurnStartParams['effort']
+      : efforts.includes('low') ? 'low' : efforts.includes('medium') ? 'medium' : (model?.defaultReasoningEffort as TurnStartParams['effort'])
 
     try {
       const params: TurnStartParams = {
@@ -249,7 +247,7 @@ export class CodexAppServerProvider extends EventEmitter implements VisionProvid
 
     try {
       await rpc.request('initialize', {
-        clientInfo: { name: 'snipchat', title: 'SnipChat', version: '0.1.0' }
+        clientInfo: { name: 'fovea', title: 'Fovea', version: '0.1.0' }
       })
       rpc.notify('initialized')
       this.ready = true
@@ -327,7 +325,7 @@ export class CodexAppServerProvider extends EventEmitter implements VisionProvid
       notification.method === 'item/started' &&
       ['commandExecution', 'fileChange', 'mcpToolCall', 'dynamicToolCall', 'webSearch'].includes(String(params.item?.type))
     ) {
-      active.queue.push({ type: 'error', message: 'SnipChat blocked an attempted tool action.' })
+      active.queue.push({ type: 'error', message: 'Fovea blocked an attempted tool action.' })
       void this.rpc?.request('turn/interrupt', { threadId, turnId: active.turnId }).catch(() => undefined)
       return
     }
@@ -371,7 +369,7 @@ export class CodexAppServerProvider extends EventEmitter implements VisionProvid
       const response: PermissionsRequestApprovalResponse = { permissions: {}, scope: 'turn' }
       rpc.respond(request.id, response)
     } else if (request.method === 'item/tool/requestUserInput') {
-      rpc.respondError(request.id, { code: -32601, message: 'SnipChat does not allow interactive tool requests.' })
+      rpc.respondError(request.id, { code: -32601, message: 'Fovea does not allow interactive tool requests.' })
     } else {
       rpc.respondError(request.id, { code: -32601, message: 'Unsupported server request.' })
     }

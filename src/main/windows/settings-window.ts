@@ -1,4 +1,4 @@
-import { app, screen, type BrowserWindow } from 'electron'
+import { app, screen, type BrowserWindow, type Rectangle } from 'electron'
 import type { WindowMaterial } from '@shared/contracts/ipc'
 import {
   getWindowAppearanceOptions,
@@ -22,7 +22,7 @@ let settingsWindow: BrowserWindow | null = null
 let settingsWindowOpening: Promise<BrowserWindow> | null = null
 let materialModeLogged = false
 
-export async function showSettingsWindow(): Promise<BrowserWindow> {
+export async function showSettingsWindow(trayBounds?: Rectangle): Promise<BrowserWindow> {
   if (settingsWindowOpening) return settingsWindowOpening
   if (settingsWindow && !settingsWindow.isDestroyed()) {
     settingsWindow.show()
@@ -41,7 +41,7 @@ export async function showSettingsWindow(): Promise<BrowserWindow> {
     minimumSurfaceSize: SETTINGS_WINDOW_SIZES.minimumSurfaceSize,
     screenSource: screen,
     timeoutMs: SETTINGS_WINDOW_READY_TIMEOUT_MS,
-    createWindow: createSettingsBrowserWindow,
+    createWindow: (attempt) => createSettingsBrowserWindow(attempt, trayBounds),
     loadRenderer: (window) => loadRenderer(window, 'settings'),
     isWindowCurrent: (window) => settingsWindow === window
   }).then((opened) => {
@@ -61,13 +61,15 @@ export function getSettingsWindow(): BrowserWindow | null {
   return settingsWindow && !settingsWindow.isDestroyed() ? settingsWindow : null
 }
 
-function createSettingsBrowserWindow(material: WindowMaterial): BrowserWindow {
+function createSettingsBrowserWindow(material: WindowMaterial, trayBounds?: Rectangle): BrowserWindow {
   const appearance = getWindowAppearanceOptions(
     SETTINGS_WINDOW_SIZES,
     material,
     screen.getPrimaryDisplay().workArea
   )
+  const placement = trayBounds ? placeBesideTray(trayBounds, appearance.size) : null
   const window = secureWindow({
+    ...(placement ?? {}),
     width: appearance.size.width,
     height: appearance.size.height,
     minWidth: appearance.minimumSize.width,
@@ -86,7 +88,7 @@ function createSettingsBrowserWindow(material: WindowMaterial): BrowserWindow {
     fullscreenable: appearance.fullscreenable,
     thickFrame: appearance.thickFrame,
     roundedCorners: appearance.roundedCorners,
-    title: 'SnipChat Settings',
+    title: 'Fovea Settings',
     autoHideMenuBar: true
   })
   settingsWindow = window
@@ -96,6 +98,17 @@ function createSettingsBrowserWindow(material: WindowMaterial): BrowserWindow {
     if (settingsWindow === window) settingsWindow = null
   })
   return window
+}
+
+export function placeBesideTray(tray: Rectangle, size: { width: number; height: number }): { x: number; y: number } {
+  const workArea = screen.getDisplayNearestPoint({ x: tray.x + tray.width / 2, y: tray.y + tray.height / 2 }).workArea
+  const distances = { left: Math.abs(tray.x - workArea.x), right: Math.abs(workArea.x + workArea.width - (tray.x + tray.width)), top: Math.abs(tray.y - workArea.y), bottom: Math.abs(workArea.y + workArea.height - (tray.y + tray.height)) }
+  const edge = (Object.entries(distances).sort((a, b) => a[1] - b[1])[0]?.[0] ?? 'bottom') as keyof typeof distances
+  let x = tray.x + tray.width - size.width; let y = tray.y - size.height - 8
+  if (edge === 'top') y = tray.y + tray.height + 8
+  if (edge === 'left') { x = tray.x + tray.width + 8; y = tray.y + tray.height - size.height }
+  if (edge === 'right') { x = tray.x - size.width - 8; y = tray.y + tray.height - size.height }
+  return { x: Math.round(Math.max(workArea.x, Math.min(x, workArea.x + workArea.width - size.width))), y: Math.round(Math.max(workArea.y, Math.min(y, workArea.y + workArea.height - size.height))) }
 }
 
 function logMaterialModeOnce(material: WindowMaterial): void {

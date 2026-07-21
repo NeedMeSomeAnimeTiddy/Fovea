@@ -1,126 +1,53 @@
 import { StrictMode, useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import type { SettingsViewState } from '@shared/contracts/ipc'
-import { Badge, Button, Card, Select, StatusBanner, Switch, TextInput, type BadgeTone } from '../design-system'
+import type { ProviderKind, ProviderModelCapability, ShortcutAction } from '@shared/types/app'
+import { Badge, Button, Card, Select, StatusBanner, Switch, TextInput } from '../design-system'
+import { initialiseAppearance } from '../appearance'
 import { WindowFrame } from '../window-chrome/WindowFrame'
 import '../design-system/index.css'
 import './settings.css'
 
+const CATEGORIES = ['Account', 'Models', 'Capture', 'Appearance', 'Privacy', 'About'] as const
+type Category = typeof CATEGORIES[number]
+
 function SettingsApp(): React.JSX.Element {
   const [state, setState] = useState<SettingsViewState | null>(null)
+  const [category, setCategory] = useState<Category>('Account')
+  const [provider, setProvider] = useState<Exclude<ProviderKind, 'chatgpt'>>('openai')
+  const [profileName, setProfileName] = useState('OpenAI')
   const [apiKey, setApiKey] = useState('')
+  const [models, setModels] = useState<Record<string, ProviderModelCapability[]>>({})
   const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
   const [working, setWorking] = useState(false)
-  const [cleanupMessage, setCleanupMessage] = useState('')
 
-  useEffect(() => {
-    void window.snipchat.settings.get().then(setState).catch((reason) => setError(message(reason)))
-    return window.snipchat.settings.onChanged(setState)
-  }, [])
+  useEffect(() => { void initialiseAppearance(); void window.fovea.settings.get().then(setState).catch((reason) => setError(message(reason))); return window.fovea.settings.onChanged(setState) }, [])
+  const run = async (operation: () => Promise<unknown>, success = ''): Promise<void> => { setWorking(true); setError(''); setNotice(''); try { await operation(); setState(await window.fovea.settings.get()); if (success) setNotice(success) } catch (reason) { setError(message(reason)) } finally { setWorking(false) } }
+  if (!state) return <WindowFrame title="Settings"><main className="settings-loading">Starting Fovea…{error && <StatusBanner tone="error">{error}</StatusBanner>}</main></WindowFrame>
 
-  const run = async (operation: () => Promise<void>): Promise<void> => {
-    setWorking(true)
-    setError('')
-    try {
-      await operation()
-      setState(await window.snipchat.settings.get())
-    } catch (reason) {
-      setError(message(reason))
-    } finally {
-      setWorking(false)
-    }
-  }
-
-  if (!state) {
-    return (
-      <WindowFrame title="Settings">
-        <main className="settings">
-          <p>Starting SnipChat…</p>
-          {error ? <StatusBanner role="alert" tone="error">{error}</StatusBanner> : null}
-        </main>
-      </WindowFrame>
-    )
-  }
-  const account = state.provider.account
-
-  return (
-    <WindowFrame title="Settings">
-      <main className="settings">
-        <header className="settings-header">
-          <div>
-            <span className="eyebrow">SNIPCHAT PROTOTYPE</span>
-            <h1>Settings</h1>
-          </div>
-          <Badge className="provider-status" tone={providerTone(state.provider.state)}>{state.provider.state}</Badge>
-        </header>
-
-        {error ? <StatusBanner role="alert" tone="error">{error}</StatusBanner> : null}
-        {state.provider.error ? <StatusBanner role="alert" tone="error">{state.provider.error}</StatusBanner> : null}
-
-        <Card as="section" className="settings-section">
-        <h2>Authentication</h2>
-        {account ? (
-          <div className="account-row">
-            <div>
-              <strong>{account.type === 'chatgpt' ? 'ChatGPT subscription' : 'OpenAI API key'}</strong>
-              <div className="settings-muted">{account.email || 'Signed in'}{account.planType ? ` · ${account.planType} plan` : ''}</div>
-            </div>
-            <Button variant="danger" disabled={working} onClick={() => void run(() => window.snipchat.settings.signOut())}>Log out</Button>
-          </div>
-        ) : (
-          <>
-            <Button className="wide" disabled={working || state.provider.state === 'error'} onClick={() => void run(() => window.snipchat.settings.signInWithChatGPT())}>
-              Sign in with ChatGPT
-            </Button>
-            <p className="settings-muted small">Uses the official browser OAuth flow. SnipChat never receives or stores your ChatGPT tokens.</p>
-            <div className="divider"><span>or use the API</span></div>
-            <div className="api-row">
-              <TextInput label="API key" type="password" autoComplete="off" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="sk-…" />
-              <Button variant="secondary" disabled={working || !apiKey.trim()} onClick={() => void run(async () => { await window.snipchat.settings.signInWithApiKey(apiKey); setApiKey('') })}>Use API key</Button>
-            </div>
-            <p className="settings-muted small">API usage is billed separately from a ChatGPT subscription. The key is passed directly to Codex and is not saved by SnipChat.</p>
-          </>
-        )}
-        </Card>
-
-        <Card as="section" className="settings-section">
-        <h2>Model</h2>
-        <Select id="model" label="Image-capable model" disabled={working || state.models.length === 0} value={state.selectedModelId ?? ''} onChange={(event) => void run(() => window.snipchat.settings.setModel(event.target.value))}>
-          {state.models.length === 0 && <option value="">Sign in to load models</option>}
-          {state.models.map((model) => <option key={model.id} value={model.id}>{model.displayName}{model.isDefault ? ' — recommended' : ''}</option>)}
-        </Select>
-        <p className="settings-muted small">Only models reporting image input support are shown. SnipChat prefers low reasoning effort for responsiveness.</p>
-        </Card>
-
-        <Card as="section" className="settings-section">
-        <h2>Application</h2>
-        <div className="setting-row"><span>Global shortcut</span><kbd>{state.shortcut}</kbd></div>
-        <div className="application-switch">
-          <Switch label="Launch at startup" checked={state.launchAtLogin} onChange={(event) => void run(() => window.snipchat.settings.setLaunchAtLogin(event.target.checked))} />
-        </div>
-        <div className="path-block"><span className="path-label">Temporary screenshots</span><code>{state.tempLocation}</code></div>
-        <div className="cleanup-row">
-          <Button variant="secondary" onClick={() => void window.snipchat.settings.deleteTemporaryFiles().then((count) => setCleanupMessage(`Deleted ${count} temporary screenshot${count === 1 ? '' : 's'}.`)).catch((reason) => setError(message(reason)))}>Delete temporary files now</Button>
-          {cleanupMessage ? <StatusBanner className="cleanup-status" tone="success">{cleanupMessage}</StatusBanner> : null}
-        </div>
-        </Card>
-
-        <footer>Codex app-server {state.provider.version} · Local sidecar · No analytics</footer>
-      </main>
-    </WindowFrame>
-  )
+  return <WindowFrame title="Settings"><main className="settings-shell">
+    <aside className="settings-nav" aria-label="Settings categories"><div className="brand"><span className="brand-mark">◉</span><div><strong>Fovea</strong><small>{state.onboardingCompleted ? 'Settings' : 'Welcome'}</small></div></div>{CATEGORIES.map((item) => <button key={item} className={category === item ? 'active' : ''} onClick={() => setCategory(item)}>{item}</button>)}</aside>
+    <section className="settings-content"><header><div><span className="eyebrow">{state.onboardingCompleted ? 'PREFERENCES' : 'QUICK SETUP'}</span><h1>{category}</h1></div>{working && <Badge tone="info">Working…</Badge>}</header>
+      {error && <StatusBanner role="alert" tone="error">{error}</StatusBanner>}{notice && <StatusBanner tone="success">{notice}</StatusBanner>}
+      {category === 'Account' && <>
+        <Card as="section" className="settings-section"><h2>Provider profiles</h2>{state.profiles.length === 0 && <p className="muted">Add a ChatGPT subscription or an API-key profile. Profiles fail independently and Fovea never falls back silently.</p>}{state.profiles.map((profile) => <div className="profile" key={profile.id}><div><div className="profile-title"><strong>{profile.name}</strong><Badge tone={profile.health === 'available' ? 'success' : profile.health === 'unavailable' ? 'error' : 'neutral'}>{profile.provider}</Badge>{profile.isDefault && <Badge tone="info">Default</Badge>}</div><small>{profile.accountLabel ?? profile.healthMessage ?? profile.authenticationState}</small></div><div className="profile-actions">{profile.provider === 'chatgpt' && profile.authenticationState !== 'signed-in' && <Button size="compact" disabled={working} onClick={() => void run(() => window.fovea.profiles.authenticate(profile.id), 'ChatGPT connected.')}>Sign in</Button>}<Button size="compact" variant="secondary" onClick={() => { const name = window.prompt('Profile name', profile.name); if (name) void run(() => window.fovea.profiles.rename(profile.id, name)) }}>Rename</Button>{profile.authenticationState === 'signed-in' && <Button size="compact" variant="secondary" onClick={() => void run(() => window.fovea.profiles.signOut(profile.id), 'Profile signed out.')}>Sign out</Button>}<Button size="compact" variant="secondary" disabled={working || profile.authenticationState !== 'signed-in'} onClick={() => void run(async () => { const loaded = await window.fovea.profiles.test(profile.id); setModels((current) => ({ ...current, [profile.id]: loaded })) }, 'Connection healthy.')}>Test</Button>{!profile.isDefault && <Button size="compact" variant="secondary" onClick={() => void run(() => window.fovea.profiles.setDefault(profile.id))}>Make default</Button>}<Button size="compact" variant="danger" onClick={() => void run(() => window.fovea.profiles.delete(profile.id))}>Delete</Button></div></div>)}</Card>
+        <Card as="section" className="settings-section"><h2>Add profile</h2><div className="add-grid"><Select label="Provider" value={provider} onChange={(event) => { const value = event.target.value as typeof provider; setProvider(value); setProfileName(value === 'openrouter' ? 'OpenRouter' : value === 'anthropic' ? 'Anthropic' : 'OpenAI') }}><option value="openai">OpenAI API</option><option value="anthropic">Anthropic</option><option value="openrouter">OpenRouter</option></Select><TextInput label="Profile name" value={profileName} onChange={(event) => setProfileName(event.target.value)} /><TextInput className="key-field" label="API key" type="password" autoComplete="off" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="Stored with Windows encryption" /><Button disabled={working || !apiKey.trim()} onClick={() => void run(async () => { await window.fovea.profiles.createApiKey(provider, profileName, apiKey); setApiKey('') }, 'Encrypted profile added.')}>Add API profile</Button></div><div className="divider">or</div><Button variant="secondary" disabled={working || state.profiles.some((item) => item.provider === 'chatgpt')} onClick={() => void run(() => window.fovea.profiles.createChatGpt(), 'ChatGPT profile added. Sign in to authenticate.')}>Add ChatGPT subscription</Button></Card>
+      </>}
+      {category === 'Models' && <Card as="section" className="settings-section"><h2>Profile defaults</h2>{state.profiles.map((profile) => { const available = models[profile.id] ?? []; return <div className="model-row" key={profile.id}><div><strong>{profile.name}</strong><small>Only confirmed image-capable models are offered.</small></div><Select label="Default model" value={profile.defaultModelId ?? ''} onFocus={() => { if (!models[profile.id]) void window.fovea.profiles.models(profile.id).then((items) => setModels((current) => ({ ...current, [profile.id]: items }))).catch((reason) => setError(message(reason))) }} onChange={(event) => void run(() => window.fovea.profiles.setDefaults(profile.id, event.target.value || null, null))}><option value="">Choose automatically</option>{available.map((model) => <option key={model.id} value={model.id}>{model.displayName}</option>)}</Select></div> })}</Card>}
+      {category === 'Capture' && <><Card as="section" className="settings-section"><h2>Global shortcuts</h2><p className="muted">Click a shortcut then press a key combination. Suggested: Display +D, Window +W, Settings +S, Repeat +R.</p>{state.shortcuts.map((shortcut) => <ShortcutRecorder key={shortcut.action} action={shortcut.action} value={shortcut.accelerator} error={shortcut.error} onSave={(value) => run(() => window.fovea.settings.setShortcut(shortcut.action, value))} />)}<Button variant="secondary" onClick={() => void run(() => window.fovea.settings.resetShortcuts())}>Reset shortcuts</Button></Card><Card as="section" className="settings-section"><Switch label="Launch Fovea when Windows starts" checked={state.launchAtLogin} onChange={(event) => void run(() => window.fovea.settings.setLaunchAtLogin(event.target.checked))} /></Card></>}
+      {category === 'Appearance' && <Card as="section" className="settings-section"><h2>Colour mode</h2><div className="appearance-options">{(['light','dark','system'] as const).map((item) => <button className={state.appearance.preference === item ? 'selected' : ''} key={item} onClick={() => void run(() => window.fovea.settings.setAppearance(item))}><span className={`theme-preview ${item}`} />{item[0]!.toUpperCase()+item.slice(1)}</button>)}</div><p className="muted">System follows the Windows app theme. Reduced-motion preferences are respected automatically.</p></Card>}
+      {category === 'Privacy' && <Card as="section" className="settings-section"><h2>Local data</h2><p className="muted">Secrets are encrypted by Windows and never enter renderer state, settings, or diagnostics. Screenshots are temporary.</p><code className="path">{state.tempLocation}</code><Button variant="secondary" onClick={() => void run(async () => { const count = await window.fovea.settings.deleteTemporaryFiles(); setNotice(`Deleted ${count} temporary screenshot${count === 1 ? '' : 's'}.`) })}>Clean temporary files</Button></Card>}
+      {category === 'About' && <Card as="section" className="settings-section"><h2>Fovea {state.appVersion}</h2><p>Ask questions about any part of your screen with the provider profile you choose.</p><p className="muted">MIT licensed · No analytics · Official provider APIs only</p></Card>}
+      {!state.onboardingCompleted && <div className="onboarding-actions"><Button variant="secondary" onClick={() => void run(() => window.fovea.settings.completeOnboarding())}>Skip for now</Button><Button onClick={() => void run(() => window.fovea.settings.completeOnboarding(), 'Setup complete. Fovea will now start in the tray.')}>Finish setup</Button></div>}
+    </section>
+  </main></WindowFrame>
 }
 
-function providerTone(state: SettingsViewState['provider']['state']): BadgeTone {
-  if (state === 'ready') return 'success'
-  if (state === 'error') return 'error'
-  if (state === 'starting') return 'info'
-  if (state === 'stopped') return 'warning'
-  return 'neutral'
+function ShortcutRecorder({ action, value, error, onSave }: { action: ShortcutAction; value: string | null; error?: string; onSave(value: string | null): Promise<void> }): React.JSX.Element {
+  const [recording, setRecording] = useState(false)
+  return <div className="shortcut-row"><div><strong>{actionLabel(action)}</strong>{error && <small className="error-text">{error}</small>}</div><button className={recording ? 'shortcut-input recording' : 'shortcut-input'} onClick={() => setRecording(true)} onBlur={() => setRecording(false)} onKeyDown={(event) => { if (!recording) return; event.preventDefault(); if (event.key === 'Escape') { setRecording(false); return } if (event.key === 'Backspace' || event.key === 'Delete') { void onSave(null); setRecording(false); return } const parts = [event.ctrlKey && 'Ctrl', event.altKey && 'Alt', event.shiftKey && 'Shift', event.metaKey && 'Meta', !['Control','Alt','Shift','Meta'].includes(event.key) && (event.key === ' ' ? 'Space' : event.key.length === 1 ? event.key.toUpperCase() : event.key)].filter(Boolean); if (parts.length >= 2) { void onSave(parts.join('+')); setRecording(false) } }}>{recording ? 'Press shortcut…' : value ?? 'Unassigned'}</button></div>
 }
-
-function message(reason: unknown): string {
-  return reason instanceof Error ? reason.message : String(reason)
-}
-
+function actionLabel(action: ShortcutAction): string { return ({ region: 'Region capture', display: 'Current display', window: 'Focused window', 'repeat-last': 'Repeat last', settings: 'Open Settings' })[action] }
+function message(reason: unknown): string { return reason instanceof Error ? reason.message : String(reason) }
 createRoot(document.getElementById('root')!).render(<StrictMode><SettingsApp /></StrictMode>)

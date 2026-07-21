@@ -142,15 +142,15 @@ const mocks = vi.hoisted(() => {
   loadRenderer.mockResolvedValue(undefined)
   const hasSwitch = vi.fn(() => false)
   const deleteScreenshot = vi.fn(async () => undefined)
-  const deleteConversation = vi.fn(async () => undefined)
-  const cancel = vi.fn(async () => undefined)
+  const deleteConversation = vi.fn(async (conversationId?: string) => { void conversationId })
+  const cancel = vi.fn(async (conversationId?: string) => { void conversationId })
   let nextConversation = 1
-  const createConversation = vi.fn(async () => `conversation-${nextConversation++}`)
-  const sendMessage = vi.fn(() => (async function* () {
+  const createConversation = vi.fn(async (selection?: unknown) => { void selection; return `conversation-${nextConversation++}` })
+  const sendMessage = vi.fn((conversationId?: string, input?: unknown) => { void conversationId; void input; return (async function* () {
     yield { type: 'started' as const }
     yield { type: 'delta' as const, text: 'answer' }
     yield { type: 'completed' as const }
-  })())
+  })() })
   const startNewCapture = vi.fn(async () => undefined)
 
   return {
@@ -161,7 +161,15 @@ const mocks = vi.hoisted(() => {
     deleteScreenshot,
     hasSwitch,
     loadRenderer,
-    provider: { cancel, createConversation, deleteConversation, sendMessage },
+    provider: {
+      listProfiles: () => [{ id: 'profile-1', name: 'ChatGPT', provider: 'chatgpt', authentication: 'chatgpt-oauth', authenticationState: 'signed-in', defaultModelId: 'vision-1', defaultReasoningEffort: 'low', health: 'available', isDefault: true }],
+      listModels: async () => [{ id: 'vision-1', displayName: 'Vision', provider: 'chatgpt', inputModalities: ['text', 'image'], supportedReasoningEfforts: ['low'], defaultReasoningEffort: 'low', isDefault: true }],
+      validateSelection: async () => undefined,
+      createConversation,
+      send: (conversationId: string, _selection: unknown, input: unknown) => sendMessage(conversationId, input),
+      cancel: (conversationId: string) => cancel(conversationId),
+      deleteConversation: (conversationId: string) => deleteConversation(conversationId)
+    },
     reset: () => {
       windows.length = 0
       nextWindowId = 1
@@ -338,7 +346,7 @@ describe('question-session window migration', () => {
       minWidth: 400,
       minHeight: 480,
       transparent: false,
-      backgroundColor: '#090b10',
+      backgroundColor: '#f3f6fa',
       hasShadow: true,
       resizable: true,
       maximizable: true,
