@@ -40,7 +40,7 @@ lines.on('line', (line) => {
 send({
   method: 'initialize',
   id: 1,
-  params: { clientInfo: { name: 'snipchat_smoke', title: 'SnipChat smoke test', version: '0.1.0' } }
+  params: { clientInfo: { name: 'fovea_smoke', title: 'Fovea smoke test', version: '0.1.0' } }
 })
 
 function send(message) {

@@ -206,12 +206,12 @@ describe('Fovea design-system components', () => {
   })
 
   it('gives question sessions the shared labelled title-bar controls', () => {
-    const markup = renderToStaticMarkup(<WindowFrame title="SnipChat">Question content</WindowFrame>)
+    const markup = renderToStaticMarkup(<WindowFrame title="Fovea">Question content</WindowFrame>)
 
-    expect(markup).toContain('<section aria-label="SnipChat" class="window-surface">')
+    expect(markup).toContain('<section aria-label="Fovea" class="window-surface">')
     expect(markup).toContain('aria-label="Minimize window"')
     expect(markup).toContain('aria-label="Maximize window"')
     expect(markup).toContain('aria-label="Close window"')
-    expect(markup).toContain('window-titlebar__title">SnipChat</span>')
+    expect(markup).toContain('window-titlebar__title">Fovea</span>')
   })
 })

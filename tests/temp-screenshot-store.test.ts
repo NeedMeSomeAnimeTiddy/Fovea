@@ -9,7 +9,7 @@ afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recur
 
 describe('TempScreenshotStore', () => {
   it('removes stale screenshots but leaves unrelated and recent files', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'snipchat-test-'))
+    const root = await mkdtemp(join(tmpdir(), 'fovea-test-'))
     roots.push(root)
     const store = new TempScreenshotStore(root)
     await store.initialise()

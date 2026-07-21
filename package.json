@@ -1,8 +1,8 @@
 {
-  "name": "snipchat",
+  "name": "fovea",
   "version": "0.1.0",
-  "description": "Windows-first screenshot question assistant powered by the Codex App Server",
-  "author": "SnipChat contributors",
+  "description": "Windows-first screenshot question assistant with pluggable AI providers",
+  "author": "Fovea contributors",
   "main": "out/main/app.js",
   "private": true,
   "license": "MIT",
@@ -14,17 +14,23 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --max-warnings=0 && npm run lint:design",
     "lint:design": "node scripts/validate-design-tokens.mjs",
+    "assets:generate": "node scripts/generate-assets.mjs",
+    "assets:validate": "node scripts/generate-assets.mjs --check",
     "test": "vitest run",
     "build": "electron-vite build",
     "package:win": "npm run build && electron-builder --win nsis"
   },
   "dependencies": {
+    "eventsource-parser": "^3.1.0",
     "react": "19.1.1",
     "react-dom": "19.1.1",
-    "react-markdown": "10.1.0"
+    "react-markdown": "10.1.0",
+    "rehype-highlight": "^7.0.2"
   },
   "devDependencies": {
     "@eslint/js": "9.35.0",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
     "@types/node": "22.18.3",
     "@types/react": "19.1.13",
     "@types/react-dom": "19.1.9",
@@ -34,14 +40,17 @@
     "electron-vite": "4.0.0",
     "eslint": "9.35.0",
     "eslint-plugin-react-hooks": "5.2.0",
+    "jsdom": "^29.1.1",
+    "png-to-ico": "^3.0.2",
+    "sharp": "^0.35.3",
     "typescript": "5.9.2",
     "typescript-eslint": "8.43.0",
     "vite": "7.3.6",
     "vitest": "3.2.7"
   },
   "build": {
-    "appId": "com.snipchat.prototype",
-    "productName": "SnipChat",
+    "appId": "com.fovea.desktop",
+    "productName": "Fovea",
     "asar": true,
     "files": [
       "out/**/*",
@@ -51,22 +60,33 @@
       {
         "from": "resources/sidecar",
         "to": "sidecar",
-        "filter": ["codex.exe"]
+        "filter": [
+          "codex.exe"
+        ]
       },
       {
         "from": "resources/licences",
         "to": "licences"
+      },
+      {
+        "from": "resources/assets/generated",
+        "to": "assets"
       }
     ],
     "win": {
-      "target": ["nsis"],
+      "target": [
+        "nsis"
+      ],
       "signAndEditExecutable": false,
-      "artifactName": "SnipChat-${version}-Setup.${ext}"
+      "icon": "resources/assets/generated/fovea.ico",
+      "artifactName": "Fovea-${version}-Setup.${ext}"
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "deleteAppDataOnUninstall": false
+      "deleteAppDataOnUninstall": false,
+      "installerIcon": "resources/assets/generated/fovea.ico",
+      "uninstallerIcon": "resources/assets/generated/fovea.ico"
     }
   }
 }
