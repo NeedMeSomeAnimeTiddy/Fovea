@@ -1,4 +1,5 @@
 import type { ShortcutAction, ShortcutBindingState } from '@shared/types/app'
+import { isCompleteAccelerator } from '../../shared/shortcut-accelerator'
 import { DEFAULT_SHORTCUTS, type SettingsStore } from '../storage/settings-store'
 
 export interface ShortcutRegistrar {
@@ -18,7 +19,7 @@ export class ShortcutManager {
 
   initialise(): ShortcutBindingState[] {
     for (const [action, accelerator] of Object.entries(this.settings.get().shortcuts) as Array<[ShortcutAction, string | null]>) {
-      if (accelerator && this.registrar.register(accelerator, this.handlers[action])) this.registered.set(action, accelerator)
+      if (accelerator && this.tryRegister(action, accelerator)) this.registered.set(action, accelerator)
     }
     return this.getState()
   }
@@ -36,6 +37,7 @@ export class ShortcutManager {
   async set(action: ShortcutAction, accelerator: string | null): Promise<void> {
     const next = accelerator?.trim() || null
     if (next && next.length > 100) throw new Error('Shortcut is too long.')
+    if (next && !isCompleteAccelerator(next)) throw new Error('Press a non-modifier key as part of the shortcut, such as Ctrl+Shift+S.')
     const currentSettings = this.settings.get()
     if (currentSettings.shortcuts[action] === next) return
     const duplicate = next
@@ -46,7 +48,7 @@ export class ShortcutManager {
     if (duplicate) throw new Error(`That shortcut is already assigned to ${duplicate[0]}.`)
     const previous = this.registered.get(action) ?? null
     if (previous === next) return
-    if (!this.paused && next && !this.registrar.register(next, this.handlers[action])) throw new Error(`The shortcut for ${action} is unavailable.`)
+    if (!this.paused && next && !this.tryRegister(action, next)) throw new Error(`The shortcut for ${action} is unavailable, invalid, or used by another application.`)
     try {
       await this.settings.update({ shortcuts: { ...currentSettings.shortcuts, [action]: next } })
     } catch (error) {
@@ -66,7 +68,7 @@ export class ShortcutManager {
       try {
         for (const [action, accelerator] of Object.entries(desired) as Array<[ShortcutAction, string | null]>) {
           if (!accelerator || hasAccelerator(activeAccelerators, accelerator)) continue
-          if (!this.registrar.register(accelerator, this.handlers[action])) {
+          if (!this.tryRegister(action, accelerator)) {
             throw new Error(`The default shortcut for ${action} is unavailable.`)
           }
           activeAccelerators.add(accelerator)
@@ -78,7 +80,7 @@ export class ShortcutManager {
         }
         for (const [action, accelerator] of Object.entries(desired) as Array<[ShortcutAction, string | null]>) {
           if (!accelerator || hasAccelerator(activeAccelerators, accelerator)) continue
-          if (!this.registrar.register(accelerator, this.handlers[action])) {
+          if (!this.tryRegister(action, accelerator)) {
             throw new Error(`The default shortcut for ${action} is unavailable.`)
           }
           activeAccelerators.add(accelerator)
@@ -122,8 +124,14 @@ export class ShortcutManager {
     for (const accelerator of activeAccelerators) this.registrar.unregister(accelerator)
     this.registered.clear()
     for (const [action, accelerator] of previous) {
-      if (this.registrar.register(accelerator, this.handlers[action])) this.registered.set(action, accelerator)
+      if (this.tryRegister(action, accelerator)) this.registered.set(action, accelerator)
     }
+  }
+
+  private tryRegister(action: ShortcutAction, accelerator: string): boolean {
+    if (!isCompleteAccelerator(accelerator)) return false
+    try { return this.registrar.register(accelerator, this.handlers[action]) }
+    catch { return false }
   }
 }
 

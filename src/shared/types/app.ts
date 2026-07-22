@@ -58,6 +58,7 @@ export type ResponsePhase =
   | 'connecting'
   | 'thinking'
   | 'streaming'
+  | 'awaiting-approval'
   | 'stopped'
   | 'completed'
   | 'failed'
@@ -79,4 +80,9 @@ export interface ConversationExchange {
   phase: ResponsePhase
   segmentId: string
   error?: string
+  webSearch?: {
+    id: string
+    query: string
+    status: 'requested' | 'searching' | 'declined' | 'completed' | 'failed'
+  }
 }

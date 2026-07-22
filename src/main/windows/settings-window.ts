@@ -12,8 +12,8 @@ import {
 import { loadRenderer, secureWindow } from './window-factory'
 
 const SETTINGS_WINDOW_SIZES: WindowSurfaceSizes = {
-  surfaceSize: { width: 650, height: 760 },
-  minimumSurfaceSize: { width: 560, height: 640 }
+  surfaceSize: { width: 600, height: 640 },
+  minimumSurfaceSize: { width: 600, height: 640 }
 }
 
 export const SETTINGS_WINDOW_READY_TIMEOUT_MS = WINDOW_CHROME_READY_TIMEOUT_MS
@@ -41,6 +41,9 @@ export async function showSettingsWindow(trayBounds?: Rectangle): Promise<Browse
     minimumSurfaceSize: SETTINGS_WINDOW_SIZES.minimumSurfaceSize,
     screenSource: screen,
     timeoutMs: SETTINGS_WINDOW_READY_TIMEOUT_MS,
+    canMinimize: false,
+    canMaximize: false,
+    canResize: false,
     createWindow: (attempt) => createSettingsBrowserWindow(attempt, trayBounds),
     loadRenderer: (window) => loadRenderer(window, 'settings'),
     isWindowCurrent: (window) => settingsWindow === window
@@ -80,20 +83,24 @@ function createSettingsBrowserWindow(material: WindowMaterial, trayBounds?: Rect
     show: appearance.show,
     useContentSize: appearance.useContentSize,
     hasShadow: appearance.hasShadow,
-    resizable: appearance.resizable,
-    maximizable: appearance.maximizable,
-    minimizable: appearance.minimizable,
+    resizable: false,
+    maximizable: false,
+    minimizable: false,
     closable: appearance.closable,
     movable: appearance.movable,
     fullscreenable: appearance.fullscreenable,
-    thickFrame: appearance.thickFrame,
+    thickFrame: false,
     roundedCorners: appearance.roundedCorners,
+    skipTaskbar: true,
     title: 'Fovea Settings',
     autoHideMenuBar: true
   })
   settingsWindow = window
 
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  window.on('blur', () => {
+    if (settingsWindow === window && !window.isDestroyed()) window.hide()
+  })
   window.once('closed', () => {
     if (settingsWindow === window) settingsWindow = null
   })

@@ -8,6 +8,7 @@ import { ProfileManager } from '../src/main/providers/profile-manager'
 import { ShortcutManager, type ShortcutRegistrar } from '../src/main/shortcuts/shortcut-manager'
 import { DirectApiProvider } from '../src/main/providers/direct-api-provider'
 import { parseSse } from '../src/main/providers/sse'
+import { acceleratorFromKeyInput, isCompleteAccelerator } from '../src/shared/shortcut-accelerator'
 
 class FakeCryptography implements SecretCryptography {
   reEncrypt = false
@@ -60,9 +61,37 @@ describe('provider normalisation and SSE', () => {
     for await (const event of parseSse(new Response(stream))) events.push(event)
     expect(events).toEqual([{ event: 'delta', data: '{"text":"hello"}' }])
   })
+
+  it.each([
+    ['openai', [{ type: 'web_search' }]],
+    ['anthropic', [{ type: 'web_search_20250305', name: 'web_search', max_uses: 3 }]],
+    ['openrouter', [{ type: 'openrouter:web_search' }]]
+  ] as const)('exposes %s web search only after approval', async (kind, approvedTools) => {
+    const request = vi.fn(async (input: string | URL | Request, init?: RequestInit) => { void input; void init; return new Response('', { status: 200 }) })
+    const provider = new DirectApiProvider(kind, request as typeof fetch)
+    const input = { text: 'What is this?', modelId: 'vision-model', reasoningEffort: null }
+
+    for await (const event of provider.send('secret', input)) { void event }
+    const unapprovedBody = JSON.parse(String(request.mock.calls[0]?.[1]?.body)) as Record<string, unknown>
+    expect(unapprovedBody).not.toHaveProperty('tools')
+    expect(JSON.stringify(unapprovedBody)).toContain('Web search is disabled')
+
+    for await (const event of provider.send('secret', { ...input, webSearchAllowed: true })) { void event }
+    const approvedBody = JSON.parse(String(request.mock.calls[1]?.[1]?.body)) as Record<string, unknown>
+    expect(approvedBody.tools).toEqual(approvedTools)
+    expect(JSON.stringify(approvedBody)).toContain('user approved web access')
+  })
 })
 
 describe('independent shortcut registration', () => {
+  it('waits for a real key and rejects modifiers-only accelerators', () => {
+    expect(acceleratorFromKeyInput({ key: 'Shift', ctrlKey: true, altKey: false, shiftKey: true, metaKey: false })).toBeNull()
+    expect(acceleratorFromKeyInput({ key: 's', ctrlKey: true, altKey: false, shiftKey: true, metaKey: false })).toBe('Ctrl+Shift+S')
+    expect(acceleratorFromKeyInput({ key: '+', ctrlKey: true, altKey: false, shiftKey: true, metaKey: false })).toBe('Ctrl+Shift+Plus')
+    expect(isCompleteAccelerator('Ctrl+Shift')).toBe(false)
+    expect(isCompleteAccelerator('Ctrl+Shift+S')).toBe(true)
+  })
+
   it('identifies internal and OS conflicts without disturbing registered actions', async () => {
     const { settings } = await stores(); const active = new Set<string>()
     const registrar: ShortcutRegistrar = { register: vi.fn((accelerator) => accelerator !== 'Ctrl+X' && (active.add(accelerator), true)), unregister: vi.fn((accelerator) => { active.delete(accelerator) }) }
@@ -78,6 +107,23 @@ describe('independent shortcut registration', () => {
     expect(active.has('Ctrl+D')).toBe(false)
     await manager.set('display', 'Ctrl+D')
     manager.pause(); expect(active.size).toBe(0); manager.resume(); expect(active.size).toBe(2)
+  })
+
+  it('does not call Electron for incomplete shortcuts and contains conversion failures', async () => {
+    const { settings } = await stores()
+    const register = vi.fn((accelerator: string) => {
+      if (accelerator === 'Ctrl+Shift+D') throw new TypeError('conversion failure')
+      return true
+    })
+    const handler = (): void => undefined
+    const manager = new ShortcutManager({ register, unregister: vi.fn() }, settings, { region: handler, display: handler, window: handler, 'repeat-last': handler, settings: handler })
+    manager.initialise()
+    register.mockClear()
+
+    await expect(manager.set('display', 'Ctrl+Shift')).rejects.toThrow(/non-modifier key/i)
+    expect(register).not.toHaveBeenCalled()
+    await expect(manager.set('display', 'Ctrl+Shift+D')).rejects.toThrow(/display is unavailable/i)
+    expect(settings.get().shortcuts.display).toBeNull()
   })
 
   it('resets all bindings atomically and restores registrations when persistence fails', async () => {

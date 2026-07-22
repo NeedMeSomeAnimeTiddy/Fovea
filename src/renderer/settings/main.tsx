@@ -1,6 +1,7 @@
 import { StrictMode, useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import type { SettingsViewState } from '@shared/contracts/ipc'
+import { acceleratorFromKeyInput } from '../../shared/shortcut-accelerator'
 import type { ProviderKind, ProviderModelCapability, ShortcutAction } from '@shared/types/app'
 import { Badge, Button, Card, Select, StatusBanner, Switch, TextInput } from '../design-system'
 import { initialiseAppearance } from '../appearance'
@@ -24,9 +25,9 @@ function SettingsApp(): React.JSX.Element {
 
   useEffect(() => { void initialiseAppearance(); void window.fovea.settings.get().then(setState).catch((reason) => setError(message(reason))); return window.fovea.settings.onChanged(setState) }, [])
   const run = async (operation: () => Promise<unknown>, success = ''): Promise<void> => { setWorking(true); setError(''); setNotice(''); try { await operation(); setState(await window.fovea.settings.get()); if (success) setNotice(success) } catch (reason) { setError(message(reason)) } finally { setWorking(false) } }
-  if (!state) return <WindowFrame title="Settings"><main className="settings-loading">Starting Fovea…{error && <StatusBanner tone="error">{error}</StatusBanner>}</main></WindowFrame>
+  if (!state) return <WindowFrame title="Settings" showTitlebar={false} showResizeRegions={false}><main className="settings-loading">Starting Fovea…{error && <StatusBanner tone="error">{error}</StatusBanner>}</main></WindowFrame>
 
-  return <WindowFrame title="Settings"><main className="settings-shell">
+  return <WindowFrame title="Settings" showTitlebar={false} showResizeRegions={false}><main className="settings-shell">
     <aside className="settings-nav" aria-label="Settings categories"><div className="brand"><span className="brand-mark">◉</span><div><strong>Fovea</strong><small>{state.onboardingCompleted ? 'Settings' : 'Welcome'}</small></div></div>{CATEGORIES.map((item) => <button key={item} className={category === item ? 'active' : ''} onClick={() => setCategory(item)}>{item}</button>)}</aside>
     <section className="settings-content"><header><div><span className="eyebrow">{state.onboardingCompleted ? 'PREFERENCES' : 'QUICK SETUP'}</span><h1>{category}</h1></div>{working && <Badge tone="info">Working…</Badge>}</header>
       {error && <StatusBanner role="alert" tone="error">{error}</StatusBanner>}{notice && <StatusBanner tone="success">{notice}</StatusBanner>}
@@ -46,7 +47,7 @@ function SettingsApp(): React.JSX.Element {
 
 function ShortcutRecorder({ action, value, error, onSave }: { action: ShortcutAction; value: string | null; error?: string; onSave(value: string | null): Promise<void> }): React.JSX.Element {
   const [recording, setRecording] = useState(false)
-  return <div className="shortcut-row"><div><strong>{actionLabel(action)}</strong>{error && <small className="error-text">{error}</small>}</div><button className={recording ? 'shortcut-input recording' : 'shortcut-input'} onClick={() => setRecording(true)} onBlur={() => setRecording(false)} onKeyDown={(event) => { if (!recording) return; event.preventDefault(); if (event.key === 'Escape') { setRecording(false); return } if (event.key === 'Backspace' || event.key === 'Delete') { void onSave(null); setRecording(false); return } const parts = [event.ctrlKey && 'Ctrl', event.altKey && 'Alt', event.shiftKey && 'Shift', event.metaKey && 'Meta', !['Control','Alt','Shift','Meta'].includes(event.key) && (event.key === ' ' ? 'Space' : event.key.length === 1 ? event.key.toUpperCase() : event.key)].filter(Boolean); if (parts.length >= 2) { void onSave(parts.join('+')); setRecording(false) } }}>{recording ? 'Press shortcut…' : value ?? 'Unassigned'}</button></div>
+  return <div className="shortcut-row"><div><strong>{actionLabel(action)}</strong>{error && <small className="error-text">{error}</small>}</div><button className={recording ? 'shortcut-input recording' : 'shortcut-input'} onClick={() => setRecording(true)} onBlur={() => setRecording(false)} onKeyDown={(event) => { if (!recording) return; event.preventDefault(); if (event.key === 'Escape') { setRecording(false); return } if (event.key === 'Backspace' || event.key === 'Delete') { void onSave(null); setRecording(false); return } const accelerator = acceleratorFromKeyInput(event); if (!accelerator) return; void onSave(accelerator); setRecording(false) }}>{recording ? 'Press shortcut…' : value ?? 'Unassigned'}</button></div>
 }
 function actionLabel(action: ShortcutAction): string { return ({ region: 'Region capture', display: 'Current display', window: 'Focused window', 'repeat-last': 'Repeat last', settings: 'Open Settings' })[action] }
 function message(reason: unknown): string { return reason instanceof Error ? reason.message : String(reason) }

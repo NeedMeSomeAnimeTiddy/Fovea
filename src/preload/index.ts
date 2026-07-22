@@ -42,7 +42,7 @@ const api: FoveaApi = {
   },
   capture: { start: (mode) => ipcRenderer.invoke(IPC.captureStart, mode), getContext: () => ipcRenderer.invoke(IPC.captureGetContext), select: (rectangle) => ipcRenderer.invoke(IPC.captureSelect, rectangle), cancel: () => ipcRenderer.invoke(IPC.captureCancel) },
   question: {
-    get: (id) => ipcRenderer.invoke(IPC.questionGet, id), setSelection: (id, selection) => ipcRenderer.invoke(IPC.questionSetSelection, id, selection), send: (id, text) => ipcRenderer.invoke(IPC.questionSend, id, text), stop: (id) => ipcRenderer.invoke(IPC.questionStop, id), close: (id) => ipcRenderer.invoke(IPC.questionClose, id), newSnip: (id) => ipcRenderer.invoke(IPC.questionNewSnip, id),
+    get: (id) => ipcRenderer.invoke(IPC.questionGet, id), setSelection: (id, selection) => ipcRenderer.invoke(IPC.questionSetSelection, id, selection), send: (id, text) => ipcRenderer.invoke(IPC.questionSend, id, text), resolveWebSearch: (id, requestId, approved) => ipcRenderer.invoke(IPC.questionResolveWebSearch, id, requestId, approved), stop: (id) => ipcRenderer.invoke(IPC.questionStop, id), close: (id) => ipcRenderer.invoke(IPC.questionClose, id), newSnip: (id) => ipcRenderer.invoke(IPC.questionNewSnip, id),
     onEvent: (callback) => { const listener = (_event: Electron.IpcRendererEvent, id: string, event: ProviderEvent): void => callback(id, event); ipcRenderer.on(IPC.questionEvent, listener); return () => ipcRenderer.removeListener(IPC.questionEvent, listener) }
   },
   application: { openSettings: () => ipcRenderer.invoke(IPC.applicationOpenSettings) },

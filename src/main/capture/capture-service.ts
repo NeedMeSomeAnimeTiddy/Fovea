@@ -6,11 +6,21 @@ import type { CaptureMode } from '@shared/types/app'
 import type { Rectangle } from '@shared/types/geometry'
 import { clampCropRectangle, logicalToPhysical } from './geometry'
 import { loadRenderer, secureWindow } from '../windows/window-factory'
+import { WINDOW_BACKGROUND_COLOR } from '../windows/window-appearance'
 import type { TempScreenshotStore } from '../storage/temp-screenshot-store'
 
 const execFileAsync = promisify(execFile)
 
-interface PendingDisplay { display: Display; image: NativeImage; window: BrowserWindow }
+interface PendingDisplay {
+  display: Display
+  image: NativeImage | null
+  imageDataUrl: string | null
+  viewport: Rectangle | null
+  window: BrowserWindow
+  ready: Promise<void>
+  resolveReady(): void
+  readinessError: Error | null
+}
 interface CaptureDescriptor { mode: CaptureMode; displayId?: number; rectangle?: Rectangle; sourceId?: string }
 interface PendingCapture { candidates: Map<number, PendingDisplay>; topology: string }
 
@@ -38,14 +48,18 @@ export class CaptureService {
     return this.beginRegion()
   }
 
-  getContext(senderWebContentsId?: number): CaptureContext {
+  async getContext(senderWebContentsId?: number): Promise<CaptureContext> {
     const candidate = this.findCandidate(senderWebContentsId)
-    return { width: candidate.display.bounds.width, height: candidate.display.bounds.height, minSelectionSize: 24, displayId: String(candidate.display.id) }
+    await candidate.ready
+    if (candidate.readinessError) throw candidate.readinessError
+    if (!candidate.image || !candidate.imageDataUrl || !candidate.viewport) throw new Error('The frozen display image is unavailable.')
+    return { width: candidate.viewport.width, height: candidate.viewport.height, minSelectionSize: 24, displayId: String(candidate.display.id), imageDataUrl: candidate.imageDataUrl }
   }
 
   async select(rectangle: Rectangle, senderWebContentsId?: number): Promise<void> {
     const candidate = this.findCandidate(senderWebContentsId)
-    const bounded = boundRectangle(rectangle, candidate.display.bounds.width, candidate.display.bounds.height)
+    if (!candidate.viewport) throw new Error('The capture surface is not ready.')
+    const bounded = boundRectangle(rectangle, candidate.viewport.width, candidate.viewport.height)
     if (bounded.width < 24 || bounded.height < 24) throw new Error('Select an area at least 24 × 24 pixels.')
     this.lastDescriptor = { mode: 'region', displayId: candidate.display.id, rectangle: bounded }
     await this.complete(candidate, bounded)
@@ -55,7 +69,11 @@ export class CaptureService {
     const pending = this.pending
     this.pending = null
     this.clearCancellationTimer()
-    for (const candidate of pending?.candidates.values() ?? []) if (!candidate.window.isDestroyed()) candidate.window.close()
+    for (const candidate of pending?.candidates.values() ?? []) {
+      if (!candidate.image && !candidate.readinessError) candidate.readinessError = new Error('Screen capture was cancelled.')
+      candidate.resolveReady()
+      if (!candidate.window.isDestroyed()) candidate.window.close()
+    }
   }
 
   dispose(): void {
@@ -70,24 +88,40 @@ export class CaptureService {
     const topology = displays.map((display) => `${display.id}:${display.bounds.x},${display.bounds.y},${display.bounds.width},${display.bounds.height}:${display.scaleFactor}`).sort().join('|')
     const maxWidth = Math.max(...displays.map((display) => Math.round(display.bounds.width * display.scaleFactor)))
     const maxHeight = Math.max(...displays.map((display) => Math.round(display.bounds.height * display.scaleFactor)))
-    const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: maxWidth, height: maxHeight }, fetchWindowIcons: false })
-    if (topology !== this.currentTopology()) throw new Error('Display configuration changed; capture was cancelled.')
     const candidates = new Map<number, PendingDisplay>()
     for (const display of displays) {
       if (descriptor?.displayId && descriptor.displayId !== display.id) continue
-      const source = sources.find((entry) => entry.display_id === String(display.id))
-      if (!source || source.thumbnail.isEmpty()) continue
       const overlay = this.createOverlay(display)
-      candidates.set(overlay.webContents.id, { display, image: source.thumbnail, window: overlay })
+      const deferred = createDeferred()
+      candidates.set(overlay.webContents.id, { display, image: null, imageDataUrl: null, viewport: null, window: overlay, ready: deferred.promise, resolveReady: deferred.resolve, readinessError: null })
     }
     if (!candidates.size) throw new Error('Windows did not provide any screen images to capture.')
     this.pending = { candidates, topology }
     this.startCancellationTimer()
     try {
-      await Promise.all([...candidates.values()].map(async (candidate) => {
-        await loadRenderer(candidate.window, 'overlay')
-        if (!candidate.window.isDestroyed()) { candidate.window.show(); candidate.window.focus() }
-      }))
+      const rendererLoads = Promise.all([...candidates.values()].map((candidate) => loadRenderer(candidate.window, 'overlay')))
+      const [sources] = await Promise.all([
+        desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: maxWidth, height: maxHeight }, fetchWindowIcons: false }),
+        rendererLoads
+      ])
+      if (this.pending?.candidates !== candidates) throw new Error('Screen capture was cancelled.')
+      if (topology !== this.currentTopology()) throw new Error('Display configuration changed; capture was cancelled.')
+      for (const [webContentsId, candidate] of candidates) {
+        const source = sources.find((entry) => entry.display_id === String(candidate.display.id))
+        if (!source || source.thumbnail.isEmpty()) {
+          candidate.readinessError = new Error('Windows did not provide a usable image for this display.')
+          candidate.resolveReady()
+          if (!candidate.window.isDestroyed()) candidate.window.close()
+          candidates.delete(webContentsId)
+          continue
+        }
+        candidate.image = source.thumbnail
+        candidate.imageDataUrl = jpegDataUrl(source.thumbnail)
+        candidate.viewport = this.alignOverlayToDisplay(candidate)
+        candidate.resolveReady()
+      }
+      if (!candidates.size) throw new Error('Windows did not provide any screen images to capture.')
+      for (const candidate of candidates.values()) if (!candidate.window.isDestroyed()) { candidate.window.show(); candidate.window.focus() }
       if (descriptor?.rectangle) await this.select(descriptor.rectangle, [...candidates.keys()][0])
     } catch (error) { this.cancel(); throw error }
   }
@@ -125,12 +159,22 @@ export class CaptureService {
   }
 
   private createOverlay(display: Display): BrowserWindow {
-    const overlay = secureWindow({ x: display.bounds.x, y: display.bounds.y, width: display.bounds.width, height: display.bounds.height, frame: false, transparent: true, alwaysOnTop: true, skipTaskbar: true, resizable: false, movable: false, focusable: true, show: false, hasShadow: false })
+    const overlay = secureWindow({ x: display.bounds.x, y: display.bounds.y, width: display.bounds.width, height: display.bounds.height, useContentSize: true, frame: false, transparent: false, backgroundColor: WINDOW_BACKGROUND_COLOR, alwaysOnTop: true, skipTaskbar: true, resizable: false, movable: false, maximizable: false, fullscreenable: false, focusable: true, show: false, hasShadow: false })
     overlay.setAlwaysOnTop(true, 'screen-saver')
     overlay.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
     overlay.webContents.on('before-input-event', (event, input) => { if (input.type === 'keyDown' && input.key === 'Escape') { event.preventDefault(); this.cancel() } })
     overlay.webContents.once('render-process-gone', () => { this.cancel(); this.onError('The screen selection overlay stopped responding.') })
     return overlay
+  }
+
+  private alignOverlayToDisplay(candidate: PendingDisplay): Rectangle {
+    const requested = { ...candidate.display.bounds }
+    candidate.window.setContentBounds(requested, false)
+    const actual = candidate.window.getContentBounds()
+    if (!sameRectangle(actual, requested)) {
+      throw new Error(`Windows could not create a full-display capture surface (${actual.width} × ${actual.height} instead of ${requested.width} × ${requested.height}).`)
+    }
+    return { x: 0, y: 0, width: actual.width, height: actual.height }
   }
 
   private async captureScreenImage(display: Display): Promise<NativeImage> {
@@ -150,8 +194,9 @@ export class CaptureService {
   }
 
   private async complete(candidate: PendingDisplay, bounded: Rectangle): Promise<void> {
+    if (!candidate.image || !candidate.viewport) throw new Error('The frozen display image is unavailable.')
     const imageSize = candidate.image.getSize()
-    const physical = logicalToPhysical(bounded, imageSize.width / candidate.display.bounds.width, imageSize.height / candidate.display.bounds.height)
+    const physical = logicalToPhysical(bounded, imageSize.width / candidate.viewport.width, imageSize.height / candidate.viewport.height)
     const crop = clampCropRectangle(physical, imageSize)
     if (crop.width < 1 || crop.height < 1) throw new Error('The selected area was outside the captured image.')
     this.cancel()
@@ -173,6 +218,15 @@ function boundRectangle(rectangle: Rectangle, width: number, height: number): Re
   const x = Math.max(0, Math.min(width, rectangle.x)); const y = Math.max(0, Math.min(height, rectangle.y))
   return { x, y, width: Math.max(0, Math.min(rectangle.width, width - x)), height: Math.max(0, Math.min(rectangle.height, height - y)) }
 }
+function sameRectangle(left: Rectangle, right: Rectangle): boolean {
+  return left.x === right.x && left.y === right.y && left.width === right.width && left.height === right.height
+}
+function createDeferred(): { promise: Promise<void>; resolve(): void } {
+  let resolve!: () => void
+  const promise = new Promise<void>((complete) => { resolve = complete })
+  return { promise, resolve }
+}
+function jpegDataUrl(image: NativeImage): string { return `data:image/jpeg;base64,${image.toJPEG(82).toString('base64')}` }
 function sourceHandle(source: DesktopCapturerSource): string { return source.id.split(':')[1]?.replace(/^0+/, '').toLowerCase() ?? '' }
 function isBlank(image: NativeImage): boolean { const bitmap = image.resize({ width: 8, height: 8 }).toBitmap(); if (bitmap.length < 4) return true; const first = bitmap.subarray(0, 3).toString('hex'); for (let offset = 4; offset < bitmap.length; offset += 4) if (bitmap.subarray(offset, offset + 3).toString('hex') !== first) return false; return true }
 

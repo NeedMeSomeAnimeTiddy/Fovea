@@ -12,6 +12,9 @@ const ENDPOINTS = {
   openrouter: 'https://openrouter.ai/api/v1'
 } satisfies Record<DirectKind, string>
 
+const WEB_SEARCH_REQUEST_INSTRUCTION = `Web search is disabled for this turn. First inspect the screenshot carefully and answer from visible evidence and stable knowledge when you are confident. If you cannot confidently identify a visible object, product, logo, place, artwork, interface, error, or other subject and a focused web search could identify or explain it, do not stop at saying it is unidentifiable. Request approval by responding with exactly <fovea-web-search-request>{"query":"a concise search query based on the visible clues"}</fovea-web-search-request>. Use the same request when current or unfamiliar information is essential and you are not confident. Do not request web access when the screenshot lacks enough clues for a useful search or for ordinary stable facts you already know.`
+const WEB_SEARCH_APPROVED_INSTRUCTION = `The user approved web access for this turn. Use web search only if it is necessary to resolve the uncertainty in their question. Prefer authoritative sources and cite them with links. Do not use any other tools.`
+
 export class DirectApiProvider {
   constructor(
     readonly kind: DirectKind,
@@ -79,10 +82,13 @@ export class DirectApiProvider {
   }
 
   private requestBody(input: VisionTurnInput, image: string | null): Record<string, unknown> {
+    const instructions = input.webSearchAllowed ? WEB_SEARCH_APPROVED_INSTRUCTION : WEB_SEARCH_REQUEST_INSTRUCTION
     if (this.kind === 'openai') {
       return {
         model: input.modelId,
         stream: true,
+        instructions,
+        ...(input.webSearchAllowed ? { tools: [{ type: 'web_search' }] } : {}),
         ...(input.reasoningEffort ? { reasoning: { effort: input.reasoningEffort } } : {}),
         input: [{ role: 'user', content: [
           { type: 'input_text', text: input.text },
@@ -94,8 +100,8 @@ export class DirectApiProvider {
       ...(image ? [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: image } }] : []),
       { type: 'text', text: input.text }
     ]
-    if (this.kind === 'anthropic') return { model: input.modelId, max_tokens: 4096, stream: true, messages: [{ role: 'user', content }] }
-    return { model: input.modelId, stream: true, messages: [{ role: 'user', content: [
+    if (this.kind === 'anthropic') return { model: input.modelId, max_tokens: 4096, stream: true, system: instructions, ...(input.webSearchAllowed ? { tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 3 }] } : {}), messages: [{ role: 'user', content }] }
+    return { model: input.modelId, stream: true, ...(input.webSearchAllowed ? { tools: [{ type: 'openrouter:web_search' }] } : {}), messages: [{ role: 'system', content: instructions }, { role: 'user', content: [
       { type: 'text', text: input.text },
       ...(image ? [{ type: 'image_url', image_url: { url: `data:image/png;base64,${image}` } }] : [])
     ] }] }

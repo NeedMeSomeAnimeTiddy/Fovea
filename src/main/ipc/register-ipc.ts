@@ -48,6 +48,7 @@ export function registerIpc(dependencies: IpcDependencies): void {
   ipcMain.handle(IPC.questionGet, (_event, id: unknown) => dependencies.questions.get(requireId(id)))
   ipcMain.handle(IPC.questionSetSelection, (_event, id: unknown, selection: unknown) => dependencies.questions.setSelection(requireId(id), requireSelection(selection)))
   ipcMain.handle(IPC.questionSend, (_event, id: unknown, text: unknown) => dependencies.questions.send(requireId(id), requireString(text, 10_000)))
+  ipcMain.handle(IPC.questionResolveWebSearch, (_event, id: unknown, requestId: unknown, approved: unknown) => { if (typeof approved !== 'boolean') throw new Error('Invalid web-search approval.'); return dependencies.questions.resolveWebSearch(requireId(id), requireId(requestId), approved) })
   ipcMain.handle(IPC.questionStop, (_event, id: unknown) => dependencies.questions.stop(requireId(id)))
   ipcMain.handle(IPC.questionClose, (_event, id: unknown) => dependencies.questions.close(requireId(id)))
   ipcMain.handle(IPC.questionNewSnip, (_event, id: unknown) => dependencies.questions.newSnip(requireId(id)))

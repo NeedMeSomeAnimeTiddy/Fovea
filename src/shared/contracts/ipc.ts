@@ -20,7 +20,7 @@ export const IPC = {
   settingsGet: 'settings:get', settingsSetAppearance: 'settings:set-appearance', settingsSetLaunchAtLogin: 'settings:set-launch-at-login', settingsSetShortcut: 'settings:set-shortcut', settingsResetShortcuts: 'settings:reset-shortcuts', settingsCompleteOnboarding: 'settings:complete-onboarding', settingsDeleteTemp: 'settings:delete-temp', settingsChanged: 'settings:changed', appearanceChanged: 'appearance:changed',
   profilesList: 'profiles:list', profilesCreateApiKey: 'profiles:create-api-key', profilesCreateChatGpt: 'profiles:create-chatgpt', profilesRename: 'profiles:rename', profilesAuthenticate: 'profiles:authenticate', profilesTest: 'profiles:test', profilesSignOut: 'profiles:sign-out', profilesDelete: 'profiles:delete', profilesSetDefault: 'profiles:set-default', profilesSetDefaults: 'profiles:set-defaults', profilesModels: 'profiles:models',
   captureStart: 'capture:start', captureGetContext: 'capture:get-context', captureSelect: 'capture:select', captureCancel: 'capture:cancel',
-  questionGet: 'question:get', questionSetSelection: 'question:set-selection', questionSend: 'question:send', questionStop: 'question:stop', questionClose: 'question:close', questionNewSnip: 'question:new-snip', questionEvent: 'question:event',
+  questionGet: 'question:get', questionSetSelection: 'question:set-selection', questionSend: 'question:send', questionResolveWebSearch: 'question:resolve-web-search', questionStop: 'question:stop', questionClose: 'question:close', questionNewSnip: 'question:new-snip', questionEvent: 'question:event',
   applicationOpenSettings: 'application:open-settings',
   windowChromeGetState: 'window-chrome:get-state', windowChromeReady: 'window-chrome:ready', windowChromeMinimize: 'window-chrome:minimize', windowChromeToggleMaximize: 'window-chrome:toggle-maximize', windowChromeClose: 'window-chrome:close', windowChromeBeginResize: 'window-chrome:begin-resize', windowChromeUpdateResize: 'window-chrome:update-resize', windowChromeEndResize: 'window-chrome:end-resize', windowChromeStateChanged: 'window-chrome:state-changed', externalOpen: 'external:open'
 } as const
@@ -40,7 +40,7 @@ export interface SettingsViewState {
   tempLocation: string
   appVersion: string
 }
-export interface CaptureContext { width: number; height: number; minSelectionSize: number; displayId?: string }
+export interface CaptureContext { width: number; height: number; minSelectionSize: number; displayId?: string; imageDataUrl: string }
 export interface QuestionViewState {
   sessionId: string
   thumbnailDataUrl: string
@@ -62,7 +62,7 @@ export interface FoveaApi {
     get(): Promise<SettingsViewState>; setAppearance(preference: AppearancePreference): Promise<void>; setLaunchAtLogin(enabled: boolean): Promise<void>; setShortcut(action: ShortcutAction, accelerator: string | null): Promise<void>; resetShortcuts(): Promise<void>; completeOnboarding(): Promise<void>; deleteTemporaryFiles(): Promise<number>; onChanged(callback: (state: SettingsViewState) => void): () => void; onAppearanceChanged(callback: (state: AppearanceState) => void): () => void
   }
   capture: { start(mode: CaptureMode): Promise<void>; getContext(): Promise<CaptureContext>; select(rectangle: Rectangle): Promise<void>; cancel(): Promise<void> }
-  question: { get(sessionId: string): Promise<QuestionViewState>; setSelection(sessionId: string, selection: ConversationSelection): Promise<QuestionViewState>; send(sessionId: string, text: string): Promise<void>; stop(sessionId: string): Promise<void>; close(sessionId: string): Promise<void>; newSnip(sessionId: string): Promise<void>; onEvent(callback: (sessionId: string, event: ProviderEvent) => void): () => void }
+  question: { get(sessionId: string): Promise<QuestionViewState>; setSelection(sessionId: string, selection: ConversationSelection): Promise<QuestionViewState>; send(sessionId: string, text: string): Promise<void>; resolveWebSearch(sessionId: string, requestId: string, approved: boolean): Promise<QuestionViewState>; stop(sessionId: string): Promise<void>; close(sessionId: string): Promise<void>; newSnip(sessionId: string): Promise<void>; onEvent(callback: (sessionId: string, event: ProviderEvent) => void): () => void }
   application: { openSettings(): Promise<void> }
   windowChrome: { getState(): Promise<WindowChromeState>; ready(): void; minimize(): Promise<void>; toggleMaximize(): Promise<void>; close(): Promise<void>; beginResize(edge: WindowResizeEdge): Promise<void>; updateResize(): void; endResize(): void; onStateChanged(callback: (state: WindowChromeState) => void): () => void }
   openExternal(url: string): Promise<void>

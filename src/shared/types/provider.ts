@@ -26,6 +26,7 @@ export interface VisionTurnInput {
   modelId: string
   reasoningEffort?: string | null
   history?: Array<{ role: 'user' | 'assistant'; text: string }>
+  webSearchAllowed?: boolean
 }
 
 export type ProviderEvent =
@@ -33,4 +34,5 @@ export type ProviderEvent =
   | { type: 'delta'; text: string }
   | { type: 'completed' }
   | { type: 'cancelled' }
+  | { type: 'web-search-requested'; requestId: string; query: string }
   | { type: 'error'; message: string }

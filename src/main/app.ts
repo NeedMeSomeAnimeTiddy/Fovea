@@ -16,6 +16,8 @@ import { showSettingsWindow } from './windows/settings-window'
 
 app.setName('Fovea')
 app.setPath('userData', join(app.getPath('appData'), 'Fovea'))
+// Fovea is tray-first: closing or cancelling its last window must not end the process.
+app.on('window-all-closed', () => undefined)
 
 if (!app.requestSingleInstanceLock()) app.quit()
 else void startApplication().catch((error) => {

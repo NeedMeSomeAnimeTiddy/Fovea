@@ -130,7 +130,7 @@ describe('window appearance geometry', () => {
     expect(resolveWindowBackgroundColor('transparent', 'light')).toBe('#00000000')
     expect(resolveWindowBackgroundColor('transparent', 'dark')).toBe('#00000000')
     expect(resolveWindowBackgroundColor('solid', 'light')).toBe('#f3f6fa')
-    expect(resolveWindowBackgroundColor('solid', 'dark')).toBe('#090b10')
+    expect(resolveWindowBackgroundColor('solid', 'dark')).toBe('#101010')
   })
 
   it('selects the support switch and development-only environment fallback', () => {
