@@ -13,9 +13,23 @@
   /* Canvas and capture selection */
   --fovea-color-canvas: var(--fovea-ref-neutral-950);
   --fovea-color-canvas-deep: var(--fovea-ref-neutral-1000);
-  --fovea-color-scrim: rgba(5, 7, 10, 0.72);
+  --fovea-color-scrim: rgba(7, 7, 7, 0.72);
   --fovea-color-selection-fill: rgba(103, 217, 245, 0.14);
   --fovea-color-selection-border: var(--fovea-ref-cyan-300);
+  --fovea-capture-scrim: rgba(5, 5, 5, 0.38);
+  --fovea-capture-hud-fill: rgba(20, 20, 20, 0.82);
+  --fovea-capture-hud-border: rgba(255, 255, 255, 0.16);
+  --fovea-capture-control-fill: rgba(255, 255, 255, 0.08);
+  --fovea-capture-control-fill-hover: rgba(255, 255, 255, 0.14);
+  --fovea-capture-text: rgba(255, 255, 255, 0.96);
+  --fovea-capture-text-muted: rgba(255, 255, 255, 0.64);
+  --fovea-capture-selection-stroke: rgba(255, 255, 255, 0.94);
+  --fovea-capture-selection-fill: rgba(255, 255, 255, 0.035);
+  --fovea-capture-guide: rgba(255, 255, 255, 0.26);
+  --fovea-capture-error: rgba(255, 146, 157, 0.96);
+  --fovea-capture-error-border: rgba(255, 146, 157, 0.54);
+  --fovea-capture-selection-glow: 0 0 0 1px rgba(0, 0, 0, 0.34), 0 0 18px rgba(255, 255, 255, 0.12);
+  --fovea-capture-hud-shadow: 0 18px 46px rgba(0, 0, 0, 0.36), inset 0 1px 0 rgba(255, 255, 255, 0.06);
 
   /* Text */
   --fovea-color-text-primary: var(--fovea-ref-neutral-50);
@@ -23,7 +37,7 @@
   --fovea-color-text-tertiary: var(--fovea-ref-neutral-300);
   --fovea-color-text-inverse: var(--fovea-ref-neutral-950);
   --fovea-color-text-on-accent: var(--fovea-ref-neutral-1000);
-  --fovea-color-text-disabled: rgba(202, 210, 222, 0.48);
+  --fovea-color-text-disabled: rgba(212, 212, 212, 0.48);
 
   /* Interactive colour */
   --fovea-color-accent: var(--fovea-ref-cyan-300);
@@ -45,9 +59,9 @@
   --fovea-surface-raised: var(--fovea-ref-neutral-800);
   --fovea-surface-overlay: var(--fovea-ref-neutral-700);
 
-  --fovea-glass-fill-subtle: rgba(15, 19, 26, 0.72);
-  --fovea-glass-fill-default: rgba(24, 29, 38, 0.82);
-  --fovea-glass-fill-strong: rgba(24, 29, 38, 0.92);
+  --fovea-glass-fill-subtle: rgba(18, 18, 18, 0.72);
+  --fovea-glass-fill-default: rgba(28, 28, 28, 0.82);
+  --fovea-glass-fill-strong: rgba(28, 28, 28, 0.92);
   --fovea-glass-fill-solid-fallback: var(--fovea-surface-raised);
   --fovea-glass-highlight: linear-gradient(180deg, rgba(243, 246, 251, 0.055), rgba(243, 246, 251, 0) 44%);
   --fovea-glass-edge-light: rgba(243, 246, 251, 0.12);
@@ -89,7 +103,7 @@
     0 0 0 calc(var(--fovea-focus-width) + var(--fovea-focus-offset)) var(--fovea-status-error-foreground);
 
   /* Disabled and loading */
-  --fovea-surface-disabled: rgba(73, 83, 99, 0.32);
+  --fovea-surface-disabled: rgba(82, 82, 82, 0.32);
   --fovea-color-loading-indicator: var(--fovea-color-accent);
 
   /* Information */

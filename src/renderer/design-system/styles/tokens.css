@@ -9,16 +9,16 @@
 :root {
   /* Reference palette: neutral */
   --fovea-ref-neutral-0: #ffffff;
-  --fovea-ref-neutral-50: #f3f6fb;
-  --fovea-ref-neutral-200: #cad2de;
-  --fovea-ref-neutral-300: #98a3b3;
-  --fovea-ref-neutral-400: #8591a2;
-  --fovea-ref-neutral-600: #495363;
-  --fovea-ref-neutral-700: #2a303b;
-  --fovea-ref-neutral-800: #181d26;
-  --fovea-ref-neutral-900: #0f131a;
-  --fovea-ref-neutral-950: #090b10;
-  --fovea-ref-neutral-1000: #05070a;
+  --fovea-ref-neutral-50: #f5f5f5;
+  --fovea-ref-neutral-200: #d4d4d4;
+  --fovea-ref-neutral-300: #a3a3a3;
+  --fovea-ref-neutral-400: #8a8a8a;
+  --fovea-ref-neutral-600: #525252;
+  --fovea-ref-neutral-700: #303030;
+  --fovea-ref-neutral-800: #202020;
+  --fovea-ref-neutral-900: #171717;
+  --fovea-ref-neutral-950: #101010;
+  --fovea-ref-neutral-1000: #0a0a0a;
 
   /* Reference palette: restrained accents */
   --fovea-ref-cyan-200: #a9edfb;

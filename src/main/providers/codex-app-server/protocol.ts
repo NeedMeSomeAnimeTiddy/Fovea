@@ -1,4 +1,4 @@
-// This is the deliberately small, stable subset SnipChat consumes. Run
+// This is the deliberately small, stable subset Fovea consumes. Run
 // `npm run sidecar:fetch` to regenerate the complete pinned schema in
 // resources/codex-schema directly from codex 0.144.4.
 export interface JsonRpcRequest {

@@ -1,4 +1,4 @@
-import type { ProviderEvent, ProviderStatus, VisionModel } from '@shared/types/provider'
+import type { ProviderEvent, ProviderStatus, VisionModel, VisionTurnInput } from '@shared/types/provider'
 
 export interface VisionProvider {
   initialise(): Promise<void>
@@ -7,10 +7,10 @@ export interface VisionProvider {
   signInWithApiKey?(apiKey: string): Promise<void>
   signOut(): Promise<void>
   listModels(): Promise<VisionModel[]>
-  createConversation(): Promise<string>
+  createConversation(modelId?: string): Promise<string>
   sendMessage(
     conversationId: string,
-    input: { text: string; imagePath?: string }
+    input: VisionTurnInput
   ): AsyncIterable<ProviderEvent>
   cancel(conversationId: string): Promise<void>
   dispose(): Promise<void>

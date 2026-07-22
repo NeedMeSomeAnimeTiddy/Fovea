@@ -6,15 +6,17 @@ import './window-chrome.css'
 
 export interface WindowFrameProps extends PropsWithChildren {
   title: string
+  showTitlebar?: boolean
+  showResizeRegions?: boolean
 }
 
-export function WindowFrame({ children, title }: WindowFrameProps): React.JSX.Element {
+export function WindowFrame({ children, title, showTitlebar = true, showResizeRegions = true }: WindowFrameProps): React.JSX.Element {
   const chrome = useWindowChrome()
   const { state } = chrome
 
   useEffect(() => {
     if (!chrome.stateResolved) return
-    const frame = requestAnimationFrame(() => window.snipchat.windowChrome.ready())
+    const frame = requestAnimationFrame(() => window.fovea.windowChrome.ready())
     return () => cancelAnimationFrame(frame)
   }, [chrome.stateResolved])
 
@@ -25,11 +27,11 @@ export function WindowFrame({ children, title }: WindowFrameProps): React.JSX.El
       data-material={state.material}
       data-maximized={state.maximized}
     >
-      {WINDOW_RESIZE_EDGES.map((edge) => (
+      {showResizeRegions && WINDOW_RESIZE_EDGES.map((edge) => (
         <ResizeRegion edge={edge} key={edge} chrome={chrome} />
       ))}
       <section aria-label={title} className="window-surface">
-        <header className="window-titlebar">
+        {showTitlebar && <header className="window-titlebar">
           <span className="window-titlebar__title">{title}</span>
           <WindowControls
             maximized={state.maximized}
@@ -37,7 +39,7 @@ export function WindowFrame({ children, title }: WindowFrameProps): React.JSX.El
             onMaximize={state.canMaximize ? chrome.toggleMaximize : undefined}
             onMinimize={state.canMinimize ? chrome.minimize : undefined}
           />
-        </header>
+        </header>}
         <div className="window-frame__content">{children}</div>
       </section>
     </div>

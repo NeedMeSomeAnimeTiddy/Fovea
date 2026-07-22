@@ -42,7 +42,7 @@ export function useWindowChrome(): WindowChromeController {
       cancelAnimationFrame(pendingResizeFrame.current)
       pendingResizeFrame.current = null
     }
-    window.snipchat.windowChrome.endResize()
+    window.fovea.windowChrome.endResize()
     try {
       if (active.target.hasPointerCapture(active.pointerId)) {
         active.target.releasePointerCapture(active.pointerId)
@@ -56,7 +56,7 @@ export function useWindowChrome(): WindowChromeController {
   useEffect(() => {
     let subscribed = true
     const requestedAtVersion = stateEventVersion.current
-    const unsubscribe = window.snipchat.windowChrome.onStateChanged((nextState) => {
+    const unsubscribe = window.fovea.windowChrome.onStateChanged((nextState) => {
       if (!subscribed) return
       stateEventVersion.current += 1
       setState(nextState)
@@ -65,7 +65,7 @@ export function useWindowChrome(): WindowChromeController {
     const handleBlur = (): void => endResize()
 
     window.addEventListener('blur', handleBlur)
-    void window.snipchat.windowChrome
+    void window.fovea.windowChrome
       .getState()
       .then((nextState) => {
         if (!subscribed || stateEventVersion.current !== requestedAtVersion) return
@@ -94,11 +94,11 @@ export function useWindowChrome(): WindowChromeController {
       try {
         target.setPointerCapture(event.pointerId)
       } catch {
-        window.snipchat.windowChrome.endResize()
+        window.fovea.windowChrome.endResize()
         return
       }
       activeResize.current = { pointerId: event.pointerId, target }
-      void window.snipchat.windowChrome.beginResize(edge).catch(() => {
+      void window.fovea.windowChrome.beginResize(edge).catch(() => {
         const active = activeResize.current
         if (active?.pointerId === event.pointerId && active.target === target) endResize(event)
       })
@@ -112,24 +112,24 @@ export function useWindowChrome(): WindowChromeController {
     pendingResizeFrame.current = requestAnimationFrame(() => {
       pendingResizeFrame.current = null
       if (activeResize.current?.pointerId === pointerId) {
-        window.snipchat.windowChrome.updateResize()
+        window.fovea.windowChrome.updateResize()
       }
     })
   }, [])
 
   const minimize = useCallback((): void => {
     endResize()
-    void window.snipchat.windowChrome.minimize()
+    void window.fovea.windowChrome.minimize()
   }, [endResize])
 
   const toggleMaximize = useCallback((): void => {
     endResize()
-    void window.snipchat.windowChrome.toggleMaximize()
+    void window.fovea.windowChrome.toggleMaximize()
   }, [endResize])
 
   const close = useCallback((): void => {
     endResize()
-    void window.snipchat.windowChrome.close()
+    void window.fovea.windowChrome.close()
   }, [endResize])
 
   return {

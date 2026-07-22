@@ -1,8 +1,8 @@
-import type { SnipChatApi } from '@shared/contracts/ipc'
+import type { FoveaApi } from '@shared/contracts/ipc'
 
 declare global {
   interface Window {
-    snipchat: SnipChatApi
+    fovea: FoveaApi
   }
 }
 

@@ -4,6 +4,7 @@ import type { Point, Rectangle } from '../src/shared/types/geometry'
 import {
   getWindowAppearanceOptions,
   getWindowAppearanceSizes,
+  resolveWindowBackgroundColor,
   selectWindowMaterial,
   WINDOW_SURFACE_INSET
 } from '../src/main/windows/window-appearance'
@@ -117,12 +118,19 @@ describe('window appearance geometry', () => {
       minimumSize: { width: 560, height: 640 },
       frame: false,
       transparent: false,
-      backgroundColor: '#090b10',
+      backgroundColor: '#f3f6fa',
       hasShadow: true,
       resizable: true,
       maximizable: true,
       thickFrame: true
     })
+  })
+
+  it('keeps transparent native windows transparent across appearance changes', () => {
+    expect(resolveWindowBackgroundColor('transparent', 'light')).toBe('#00000000')
+    expect(resolveWindowBackgroundColor('transparent', 'dark')).toBe('#00000000')
+    expect(resolveWindowBackgroundColor('solid', 'light')).toBe('#f3f6fa')
+    expect(resolveWindowBackgroundColor('solid', 'dark')).toBe('#101010')
   })
 
   it('selects the support switch and development-only environment fallback', () => {

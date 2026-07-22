@@ -142,15 +142,16 @@ const mocks = vi.hoisted(() => {
   loadRenderer.mockResolvedValue(undefined)
   const hasSwitch = vi.fn(() => false)
   const deleteScreenshot = vi.fn(async () => undefined)
-  const deleteConversation = vi.fn(async () => undefined)
-  const cancel = vi.fn(async () => undefined)
+  const deleteConversation = vi.fn(async (conversationId?: string) => { void conversationId })
+  const cancel = vi.fn(async (conversationId?: string) => { void conversationId })
   let nextConversation = 1
-  const createConversation = vi.fn(async () => `conversation-${nextConversation++}`)
-  const sendMessage = vi.fn(() => (async function* () {
+  const createConversation = vi.fn(async (selection?: unknown) => { void selection; return `conversation-${nextConversation++}` })
+  const sendMessage = vi.fn((conversationId?: string, input?: unknown) => { void conversationId; void input; return (async function* () {
     yield { type: 'started' as const }
     yield { type: 'delta' as const, text: 'answer' }
     yield { type: 'completed' as const }
-  })())
+  })() })
+  const listModels = vi.fn(async () => [{ id: 'vision-1', displayName: 'Vision', provider: 'chatgpt', inputModalities: ['text', 'image'], supportedReasoningEfforts: ['low'], defaultReasoningEffort: 'low', isDefault: true }])
   const startNewCapture = vi.fn(async () => undefined)
 
   return {
@@ -160,8 +161,17 @@ const mocks = vi.hoisted(() => {
     deleteConversation,
     deleteScreenshot,
     hasSwitch,
+    listModels,
     loadRenderer,
-    provider: { cancel, createConversation, deleteConversation, sendMessage },
+    provider: {
+      listProfiles: () => [{ id: 'profile-1', name: 'ChatGPT', provider: 'chatgpt', authentication: 'chatgpt-oauth', authenticationState: 'signed-in', defaultModelId: 'vision-1', defaultReasoningEffort: 'low', health: 'available', isDefault: true }],
+      listModels,
+      validateSelection: async () => undefined,
+      createConversation,
+      send: (conversationId: string, _selection: unknown, input: unknown) => sendMessage(conversationId, input),
+      cancel: (conversationId: string) => cancel(conversationId),
+      deleteConversation: (conversationId: string) => deleteConversation(conversationId)
+    },
     reset: () => {
       windows.length = 0
       nextWindowId = 1
@@ -169,6 +179,8 @@ const mocks = vi.hoisted(() => {
       secureWindow.mockClear()
       loadRenderer.mockReset()
       loadRenderer.mockResolvedValue(undefined)
+      listModels.mockReset()
+      listModels.mockResolvedValue([{ id: 'vision-1', displayName: 'Vision', provider: 'chatgpt', inputModalities: ['text', 'image'], supportedReasoningEfforts: ['low'], defaultReasoningEffort: 'low', isDefault: true }])
       hasSwitch.mockReset()
       hasSwitch.mockReturnValue(false)
       deleteScreenshot.mockClear()
@@ -280,7 +292,26 @@ describe('question-session window migration', () => {
     const sessionId = await finishOpening(opening, 0)
     expect(window.showCalls).toBe(1)
     expect(window.focusCalls).toBe(1)
-    expect(sessions.get(sessionId)).toMatchObject({ sessionId, busy: false })
+    await expect(sessions.get(sessionId)).resolves.toMatchObject({ sessionId, busy: false })
+  })
+
+  it('starts renderer navigation before initial model discovery completes', async () => {
+    let resolveModels!: (models: any[]) => void
+    mocks.listModels.mockImplementationOnce(() => new Promise((resolve) => { resolveModels = resolve }))
+    const sessions = await createSessions()
+    const opening = sessions.open(capture())
+
+    expect(mocks.loadRenderer).toHaveBeenCalledTimes(1)
+    const sessionId = mocks.loadRenderer.mock.calls[0]![2]!.session
+    const window = mocks.windows[0]!
+    window.emit('ready-to-show')
+    const { windowChromeRegistry } = await import('../src/main/windows/window-chrome')
+    windowChromeRegistry.get(window.webContents.id)!.markRendererReady()
+    await opening
+    expect(window.showCalls).toBe(1)
+
+    resolveModels([{ id: 'vision-1', displayName: 'Vision', provider: 'chatgpt', inputModalities: ['text', 'image'], supportedReasoningEfforts: ['low'], defaultReasoningEffort: 'low', isDefault: true }])
+    await expect(sessions.get(sessionId)).resolves.toMatchObject({ sessionId, selection: { modelId: 'vision-1' } })
   })
 
   it('keeps simultaneous sessions and their chrome state independent', async () => {
@@ -315,8 +346,8 @@ describe('question-session window migration', () => {
 
     firstChrome.closeWindow()
     await vi.waitFor(() => expect(mocks.deleteScreenshot).toHaveBeenCalledTimes(1))
-    expect(() => sessions.get(firstId)).toThrow(/already closed/)
-    expect(sessions.get(secondId).sessionId).toBe(secondId)
+    await expect(sessions.get(firstId)).rejects.toThrow(/already closed/)
+    await expect(sessions.get(secondId)).resolves.toMatchObject({ sessionId: secondId })
     expect(windowChromeRegistry.get(first!.webContents.id)).toBeNull()
     expect(windowChromeRegistry.get(second!.webContents.id)).toBe(secondChrome)
   })
@@ -338,7 +369,7 @@ describe('question-session window migration', () => {
       minWidth: 400,
       minHeight: 480,
       transparent: false,
-      backgroundColor: '#090b10',
+      backgroundColor: '#f3f6fa',
       hasShadow: true,
       resizable: true,
       maximizable: true,
@@ -348,7 +379,7 @@ describe('question-session window migration', () => {
     expect(mocks.loadRenderer.mock.calls[0]![2]).toEqual(mocks.loadRenderer.mock.calls[1]![2])
 
     const sessionId = await finishOpening(opening, 1)
-    expect(sessions.get(sessionId).sessionId).toBe(sessionId)
+    await expect(sessions.get(sessionId)).resolves.toMatchObject({ sessionId })
     expect(mocks.windows[1]!.showCalls).toBe(1)
   })
 
@@ -369,7 +400,63 @@ describe('question-session window migration', () => {
     windowChromeRegistry.get(window.webContents.id)!.closeWindow()
     await vi.waitFor(() => expect(mocks.deleteScreenshot).toHaveBeenCalledWith(capture().imagePath))
     await vi.waitFor(() => expect(mocks.deleteConversation).toHaveBeenCalledWith('conversation-1'))
-    expect(() => sessions.get(sessionId)).toThrow(/already closed/)
+    await expect(sessions.get(sessionId)).rejects.toThrow(/already closed/)
+  })
+
+  it('holds an uncertain answer for explicit web-search approval and can decline locally', async () => {
+    mocks.sendMessage.mockImplementationOnce(() => (async function* () {
+      yield { type: 'started' as const }
+      yield { type: 'delta' as const, text: '<fovea-web-' }
+      yield { type: 'delta' as const, text: 'search-request>{"query":"latest object details"}</fovea-web-search-request>' }
+      yield { type: 'completed' as const }
+    })())
+    const sessions = await createSessions()
+    const opening = sessions.open(capture())
+    const sessionId = await finishOpening(opening, 0)
+
+    await sessions.send(sessionId, 'What is this?')
+    const pending = await sessions.get(sessionId)
+    expect(pending).toMatchObject({ busy: false, phase: 'awaiting-approval' })
+    expect(pending.exchanges[0]).toMatchObject({ answer: '', webSearch: { query: 'latest object details', status: 'requested' } })
+    const providerEvents = mocks.windows[0]!.sent.filter(([channel]) => channel === 'question:event').map(([, , event]) => event)
+    expect(providerEvents).toEqual([
+      expect.objectContaining({ type: 'started' }),
+      expect.objectContaining({ type: 'web-search-requested', query: 'latest object details' })
+    ])
+
+    const requestId = pending.exchanges[0]!.webSearch!.id
+    const declined = await sessions.resolveWebSearch(sessionId, requestId, false)
+    expect(mocks.sendMessage).toHaveBeenCalledTimes(1)
+    expect(declined.exchanges[0]).toMatchObject({ phase: 'completed', webSearch: { status: 'declined' } })
+  })
+
+  it('retries an approved search with explicit network permission and the screenshot', async () => {
+    mocks.sendMessage.mockImplementationOnce(() => (async function* () {
+      yield { type: 'started' as const }
+      yield { type: 'delta' as const, text: '<fovea-web-search-request>{"query":"identify unfamiliar device"}</fovea-web-search-request>' }
+      yield { type: 'completed' as const }
+    })())
+    mocks.sendMessage.mockImplementationOnce(() => (async function* () {
+      yield { type: 'started' as const }
+      yield { type: 'delta' as const, text: 'Verified answer with a source.' }
+      yield { type: 'completed' as const }
+    })())
+    const sessions = await createSessions()
+    const opening = sessions.open(capture())
+    const sessionId = await finishOpening(opening, 0)
+
+    await sessions.send(sessionId, 'What is this?')
+    const pending = await sessions.get(sessionId)
+    const approved = await sessions.resolveWebSearch(sessionId, pending.exchanges[0]!.webSearch!.id, true)
+
+    expect(mocks.sendMessage).toHaveBeenCalledTimes(2)
+    expect(mocks.sendMessage.mock.calls[1]?.[1]).toMatchObject({
+      text: expect.stringMatching(/^\[FOVEA_WEB_SEARCH_APPROVED\]/),
+      imagePath: capture().imagePath,
+      webSearchAllowed: true
+    })
+    expect(approved).toMatchObject({ busy: false, phase: 'completed' })
+    expect(approved.exchanges[0]).toMatchObject({ answer: 'Verified answer with a source.', webSearch: { status: 'completed' } })
   })
 
   it('keeps New snip session-scoped and starts a fresh capture after cleanup', async () => {
@@ -380,6 +467,6 @@ describe('question-session window migration', () => {
     await sessions.newSnip(sessionId)
     await vi.waitFor(() => expect(mocks.deleteScreenshot).toHaveBeenCalledTimes(1))
     expect(mocks.startNewCapture).toHaveBeenCalledTimes(1)
-    expect(() => sessions.get(sessionId)).toThrow(/already closed/)
+    await expect(sessions.get(sessionId)).rejects.toThrow(/already closed/)
   })
 })

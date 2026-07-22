@@ -7,7 +7,7 @@ JSONL/stdin/stdout; no global Codex, Node.js, Rust, Python, or separate server i
 needed by an installed user.
 
 The application is currently packaged and displayed under its original temporary
-name, **SnipChat**. This repository is the new Fovea home; product-name rebranding
+name, **Fovea**. This repository is the new Fovea home; product-name rebranding
 is intentionally left for a future enhancement rather than mixed into the initial
 repository preparation.
 
@@ -62,11 +62,11 @@ initializes and supervises the pinned sidecar, correlates JSON-RPC responses,
 continues after malformed lines, streams typed notifications, and restarts with
 bounded backoff after an unexpected exit. Codex owns OAuth tokens and refresh;
 its isolated `CODEX_HOME` prefers Windows Credential Manager through the
-`keyring` credential store. SnipChat does not log API keys, tokens, full OAuth
+`keyring` credential store. Fovea does not log API keys, tokens, full OAuth
 URLs, or screenshots.
 
 Every model turn uses `approvalPolicy: "never"` and the read-only sandbox.
-SnipChat automatically declines command, file-change, permission, and
+Fovea automatically declines command, file-change, permission, and
 interactive-tool requests, and immediately interrupts a turn if a command,
 file-change, connector, dynamic-tool, or web-search item starts. The
 visual-assistant instruction also forbids tools and file changes. Conversation
@@ -91,5 +91,5 @@ ephemeral; closing a panel deletes the thread and screenshot.
 
 Third-party licensing for the bundled Codex sidecar is in
 `resources/licences/`. Screenshots are sent only through the selected OpenAI
-authentication mode. There is no analytics, telemetry, backend, SnipChat
+authentication mode. There is no analytics, telemetry, backend, Fovea
 account, history database, or non-OpenAI provider.

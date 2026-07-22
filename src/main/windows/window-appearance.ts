@@ -3,8 +3,22 @@ import type { Rectangle, Size } from '@shared/types/geometry'
 import { deriveOuterSize, fitWindowSizesToWorkArea, type FittedWindowSizes } from './window-geometry'
 
 // Keep paired with --fovea-color-canvas in the renderer design system.
-export const WINDOW_BACKGROUND_COLOR = '#090b10'
+export const WINDOW_BACKGROUND_COLOR = '#101010'
+export const WINDOW_LIGHT_BACKGROUND_COLOR = '#f3f6fa'
 export const WINDOW_TRANSPARENT_BACKGROUND_COLOR = '#00000000'
+let resolvedBackgroundColor = WINDOW_LIGHT_BACKGROUND_COLOR
+
+export function setWindowBackgroundAppearance(appearance: 'dark' | 'light'): void {
+  resolvedBackgroundColor = appearance === 'dark' ? WINDOW_BACKGROUND_COLOR : WINDOW_LIGHT_BACKGROUND_COLOR
+}
+
+export function resolveWindowBackgroundColor(
+  material: WindowMaterial,
+  appearance: 'dark' | 'light'
+): string {
+  if (material === 'transparent') return WINDOW_TRANSPARENT_BACKGROUND_COLOR
+  return appearance === 'dark' ? WINDOW_BACKGROUND_COLOR : WINDOW_LIGHT_BACKGROUND_COLOR
+}
 
 // Keep paired with --fovea-space-6. Electron and renderer geometry are both DIP/CSS pixels.
 export const WINDOW_SURFACE_INSET = 12
@@ -67,7 +81,7 @@ export function getWindowAppearanceOptions(
     ...appearance,
     frame: false,
     transparent: !solid,
-    backgroundColor: solid ? WINDOW_BACKGROUND_COLOR : WINDOW_TRANSPARENT_BACKGROUND_COLOR,
+    backgroundColor: solid ? resolvedBackgroundColor : WINDOW_TRANSPARENT_BACKGROUND_COLOR,
     show: false,
     useContentSize: true,
     hasShadow: solid,

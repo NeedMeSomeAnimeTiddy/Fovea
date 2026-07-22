@@ -20,10 +20,19 @@ export interface VisionModel {
   inputModalities: string[]
 }
 
+export interface VisionTurnInput {
+  text: string
+  imagePath?: string
+  modelId: string
+  reasoningEffort?: string | null
+  history?: Array<{ role: 'user' | 'assistant'; text: string }>
+  webSearchAllowed?: boolean
+}
+
 export type ProviderEvent =
   | { type: 'started'; turnId: string }
   | { type: 'delta'; text: string }
   | { type: 'completed' }
   | { type: 'cancelled' }
+  | { type: 'web-search-requested'; requestId: string; query: string }
   | { type: 'error'; message: string }
-

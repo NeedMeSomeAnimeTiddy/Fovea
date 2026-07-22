@@ -52,6 +52,7 @@ const mocks = vi.hoisted(() => {
     bounds: { x: number; y: number; width: number; height: number }
     destroyed = false
     showCalls = 0
+    hideCalls = 0
     focusCalls = 0
     readonly setBoundsCalls: Array<{ x: number; y: number; width: number; height: number }> = []
 
@@ -99,6 +100,10 @@ const mocks = vi.hoisted(() => {
 
     show(): void {
       this.showCalls += 1
+    }
+
+    hide(): void {
+      this.hideCalls += 1
     }
 
     focus(): void {
@@ -212,7 +217,7 @@ describe('Settings window startup lifecycle', () => {
     )
 
     const solid = mocks.windows[1]!
-    expect(solid.options).toMatchObject({ transparent: false, resizable: true, maximizable: true })
+    expect(solid.options).toMatchObject({ transparent: false, resizable: false, maximizable: false, minimizable: false, thickFrame: false })
     const { windowChromeRegistry } = await import('../src/main/windows/window-chrome')
     solid.emit('ready-to-show')
     windowChromeRegistry.get(solid.webContents.id)!.markRendererReady()
@@ -224,37 +229,36 @@ describe('Settings window startup lifecycle', () => {
     expect(solid.showCalls).toBe(1)
   })
 
-  it('refits application-maximized bounds for relevant display metrics and tears listeners down', async () => {
+  it('uses compact fixed geometry and hides to the tray when focus moves away', async () => {
     vi.spyOn(console, 'info').mockImplementation(() => undefined)
     const { showSettingsWindow } = await import('../src/main/windows/settings-window')
     const opening = showSettingsWindow()
     const window = mocks.windows[0]!
     const { windowChromeRegistry } = await import('../src/main/windows/window-chrome')
+    expect(window.options).toMatchObject({
+      width: 624,
+      height: 664,
+      minWidth: 624,
+      minHeight: 664,
+      resizable: false,
+      maximizable: false,
+      minimizable: false,
+      thickFrame: false,
+      skipTaskbar: true
+    })
     window.emit('ready-to-show')
     const controller = windowChromeRegistry.get(window.webContents.id)!
     controller.markRendererReady()
     await opening
-    controller.toggleMaximize()
-    expect(window.bounds).toEqual({ x: 0, y: 0, width: 1920, height: 1040 })
+    expect(controller.getState()).toMatchObject({ canMinimize: false, canMaximize: false, canResize: false })
 
-    mocks.screen.workArea = { x: 48, y: 0, width: 1872, height: 1040 }
-    mocks.screen.emit('display-metrics-changed', {}, {}, ['rotation'])
-    expect(window.setBoundsCalls).toHaveLength(1)
-    mocks.screen.emit('display-metrics-changed', {}, {}, ['workArea'])
-    expect(window.bounds).toEqual(mocks.screen.workArea)
-    expect(window.setBoundsCalls).toHaveLength(2)
+    window.emit('blur')
+    expect(window.hideCalls).toBe(1)
+    expect(window.destroyed).toBe(false)
 
-    mocks.screen.workArea = { x: -1280, y: 40, width: 1280, height: 720 }
-    mocks.screen.emit('display-removed', {}, {})
-    expect(window.bounds).toEqual(mocks.screen.workArea)
-    expect(window.setBoundsCalls).toHaveLength(3)
-    expect(mocks.screen.listenerCount('display-metrics-changed')).toBe(1)
-    expect(mocks.screen.listenerCount('display-removed')).toBe(1)
-
-    window.destroy()
-    expect(mocks.screen.listenerCount('display-metrics-changed')).toBe(0)
-    expect(mocks.screen.listenerCount('display-removed')).toBe(0)
-    expect(windowChromeRegistry.get(window.webContents.id)).toBeNull()
+    await expect(showSettingsWindow()).resolves.toBe(window)
+    expect(window.showCalls).toBe(2)
+    expect(window.focusCalls).toBe(1)
   })
 
   it('does not retry a readiness timeout when solid mode was selected explicitly', async () => {
@@ -272,7 +276,7 @@ describe('Settings window startup lifecycle', () => {
     await vi.advanceTimersByTimeAsync(SETTINGS_WINDOW_READY_TIMEOUT_MS)
     await rejection
     expect(mocks.windows).toHaveLength(1)
-    expect(mocks.windows[0]!.options).toMatchObject({ transparent: false, resizable: true })
+    expect(mocks.windows[0]!.options).toMatchObject({ transparent: false, resizable: false, maximizable: false })
     expect(mocks.windows[0]!.destroyed).toBe(true)
   })
 })

@@ -1,6 +1,6 @@
 # Third-party notices
 
-SnipChat bundles the official unmodified Windows executable from the OpenAI
+Fovea bundles the official unmodified Windows executable from the OpenAI
 Codex release `rust-v0.144.4` (`openai/codex`). Codex is licensed under the
 Apache License 2.0; the complete licence is included as `CODEX-LICENSE.txt`.
 
@@ -15,5 +15,5 @@ and Cargo manifests. No upstream `NOTICE` file is published at the repository
 root for this pinned release.
 
 Electron, React, Vite, and the other JavaScript packages used to build
-SnipChat retain their respective licences in `node_modules` during development
+Fovea retain their respective licences in `node_modules` during development
 and in Electron Builder's packaged application metadata where included.

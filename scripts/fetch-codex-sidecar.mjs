@@ -44,7 +44,7 @@ try {
 
 if (!validExisting) {
   console.log(`Downloading official Codex ${VERSION} Windows ${process.arch} sidecar…`)
-  const response = await fetch(url, { redirect: 'follow', headers: { 'user-agent': 'SnipChat-build/0.1.0' } })
+  const response = await fetch(url, { redirect: 'follow', headers: { 'user-agent': 'Fovea-build/0.1.0' } })
   if (!response.ok || !response.body) throw new Error(`Codex download failed: HTTP ${response.status}`)
   await rm(temporary, { force: true })
   await pipeline(Readable.fromWeb(response.body), createWriteStream(temporary, { mode: 0o755 }))

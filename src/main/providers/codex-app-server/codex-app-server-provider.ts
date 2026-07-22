@@ -3,7 +3,7 @@ import { mkdir, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import readline from 'node:readline'
-import type { ProviderEvent, ProviderStatus, VisionModel } from '@shared/types/provider'
+import type { ProviderEvent, ProviderStatus, VisionModel, VisionTurnInput } from '@shared/types/provider'
 import type { VisionProvider } from '../vision-provider'
 import { AsyncQueue } from './async-queue'
 import { JsonlRpcClient } from './jsonl-rpc-client'
@@ -25,7 +25,7 @@ import type { PermissionsRequestApprovalResponse } from '../../../../resources/c
 const PINNED_VERSION = '0.144.4'
 const MODEL_CACHE_TTL_MS = 10 * 60 * 1_000
 const MODEL_RETRY_COOLDOWN_MS = 60 * 1_000
-const VISUAL_ASSISTANT_INSTRUCTION = `You are a general visual assistant, not a coding agent. Answer the user's question about the screenshot directly. Do not run commands, use tools, or modify files. Do not claim to see content that is not visible. Clearly state uncertainty. Keep answers concise and practical unless the user asks for detail.`
+const VISUAL_ASSISTANT_INSTRUCTION = `You are a general visual assistant, not a coding agent. Inspect the screenshot carefully and answer the user's question directly. Do not run commands, modify files, or use tools other than the approved web-search flow below. Do not claim to see content that is not visible. Keep answers concise and practical unless the user asks for detail. Web search is disabled unless the user's message begins with [FOVEA_WEB_SEARCH_APPROVED]. Without that token, answer from visible evidence and stable knowledge when confident. If you cannot confidently identify a visible object, product, logo, place, artwork, interface, error, or other subject and a focused search could identify or explain it, do not stop at saying it is unidentifiable; respond with exactly <fovea-web-search-request>{"query":"a concise search query based on the visible clues"}</fovea-web-search-request>. Use the same request when current or unfamiliar information is essential and you are not confident. Do not request access when the screenshot lacks enough clues for a useful search. When the approval token is present, use web search only if needed, prefer authoritative sources, cite links, and never use any other tool.`
 
 export interface CodexProviderOptions {
   binaryPath: string
@@ -39,6 +39,7 @@ interface ActiveTurn {
   turnId: string
   queue: AsyncQueue<ProviderEvent>
   receivedDelta: boolean
+  webSearchAllowed: boolean
 }
 
 export class CodexAppServerProvider extends EventEmitter implements VisionProvider {
@@ -117,10 +118,10 @@ export class CodexAppServerProvider extends EventEmitter implements VisionProvid
     }
   }
 
-  async createConversation(): Promise<string> {
+  async createConversation(selectedModelId?: string): Promise<string> {
     const rpc = await this.requireRpc()
     const models = await this.listModels()
-    const model = this.options.getSelectedModel() ?? models.find((entry) => entry.isDefault)?.id ?? models[0]?.id
+    const model = selectedModelId ?? this.options.getSelectedModel() ?? models.find((entry) => entry.isDefault)?.id ?? models[0]?.id
     if (!model) throw new Error('No image-capable Codex model is available for this account.')
     const params: ThreadStartParams = {
       model,
@@ -129,7 +130,7 @@ export class CodexAppServerProvider extends EventEmitter implements VisionProvid
       sandbox: 'read-only',
       developerInstructions: VISUAL_ASSISTANT_INSTRUCTION,
       ephemeral: true,
-      serviceName: 'snipchat'
+      serviceName: 'fovea'
     }
     const result = await rpc.request<ThreadStartResponse>('thread/start', params)
     return result.thread.id
@@ -137,7 +138,7 @@ export class CodexAppServerProvider extends EventEmitter implements VisionProvid
 
   async *sendMessage(
     conversationId: string,
-    input: { text: string; imagePath?: string }
+    input: VisionTurnInput
   ): AsyncIterable<ProviderEvent> {
     const rpc = await this.requireRpc()
     const queue = new AsyncQueue<ProviderEvent>()
@@ -145,15 +146,13 @@ export class CodexAppServerProvider extends EventEmitter implements VisionProvid
     if (input.imagePath) items.push({ type: 'localImage', path: input.imagePath })
 
     const models = await this.listModels()
-    const modelId = this.options.getSelectedModel() ?? models.find((model) => model.isDefault)?.id ?? models[0]?.id
+    const modelId = input.modelId ?? this.options.getSelectedModel() ?? models.find((model) => model.isDefault)?.id ?? models[0]?.id
     if (!modelId) throw new Error('No image-capable Codex model is available for this account.')
     const model = models.find((entry) => entry.id === modelId)
     const efforts = model?.supportedReasoningEfforts ?? []
-    const effort: TurnStartParams['effort'] = efforts.includes('low')
-      ? 'low'
-      : efforts.includes('medium')
-        ? 'medium'
-        : (model?.defaultReasoningEffort as TurnStartParams['effort'])
+    const effort: TurnStartParams['effort'] = input.reasoningEffort && efforts.includes(input.reasoningEffort)
+      ? input.reasoningEffort as TurnStartParams['effort']
+      : efforts.includes('low') ? 'low' : efforts.includes('medium') ? 'medium' : (model?.defaultReasoningEffort as TurnStartParams['effort'])
 
     try {
       const params: TurnStartParams = {
@@ -161,12 +160,12 @@ export class CodexAppServerProvider extends EventEmitter implements VisionProvid
         input: items,
         cwd: this.options.workingDirectory,
         approvalPolicy: 'never',
-        sandboxPolicy: { type: 'readOnly', networkAccess: false },
+        sandboxPolicy: { type: 'readOnly', networkAccess: input.webSearchAllowed === true },
         model: modelId,
         ...(effort ? { effort } : {})
       }
       const result = await rpc.request<TurnStartResponse>('turn/start', params)
-      const active: ActiveTurn = { turnId: result.turn.id, queue, receivedDelta: false }
+      const active: ActiveTurn = { turnId: result.turn.id, queue, receivedDelta: false, webSearchAllowed: input.webSearchAllowed === true }
       this.activeTurns.set(conversationId, active)
       this.conversationTurns.set(conversationId, result.turn.id)
       queue.push({ type: 'started', turnId: result.turn.id })
@@ -249,7 +248,7 @@ export class CodexAppServerProvider extends EventEmitter implements VisionProvid
 
     try {
       await rpc.request('initialize', {
-        clientInfo: { name: 'snipchat', title: 'SnipChat', version: '0.1.0' }
+        clientInfo: { name: 'fovea', title: 'Fovea', version: '0.1.0' }
       })
       rpc.notify('initialized')
       this.ready = true
@@ -323,11 +322,13 @@ export class CodexAppServerProvider extends EventEmitter implements VisionProvid
     const turnId = (params.turnId as string | undefined) ?? params.turn?.id
     if (turnId && turnId !== active.turnId) return
 
+    const toolType = String(params.item?.type)
     if (
       notification.method === 'item/started' &&
-      ['commandExecution', 'fileChange', 'mcpToolCall', 'dynamicToolCall', 'webSearch'].includes(String(params.item?.type))
+      ['commandExecution', 'fileChange', 'mcpToolCall', 'dynamicToolCall', 'webSearch'].includes(toolType) &&
+      !(toolType === 'webSearch' && active.webSearchAllowed)
     ) {
-      active.queue.push({ type: 'error', message: 'SnipChat blocked an attempted tool action.' })
+      active.queue.push({ type: 'error', message: 'Fovea blocked an attempted tool action.' })
       void this.rpc?.request('turn/interrupt', { threadId, turnId: active.turnId }).catch(() => undefined)
       return
     }
@@ -371,7 +372,7 @@ export class CodexAppServerProvider extends EventEmitter implements VisionProvid
       const response: PermissionsRequestApprovalResponse = { permissions: {}, scope: 'turn' }
       rpc.respond(request.id, response)
     } else if (request.method === 'item/tool/requestUserInput') {
-      rpc.respondError(request.id, { code: -32601, message: 'SnipChat does not allow interactive tool requests.' })
+      rpc.respondError(request.id, { code: -32601, message: 'Fovea does not allow interactive tool requests.' })
     } else {
       rpc.respondError(request.id, { code: -32601, message: 'Unsupported server request.' })
     }

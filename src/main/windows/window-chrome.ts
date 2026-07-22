@@ -85,6 +85,9 @@ export interface OpenBrowserWindowWithChromeOptions {
   minimumSurfaceSize: Size
   screenSource: WindowChromeScreenSource
   timeoutMs?: number
+  canMinimize?: boolean
+  canMaximize?: boolean
+  canResize?: boolean
   createWindow(material: WindowMaterial): BrowserWindow
   loadRenderer(window: BrowserWindow): Promise<void>
   isWindowCurrent?(window: BrowserWindow): boolean
@@ -511,6 +514,9 @@ export async function openBrowserWindowWithChrome(
       material,
       surfaceSize: options.surfaceSize,
       minimumSurfaceSize: options.minimumSurfaceSize,
+      canMinimize: options.canMinimize,
+      canMaximize: options.canMaximize,
+      canResize: options.canResize,
       fallbackRetryEligible,
       onReady: () => settleReadiness('ready')
     })
