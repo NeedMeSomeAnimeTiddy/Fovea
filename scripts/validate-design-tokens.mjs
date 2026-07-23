@@ -80,7 +80,8 @@ const REMEDIES = {
   shadow: 'Replace the literal recipe with a semantic --fovea-shadow-*, --fovea-elevation-*, or --fovea-glow-* token.',
   duration: 'Replace the literal timing with a semantic --fovea-motion-* token.',
   inline: 'Move the visual decision to CSS and consume an existing semantic --fovea-* token.',
-  reference: 'Renderer and component consumers must use a public semantic --fovea-* token instead of --fovea-ref-*.'
+  reference: 'Renderer and component consumers must use a public semantic --fovea-* token instead of --fovea-ref-*.',
+  undefined: 'Declare this --fovea-* token in the shared token or theme contract, or replace it with an existing declared token.'
 }
 
 export function validateSource({ filePath, source, rootDir = PROJECT_ROOT }) {
@@ -100,15 +101,43 @@ export function validateSource({ filePath, source, rootDir = PROJECT_ROOT }) {
 export async function validateRendererTree({ rootDir = PROJECT_ROOT, rendererRoot = RENDERER_ROOT } = {}) {
   const files = await collectSourceFiles(rendererRoot)
   const combined = { violations: [], exceptions: [] }
+  const sources = []
 
   for (const filePath of files) {
     const source = await readFile(filePath, 'utf8')
+    sources.push({ filePath, source })
     const result = validateSource({ filePath, source, rootDir })
     combined.violations.push(...result.violations)
     combined.exceptions.push(...result.exceptions)
   }
 
+  combined.violations.push(...validateTokenReferences(sources, rootDir))
+
   return combined
+}
+
+export function validateTokenReferences(sources, rootDir = PROJECT_ROOT) {
+  const declared = new Set()
+  const findings = []
+  for (const { filePath, source } of sources) {
+    if (path.extname(filePath).toLowerCase() !== '.css') continue
+    for (const match of source.matchAll(/(--fovea-[a-z0-9-]+)\s*:/gi)) declared.add(match[1])
+  }
+  for (const { filePath, source } of sources) {
+    if (path.extname(filePath).toLowerCase() !== '.css') continue
+    for (const match of source.matchAll(/var\(\s*(--fovea-[a-z0-9-]+)/gi)) {
+      if (declared.has(match[1])) continue
+      findings.push({
+        file: toDisplayPath(filePath, rootDir),
+        line: lineNumberAt(source, match.index),
+        property: 'var()',
+        remedy: REMEDIES.undefined,
+        rule: 'undefined',
+        value: match[1]
+      })
+    }
+  }
+  return findings
 }
 
 export function formatReport({ violations, exceptions }) {

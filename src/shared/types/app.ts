@@ -1,4 +1,5 @@
 import type { ProviderStatus } from './provider'
+import type { AppError } from './app-error'
 
 export type AppearancePreference = 'system' | 'dark' | 'light'
 export type ResolvedAppearance = 'dark' | 'light'
@@ -63,6 +64,17 @@ export type ResponsePhase =
   | 'completed'
   | 'failed'
 
+export type SpectralEdgeState =
+  | 'idle'
+  | 'connecting'
+  | 'authenticating'
+  | 'thinking'
+  | 'streaming'
+  | 'recovering'
+  | 'completed'
+  | 'stopped'
+  | 'error'
+
 export type CaptureMode = 'region' | 'display' | 'window' | 'repeat-last'
 export type ShortcutAction = CaptureMode | 'settings'
 
@@ -79,7 +91,7 @@ export interface ConversationExchange {
   answer: string
   phase: ResponsePhase
   segmentId: string
-  error?: string
+  error?: AppError
   webSearch?: {
     id: string
     query: string

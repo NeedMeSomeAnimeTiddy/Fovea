@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import { IPC, type FoveaApi, type SettingsViewState, type WindowChromeState } from '@shared/contracts/ipc'
 import type { AppearanceState } from '@shared/types/app'
 import type { ProviderEvent } from '@shared/types/provider'
+import type { IpcResult } from '@shared/types/app-error'
 
 const initialAppearance = ipcRenderer.sendSync(IPC.appearanceGet) as AppearanceState
 applyInitialAppearance(initialAppearance)
@@ -24,30 +25,36 @@ function applyInitialAppearance(appearance: AppearanceState): void {
 
 const api: FoveaApi = {
   profiles: {
-    list: () => ipcRenderer.invoke(IPC.profilesList),
-    createApiKey: (provider, name, apiKey) => ipcRenderer.invoke(IPC.profilesCreateApiKey, provider, name, apiKey),
-    createChatGpt: (name) => ipcRenderer.invoke(IPC.profilesCreateChatGpt, name),
-    rename: (id, name) => ipcRenderer.invoke(IPC.profilesRename, id, name),
-    authenticate: (id) => ipcRenderer.invoke(IPC.profilesAuthenticate, id),
-    test: (id) => ipcRenderer.invoke(IPC.profilesTest, id),
-    signOut: (id) => ipcRenderer.invoke(IPC.profilesSignOut, id),
-    delete: (id) => ipcRenderer.invoke(IPC.profilesDelete, id),
-    setDefault: (id) => ipcRenderer.invoke(IPC.profilesSetDefault, id),
-    setDefaults: (id, modelId, reasoning) => ipcRenderer.invoke(IPC.profilesSetDefaults, id, modelId, reasoning),
-    models: (id) => ipcRenderer.invoke(IPC.profilesModels, id)
+    list: () => invokeResult(IPC.profilesList),
+    createApiKey: (provider, name, apiKey) => invokeResult(IPC.profilesCreateApiKey, provider, name, apiKey),
+    createChatGpt: (name) => invokeResult(IPC.profilesCreateChatGpt, name),
+    rename: (id, name) => invokeResult(IPC.profilesRename, id, name),
+    authenticate: (id) => invokeResult(IPC.profilesAuthenticate, id),
+    test: (id) => invokeResult(IPC.profilesTest, id),
+    signOut: (id) => invokeResult(IPC.profilesSignOut, id),
+    delete: (id) => invokeResult(IPC.profilesDelete, id),
+    setDefault: (id) => invokeResult(IPC.profilesSetDefault, id),
+    setDefaults: (id, modelId, reasoning) => invokeResult(IPC.profilesSetDefaults, id, modelId, reasoning),
+    models: (id) => invokeResult(IPC.profilesModels, id)
   },
   settings: {
-    get: () => ipcRenderer.invoke(IPC.settingsGet), setAppearance: (value) => ipcRenderer.invoke(IPC.settingsSetAppearance, value), setLaunchAtLogin: (enabled) => ipcRenderer.invoke(IPC.settingsSetLaunchAtLogin, enabled), setShortcut: (action, accelerator) => ipcRenderer.invoke(IPC.settingsSetShortcut, action, accelerator), resetShortcuts: () => ipcRenderer.invoke(IPC.settingsResetShortcuts), completeOnboarding: () => ipcRenderer.invoke(IPC.settingsCompleteOnboarding), deleteTemporaryFiles: () => ipcRenderer.invoke(IPC.settingsDeleteTemp),
+    get: () => invokeResult(IPC.settingsGet), setAppearance: (value) => invokeResult(IPC.settingsSetAppearance, value), setLaunchAtLogin: (enabled) => invokeResult(IPC.settingsSetLaunchAtLogin, enabled), setShortcut: (action, accelerator) => invokeResult(IPC.settingsSetShortcut, action, accelerator), resetShortcuts: () => invokeResult(IPC.settingsResetShortcuts), completeOnboarding: () => invokeResult(IPC.settingsCompleteOnboarding), deleteTemporaryFiles: () => invokeResult(IPC.settingsDeleteTemp),
     onChanged: (callback) => subscribe(IPC.settingsChanged, callback), onAppearanceChanged: (callback) => subscribe(IPC.appearanceChanged, callback)
   },
-  capture: { start: (mode) => ipcRenderer.invoke(IPC.captureStart, mode), getContext: () => ipcRenderer.invoke(IPC.captureGetContext), select: (rectangle) => ipcRenderer.invoke(IPC.captureSelect, rectangle), cancel: () => ipcRenderer.invoke(IPC.captureCancel) },
+  capture: { start: (mode) => invokeResult(IPC.captureStart, mode), getContext: () => invokeResult(IPC.captureGetContext), select: (rectangle) => invokeResult(IPC.captureSelect, rectangle), cancel: () => invokeResult(IPC.captureCancel) },
   question: {
-    get: (id) => ipcRenderer.invoke(IPC.questionGet, id), setSelection: (id, selection) => ipcRenderer.invoke(IPC.questionSetSelection, id, selection), send: (id, text) => ipcRenderer.invoke(IPC.questionSend, id, text), resolveWebSearch: (id, requestId, approved) => ipcRenderer.invoke(IPC.questionResolveWebSearch, id, requestId, approved), stop: (id) => ipcRenderer.invoke(IPC.questionStop, id), close: (id) => ipcRenderer.invoke(IPC.questionClose, id), newSnip: (id) => ipcRenderer.invoke(IPC.questionNewSnip, id),
+    get: (id) => invokeResult(IPC.questionGet, id), setSelection: (id, selection) => invokeResult(IPC.questionSetSelection, id, selection), send: (id, text) => invokeResult(IPC.questionSend, id, text), resolveWebSearch: (id, requestId, approved) => invokeResult(IPC.questionResolveWebSearch, id, requestId, approved), stop: (id) => invokeResult(IPC.questionStop, id), close: (id) => invokeResult(IPC.questionClose, id), newSnip: (id) => invokeResult(IPC.questionNewSnip, id),
     onEvent: (callback) => { const listener = (_event: Electron.IpcRendererEvent, id: string, event: ProviderEvent): void => callback(id, event); ipcRenderer.on(IPC.questionEvent, listener); return () => ipcRenderer.removeListener(IPC.questionEvent, listener) }
   },
-  application: { openSettings: () => ipcRenderer.invoke(IPC.applicationOpenSettings) },
+  application: { openSettings: () => invokeResult(IPC.applicationOpenSettings) },
   windowChrome: { getState: () => ipcRenderer.invoke(IPC.windowChromeGetState), ready: () => ipcRenderer.send(IPC.windowChromeReady), minimize: () => ipcRenderer.invoke(IPC.windowChromeMinimize), toggleMaximize: () => ipcRenderer.invoke(IPC.windowChromeToggleMaximize), close: () => ipcRenderer.invoke(IPC.windowChromeClose), beginResize: (edge) => ipcRenderer.invoke(IPC.windowChromeBeginResize, edge), updateResize: () => ipcRenderer.send(IPC.windowChromeUpdateResize), endResize: () => ipcRenderer.send(IPC.windowChromeEndResize), onStateChanged: (callback) => subscribe(IPC.windowChromeStateChanged, callback) },
-  openExternal: (url) => ipcRenderer.invoke(IPC.externalOpen, url)
+  openExternal: (url) => invokeResult(IPC.externalOpen, url)
+}
+
+async function invokeResult<T>(channel: string, ...arguments_: unknown[]): Promise<T> {
+  const result = await ipcRenderer.invoke(channel, ...arguments_) as IpcResult<T>
+  if (result.ok) return result.value
+  return Promise.reject(structuredClone(result.error))
 }
 
 function subscribe<T extends SettingsViewState | AppearanceState | WindowChromeState>(channel: string, callback: (value: T) => void): () => void {

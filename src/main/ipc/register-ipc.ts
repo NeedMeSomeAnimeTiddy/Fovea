@@ -2,6 +2,8 @@ import { app, BrowserWindow, ipcMain, shell, type IpcMainEvent, type IpcMainInvo
 import { IPC, isWindowResizeEdge, type SettingsViewState } from '@shared/contracts/ipc'
 import type { AppearancePreference, CaptureMode, ConversationSelection, ProviderKind, ShortcutAction } from '@shared/types/app'
 import type { Rectangle } from '@shared/types/geometry'
+import type { AppErrorCode } from '@shared/types/app-error'
+import { toIpcResult } from '../errors/app-error'
 import type { AppearanceController } from '../appearance/appearance-controller'
 import type { CaptureService } from '../capture/capture-service'
 import type { ProviderRegistry } from '../providers/provider-registry'
@@ -18,41 +20,49 @@ export function registerIpc(dependencies: IpcDependencies): void {
   ipcMain.on(IPC.appearanceGet, (event) => { event.returnValue = dependencies.appearance.getState() })
   const buildSettingsState = (): SettingsViewState => ({ appearance: dependencies.appearance.getState(), profiles: dependencies.providers.listProfiles(), shortcuts: dependencies.shortcuts.getState(), launchAtLogin: dependencies.settings.get().launchAtLogin, onboardingCompleted: dependencies.settings.get().onboardingCompleted, tempLocation: dependencies.screenshots.directory, appVersion: app.getVersion() })
   const broadcastSettings = (): void => { const window = getSettingsWindow(); if (window && !window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send(IPC.settingsChanged, buildSettingsState()) }
+  dependencies.providers.on('status', broadcastSettings)
   const mutate = async (operation: () => Promise<unknown>): Promise<void> => { await operation(); broadcastSettings() }
+  const handle = (
+    channel: string,
+    operation: (event: IpcMainInvokeEvent, ...arguments_: unknown[]) => unknown,
+    fallbackCode?: AppErrorCode
+  ): void => {
+    ipcMain.handle(channel, (event, ...arguments_) => toIpcResult(() => operation(event, ...arguments_), fallbackCode))
+  }
 
-  ipcMain.handle(IPC.settingsGet, buildSettingsState)
-  ipcMain.handle(IPC.settingsSetAppearance, (_event, value: unknown) => mutate(() => dependencies.appearance.setPreference(requireAppearance(value))))
-  ipcMain.handle(IPC.settingsSetLaunchAtLogin, (_event, enabled: unknown) => mutate(async () => { if (typeof enabled !== 'boolean') throw new Error('Invalid launch setting.'); app.setLoginItemSettings({ openAtLogin: enabled, path: process.execPath }); await dependencies.settings.update({ launchAtLogin: enabled }) }))
-  ipcMain.handle(IPC.settingsSetShortcut, (_event, action: unknown, accelerator: unknown) => mutate(() => dependencies.shortcuts.set(requireShortcutAction(action), requireAccelerator(accelerator))))
-  ipcMain.handle(IPC.settingsResetShortcuts, () => mutate(() => dependencies.shortcuts.reset()))
-  ipcMain.handle(IPC.settingsCompleteOnboarding, () => mutate(() => dependencies.settings.update({ onboardingCompleted: true })))
-  ipcMain.handle(IPC.settingsDeleteTemp, () => dependencies.screenshots.cleanup())
+  handle(IPC.settingsGet, buildSettingsState)
+  handle(IPC.settingsSetAppearance, (_event, value) => mutate(() => dependencies.appearance.setPreference(requireAppearance(value))), 'validation')
+  handle(IPC.settingsSetLaunchAtLogin, (_event, enabled) => mutate(async () => { if (typeof enabled !== 'boolean') throw new Error('Invalid launch setting.'); app.setLoginItemSettings({ openAtLogin: enabled, path: process.execPath }); await dependencies.settings.update({ launchAtLogin: enabled }) }), 'validation')
+  handle(IPC.settingsSetShortcut, (_event, action, accelerator) => mutate(() => dependencies.shortcuts.set(requireShortcutAction(action), requireAccelerator(accelerator))), 'validation')
+  handle(IPC.settingsResetShortcuts, () => mutate(() => dependencies.shortcuts.reset()))
+  handle(IPC.settingsCompleteOnboarding, () => mutate(() => dependencies.settings.update({ onboardingCompleted: true })))
+  handle(IPC.settingsDeleteTemp, () => dependencies.screenshots.cleanup())
 
-  ipcMain.handle(IPC.profilesList, () => dependencies.providers.listProfiles())
-  ipcMain.handle(IPC.profilesCreateApiKey, async (_event, provider: unknown, name: unknown, apiKey: unknown) => { const result = await dependencies.providers.profiles.createApiKey(requireApiProvider(provider), requireString(name, 80), requireString(apiKey, 2048)); broadcastSettings(); return result })
-  ipcMain.handle(IPC.profilesCreateChatGpt, async (_event, name: unknown) => { const result = await dependencies.providers.profiles.createChatGpt(name === undefined ? undefined : requireString(name, 80)); broadcastSettings(); return result })
-  ipcMain.handle(IPC.profilesRename, (_event, id: unknown, name: unknown) => mutate(() => dependencies.providers.profiles.rename(requireId(id), requireString(name, 80))))
-  ipcMain.handle(IPC.profilesAuthenticate, (_event, id: unknown) => mutate(() => dependencies.providers.authenticate(requireId(id))))
-  ipcMain.handle(IPC.profilesTest, async (_event, id: unknown) => { const result = await dependencies.providers.test(requireId(id)); broadcastSettings(); return result })
-  ipcMain.handle(IPC.profilesSignOut, (_event, id: unknown) => mutate(() => dependencies.providers.signOut(requireId(id))))
-  ipcMain.handle(IPC.profilesDelete, (_event, id: unknown) => mutate(() => dependencies.providers.delete(requireId(id))))
-  ipcMain.handle(IPC.profilesSetDefault, (_event, id: unknown) => mutate(() => dependencies.providers.profiles.setDefault(requireId(id))))
-  ipcMain.handle(IPC.profilesSetDefaults, (_event, id: unknown, model: unknown, reasoning: unknown) => mutate(() => dependencies.providers.profiles.setDefaults(requireId(id), requireNullableString(model, 200), requireNullableString(reasoning, 50))))
-  ipcMain.handle(IPC.profilesModels, (_event, id: unknown) => dependencies.providers.listModels(requireId(id)))
+  handle(IPC.profilesList, () => dependencies.providers.listProfiles())
+  handle(IPC.profilesCreateApiKey, async (_event, provider, name, apiKey) => { const result = await dependencies.providers.profiles.createApiKey(requireApiProvider(provider), requireString(name, 80), requireString(apiKey, 2048)); broadcastSettings(); return result }, 'validation')
+  handle(IPC.profilesCreateChatGpt, async (_event, name) => { const result = await dependencies.providers.profiles.createChatGpt(name === undefined ? undefined : requireString(name, 80)); broadcastSettings(); return result }, 'validation')
+  handle(IPC.profilesRename, (_event, id, name) => mutate(() => dependencies.providers.profiles.rename(requireId(id), requireString(name, 80))), 'validation')
+  handle(IPC.profilesAuthenticate, (_event, id) => mutate(() => dependencies.providers.authenticate(requireId(id))), 'authentication-required')
+  handle(IPC.profilesTest, async (_event, id) => { const result = await dependencies.providers.test(requireId(id)); broadcastSettings(); return result }, 'provider-unavailable')
+  handle(IPC.profilesSignOut, (_event, id) => mutate(() => dependencies.providers.signOut(requireId(id))))
+  handle(IPC.profilesDelete, (_event, id) => mutate(() => dependencies.providers.delete(requireId(id))))
+  handle(IPC.profilesSetDefault, (_event, id) => mutate(() => dependencies.providers.profiles.setDefault(requireId(id))))
+  handle(IPC.profilesSetDefaults, (_event, id, model, reasoning) => mutate(() => dependencies.providers.profiles.setDefaults(requireId(id), requireNullableString(model, 200), requireNullableString(reasoning, 50))), 'validation')
+  handle(IPC.profilesModels, (_event, id) => dependencies.providers.listModels(requireId(id)), 'no-compatible-models')
 
-  ipcMain.handle(IPC.captureStart, (_event, mode: unknown) => dependencies.capture.begin(requireCaptureMode(mode)))
-  ipcMain.handle(IPC.captureGetContext, (event) => dependencies.capture.getContext(event.sender.id))
-  ipcMain.handle(IPC.captureSelect, (event, rectangle: unknown) => { if (!isRectangle(rectangle)) throw new Error('Invalid selection.'); return dependencies.capture.select(rectangle, event.sender.id) })
-  ipcMain.handle(IPC.captureCancel, () => dependencies.capture.cancel())
+  handle(IPC.captureStart, (_event, mode) => dependencies.capture.begin(requireCaptureMode(mode)), 'capture-failed')
+  handle(IPC.captureGetContext, (event) => dependencies.capture.getContext(event.sender.id), 'capture-failed')
+  handle(IPC.captureSelect, (event, rectangle) => { if (!isRectangle(rectangle)) throw new Error('Invalid selection.'); return dependencies.capture.select(rectangle, event.sender.id) }, 'capture-failed')
+  handle(IPC.captureCancel, () => dependencies.capture.cancel())
 
-  ipcMain.handle(IPC.questionGet, (_event, id: unknown) => dependencies.questions.get(requireId(id)))
-  ipcMain.handle(IPC.questionSetSelection, (_event, id: unknown, selection: unknown) => dependencies.questions.setSelection(requireId(id), requireSelection(selection)))
-  ipcMain.handle(IPC.questionSend, (_event, id: unknown, text: unknown) => dependencies.questions.send(requireId(id), requireString(text, 10_000)))
-  ipcMain.handle(IPC.questionResolveWebSearch, (_event, id: unknown, requestId: unknown, approved: unknown) => { if (typeof approved !== 'boolean') throw new Error('Invalid web-search approval.'); return dependencies.questions.resolveWebSearch(requireId(id), requireId(requestId), approved) })
-  ipcMain.handle(IPC.questionStop, (_event, id: unknown) => dependencies.questions.stop(requireId(id)))
-  ipcMain.handle(IPC.questionClose, (_event, id: unknown) => dependencies.questions.close(requireId(id)))
-  ipcMain.handle(IPC.questionNewSnip, (_event, id: unknown) => dependencies.questions.newSnip(requireId(id)))
-  ipcMain.handle(IPC.applicationOpenSettings, () => showSettingsWindow())
+  handle(IPC.questionGet, (_event, id) => dependencies.questions.get(requireId(id)))
+  handle(IPC.questionSetSelection, (_event, id, selection) => dependencies.questions.setSelection(requireId(id), requireSelection(selection)), 'validation')
+  handle(IPC.questionSend, (_event, id, text) => dependencies.questions.send(requireId(id), requireString(text, 10_000)), 'provider-unavailable')
+  handle(IPC.questionResolveWebSearch, (_event, id, requestId, approved) => { if (typeof approved !== 'boolean') throw new Error('Invalid web-search approval.'); return dependencies.questions.resolveWebSearch(requireId(id), requireId(requestId), approved) }, 'provider-unavailable')
+  handle(IPC.questionStop, (_event, id) => dependencies.questions.stop(requireId(id)))
+  handle(IPC.questionClose, (_event, id) => dependencies.questions.close(requireId(id)))
+  handle(IPC.questionNewSnip, (_event, id) => dependencies.questions.newSnip(requireId(id)), 'capture-failed')
+  handle(IPC.applicationOpenSettings, () => showSettingsWindow())
 
   ipcMain.handle(IPC.windowChromeGetState, (event) => requireWindowChromeController(event).getState())
   ipcMain.on(IPC.windowChromeReady, (event) => getWindowChromeController(event)?.markRendererReady())
@@ -62,7 +72,7 @@ export function registerIpc(dependencies: IpcDependencies): void {
   ipcMain.handle(IPC.windowChromeBeginResize, (event, edge: unknown) => { if (!isWindowResizeEdge(edge)) throw new Error('Invalid window resize edge.'); requireWindowChromeController(event).beginResize(edge) })
   ipcMain.on(IPC.windowChromeUpdateResize, (event) => getWindowChromeController(event)?.requestResizeUpdate())
   ipcMain.on(IPC.windowChromeEndResize, (event) => getWindowChromeController(event)?.endResize())
-  ipcMain.handle(IPC.externalOpen, async (_event, value: unknown) => { const url = new URL(requireString(value, 2048)); if (!['https:', 'http:'].includes(url.protocol)) throw new Error('Only web links can be opened.'); await shell.openExternal(url.toString()) })
+  handle(IPC.externalOpen, async (_event, value) => { const url = new URL(requireString(value, 2048)); if (!['https:', 'http:'].includes(url.protocol)) throw new Error('Only web links can be opened.'); await shell.openExternal(url.toString()) }, 'validation')
 }
 
 function requireWindowChromeController(event: IpcMainInvokeEvent | IpcMainEvent): WindowChromeController { const controller = resolveWindowChromeController(event as WindowChromeIpcEvent); const target = BrowserWindow.fromWebContents(event.sender); if (!target || target.isDestroyed() || target.id !== controller.windowId || target.webContents.id !== controller.webContentsId) throw new Error('Window chrome is unavailable for this sender.'); return controller }

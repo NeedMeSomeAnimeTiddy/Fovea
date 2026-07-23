@@ -72,7 +72,7 @@ body,
   position: absolute;
   z-index: 3;
   pointer-events: none;
-  animation: selection-in var(--fovea-duration-fast) var(--fovea-easing-standard);
+  animation: selection-in var(--fovea-motion-fast) var(--fovea-ease-standard);
 }
 
 .selection-viewport,
@@ -200,7 +200,7 @@ body,
   gap: 10px;
   width: min(390px, calc(100vw - 32px));
   padding: 7px 8px 7px 10px;
-  animation: hud-in var(--fovea-duration-normal) var(--fovea-easing-standard);
+  animation: hud-in var(--fovea-motion-standard) var(--fovea-ease-standard);
 }
 
 .hud-symbol {
@@ -260,7 +260,7 @@ body,
   background: var(--fovea-capture-control-fill);
   font: inherit;
   font-size: var(--fovea-type-label);
-  transition: background var(--fovea-duration-fast) var(--fovea-easing-standard);
+  transition: background var(--fovea-motion-fast) var(--fovea-ease-standard);
 }
 
 .hud-cancel:hover,
@@ -289,7 +289,7 @@ body,
   gap: 8px;
   padding: 9px 13px;
   font-size: var(--fovea-type-label);
-  animation: hud-in var(--fovea-duration-fast) var(--fovea-easing-standard);
+  animation: hud-in var(--fovea-motion-fast) var(--fovea-ease-standard);
 }
 
 .status-dot {
@@ -300,7 +300,7 @@ body,
 }
 
 .selection-root.confirming {
-  animation: capture-confirm var(--fovea-duration-fast) var(--fovea-easing-standard);
+  animation: capture-confirm var(--fovea-motion-fast) var(--fovea-ease-standard);
 }
 
 @keyframes selection-in {

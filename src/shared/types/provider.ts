@@ -1,14 +1,17 @@
+import type { AppError } from './app-error'
+
 export type ProviderState = 'starting' | 'ready' | 'signed-out' | 'error' | 'stopped'
 
 export interface ProviderStatus {
   state: ProviderState
+  recovering?: boolean
   version: string
   account: null | {
     type: 'chatgpt' | 'apiKey'
     email?: string | null
     planType?: string | null
   }
-  error?: string
+  error?: AppError
 }
 
 export interface VisionModel {
@@ -35,4 +38,4 @@ export type ProviderEvent =
   | { type: 'completed' }
   | { type: 'cancelled' }
   | { type: 'web-search-requested'; requestId: string; query: string }
-  | { type: 'error'; message: string }
+  | { type: 'error'; error: AppError }

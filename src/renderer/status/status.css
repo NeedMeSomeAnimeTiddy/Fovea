@@ -1,0 +1,33 @@
+.app-status__message {
+  margin: 0 0 var(--fovea-space-3);
+}
+
+.app-status__details {
+  margin-top: var(--fovea-space-3);
+}
+
+.app-status__details summary {
+  cursor: pointer;
+}
+
+.app-status__details code {
+  display: block;
+  margin-top: var(--fovea-space-2);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.settings-loading {
+  display: grid;
+  height: 100%;
+  place-content: center;
+  justify-items: center;
+  gap: var(--fovea-space-4);
+  padding: var(--fovea-space-12);
+  color: var(--fovea-color-text-secondary);
+}
+
+.settings-loading .fui-status-banner {
+  margin-top: var(--fovea-space-6);
+  max-width: 420px;
+}

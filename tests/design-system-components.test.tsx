@@ -200,7 +200,7 @@ describe('Fovea design-system components', () => {
     expect(WINDOW_SURFACE_INSET).toBe(12)
     expect(tokens).toMatch(/--fovea-space-6:\s*0\.75rem;/)
     expect(chrome).toContain('--window-frame-inset: var(--fovea-space-6);')
-    expect(chrome.match(/var\(--window-frame-inset\)/g)).toHaveLength(13)
+    expect(chrome.match(/var\(--window-frame-inset\)/g)).toHaveLength(14)
     expect(chrome).toContain('pointer-events: auto;')
     expect(chrome).not.toMatch(/window-resize-region[^}]+(?:11px|12px|0\.75rem)/s)
   })

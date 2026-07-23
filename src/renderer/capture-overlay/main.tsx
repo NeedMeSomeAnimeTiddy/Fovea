@@ -1,8 +1,10 @@
-import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
 import { createRoot } from 'react-dom/client'
 import type { CaptureContext } from '@shared/contracts/ipc'
+import type { AppError } from '@shared/types/app-error'
 import type { Point, Rectangle } from '@shared/types/geometry'
 import { initialiseAppearance } from '../appearance'
+import { appErrorFromUnknown } from '../status/status-presentation'
 import '../design-system/index.css'
 import './overlay.css'
 
@@ -16,20 +18,30 @@ function Overlay(): React.JSX.Element {
   const [phase, setPhase] = useState<OverlayPhase>('idle')
   const [feedback, setFeedback] = useState('Select any part of the frozen screen')
   const [context, setContext] = useState<CaptureContext | null>(null)
+  const [captureError, setCaptureError] = useState<AppError | null>(null)
   const root = useRef<HTMLDivElement>(null)
   const rectangle = start ? normalize(start, current) : null
 
+  const loadContext = useCallback((): void => {
+    setCaptureError(null)
+    setPhase('idle')
+    setFeedback('Select any part of the frozen screen')
+    void window.fovea.capture.getContext().then(setContext).catch((reason) => {
+      const error = appErrorFromUnknown(reason)
+      setPhase('invalid')
+      setCaptureError(error)
+      setFeedback(error.message)
+    })
+  }, [])
+
   useEffect(() => {
     void initialiseAppearance()
-    void window.fovea.capture.getContext().then(setContext).catch((reason) => {
-      setPhase('invalid')
-      setFeedback(message(reason))
-    })
+    loadContext()
     const onKey = (event: KeyboardEvent): void => { if (event.key === 'Escape') void window.fovea.capture.cancel() }
     addEventListener('keydown', onKey)
     root.current?.focus()
     return () => removeEventListener('keydown', onKey)
-  }, [])
+  }, [loadContext])
 
   const complete = async (end: Point): Promise<void> => {
     if (!start) return
@@ -43,8 +55,10 @@ function Overlay(): React.JSX.Element {
     setPhase('submitting')
     try { await window.fovea.capture.select(next) }
     catch (reason) {
+      const error = appErrorFromUnknown(reason)
       setPhase('invalid')
-      setFeedback(message(reason))
+      setCaptureError(error)
+      setFeedback(error.message)
       setStart(null)
     }
   }
@@ -95,16 +109,19 @@ function Overlay(): React.JSX.Element {
     {!rectangle && phase !== 'submitting' && <CaptureHud
       error={phase === 'invalid'}
       detail={feedback}
+      title={captureError?.title}
       onCancel={() => void window.fovea.capture.cancel()}
+      onRetry={captureError ? loadContext : undefined}
     />}
     {phase === 'submitting' && <div className="capture-status" role="status"><span className="status-dot" />Opening Fovea…</div>}
   </div>
 }
 
-function CaptureHud({ error, detail, onCancel }: { error: boolean; detail: string; onCancel(): void }): React.JSX.Element {
+function CaptureHud({ error, detail, title, onCancel, onRetry }: { error: boolean; detail: string; title?: string; onCancel(): void; onRetry?: () => void }): React.JSX.Element {
   return <div className={`capture-hud ${error ? 'error' : ''}`} role={error ? 'alert' : 'status'} aria-live="polite" onPointerDown={(event) => event.stopPropagation()}>
     <span className="hud-symbol" aria-hidden="true">{error ? '!' : <svg viewBox="0 0 20 20"><path d="M6 2H2v4M14 2h4v4M6 18H2v-4m12 4h4v-4" /></svg>}</span>
-    <span className="hud-copy"><strong>{error ? 'Try a larger area' : 'Drag to capture'}</strong><small>{detail}</small></span>
+    <span className="hud-copy"><strong>{error ? title ?? 'Try a larger area' : 'Drag to capture'}</strong><small>{detail}</small></span>
+    {onRetry && <button className="hud-cancel" onPointerDown={(event) => event.stopPropagation()} onClick={onRetry}>Try again</button>}
     <button className="hud-cancel" onPointerDown={(event) => event.stopPropagation()} onClick={onCancel}>Cancel <kbd>Esc</kbd></button>
   </div>
 }
@@ -121,6 +138,4 @@ function dimensionPosition(rectangle: Rectangle): string {
   const horizontal = innerWidth - rectangle.x < 112 ? 'edge-right' : 'edge-left'
   return `${vertical} ${horizontal}`
 }
-function message(reason: unknown): string { return reason instanceof Error ? reason.message : String(reason) }
-
 createRoot(document.getElementById('root')!).render(<Overlay />)

@@ -45,6 +45,107 @@ html:has(.window-shell) #root {
   box-shadow: var(--fovea-shadow-window);
 }
 
+.window-edge-glow {
+  --window-edge-radius: var(--fovea-radius-xl);
+  --window-edge-opacity: 0.82;
+  --window-edge-ambient: var(--fovea-edge-glow-ambient);
+  --window-edge-ambient-opacity: 0.56;
+
+  position: absolute;
+  inset: var(--window-frame-inset);
+  z-index: 1;
+  overflow: hidden;
+  border-radius: var(--window-edge-radius);
+  opacity: var(--window-edge-opacity);
+  pointer-events: none;
+  transition: opacity var(--fovea-motion-deliberate) var(--fovea-ease-standard);
+}
+
+/* The narrow masked spectrum flows within the frame without adding separate
+ * glow objects that can protrude into the surface or beyond its edge. */
+.window-edge-glow::before {
+  position: absolute;
+  inset: calc(var(--fovea-space-1) * -1);
+  padding: var(--fovea-space-2);
+  border-radius: inherit;
+  background: var(--window-edge-ambient);
+  background-position: 0% 50%;
+  background-size: 260% 260%;
+  content: '';
+  filter: blur(2px) saturate(1.42) brightness(1.18);
+  opacity: var(--window-edge-ambient-opacity);
+  animation: fovea-edge-spectrum var(--fovea-spectral-cycle-gentle) linear infinite;
+  will-change: background-position;
+  -webkit-mask: linear-gradient(currentColor 0 0) content-box, linear-gradient(currentColor 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(currentColor 0 0) content-box, linear-gradient(currentColor 0 0);
+  mask-composite: exclude;
+}
+
+.window-edge-glow[data-edge-state='connecting'],
+.window-edge-glow[data-edge-state='authenticating'],
+.window-edge-glow[data-edge-state='recovering'] {
+  --window-edge-opacity: 1;
+  --window-edge-ambient-opacity: 0.8;
+}
+
+.window-edge-glow[data-edge-state='thinking'] {
+  --window-edge-opacity: 1;
+  --window-edge-ambient-opacity: 0.88;
+}
+
+.window-edge-glow[data-edge-state='thinking']::before {
+  animation-duration: var(--fovea-spectral-cycle-thinking);
+}
+
+.window-edge-glow[data-edge-state='streaming'] {
+  --window-edge-opacity: 1;
+  --window-edge-ambient-opacity: 0.84;
+}
+
+.window-edge-glow[data-edge-state='streaming']::before {
+  animation-duration: var(--fovea-spectral-cycle-streaming);
+}
+
+.window-edge-glow[data-edge-state='completed'] {
+  --window-edge-opacity: 0.9;
+  --window-edge-ambient-opacity: 0.66;
+}
+
+.window-edge-glow[data-edge-state='stopped'] {
+  --window-edge-opacity: 0.62;
+  --window-edge-ambient: var(--fovea-status-warning-border);
+  --window-edge-ambient-opacity: 0.64;
+}
+
+.window-edge-glow[data-edge-state='stopped']::before,
+.window-edge-glow[data-edge-state='error']::before {
+  animation: none;
+  will-change: auto;
+}
+
+.window-edge-glow[data-edge-state='error'] {
+  --window-edge-opacity: 0.7;
+  --window-edge-ambient: var(--fovea-status-error-border);
+  --window-edge-ambient-opacity: 0.72;
+}
+
+.window-shell[data-focused='false'] .window-edge-glow {
+  opacity: calc(var(--window-edge-opacity) * 0.76);
+}
+
+.window-shell[data-visible='false'] .window-edge-glow::before {
+  animation-play-state: paused;
+}
+
+@keyframes fovea-edge-spectrum {
+  0% { background-position: 0% 50%; }
+  25% { background-position: 50% 0%; }
+  50% { background-position: 100% 50%; }
+  75% { background-position: 50% 100%; }
+  100% { background-position: 0% 50%; }
+}
+
 .window-shell[data-focused='false'] .window-surface {
   color: var(--fovea-color-text-secondary);
   background-color: var(--fovea-glass-fill-default);
@@ -58,6 +159,14 @@ html:has(.window-shell) #root {
   border: 0;
   border-radius: initial;
   box-shadow: none;
+}
+
+.window-shell[data-material='solid'] .window-edge-glow,
+.window-shell[data-maximized='true'] .window-edge-glow {
+  --window-edge-radius: 0px;
+
+  inset: 0;
+  border-radius: initial;
 }
 
 .window-titlebar {
@@ -170,4 +279,30 @@ html:has(.window-shell) #root {
   .window-surface {
     border-color: CanvasText;
   }
+
+  .window-edge-glow {
+    --window-edge-opacity: 1;
+    --window-edge-ambient: CanvasText;
+    --window-edge-ambient-opacity: 1;
+  }
+
+  .window-edge-glow::before {
+    padding: var(--fovea-border-width-strong);
+    animation: none !important;
+    filter: none;
+    will-change: auto;
+  }
+
+}
+
+@media (prefers-reduced-motion: reduce), (prefers-contrast: more) {
+  .window-edge-glow::before {
+    animation: none !important;
+    will-change: auto;
+  }
+}
+
+:root[data-transparency='off'] .window-edge-glow::before {
+  padding: var(--fovea-border-width-strong);
+  filter: none;
 }

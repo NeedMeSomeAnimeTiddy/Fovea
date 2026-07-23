@@ -13,6 +13,7 @@ import { TempScreenshotStore } from './storage/temp-screenshot-store'
 import { TrayController } from './tray/tray-controller'
 import { QuestionSessions } from './windows/question-sessions'
 import { showSettingsWindow } from './windows/settings-window'
+import { toAppError } from './errors/app-error'
 
 app.setName('Fovea')
 app.setPath('userData', join(app.getPath('appData'), 'Fovea'))
@@ -21,9 +22,9 @@ app.on('window-all-closed', () => undefined)
 
 if (!app.requestSingleInstanceLock()) app.quit()
 else void startApplication().catch((error) => {
-  const message = error instanceof Error ? error.message : String(error)
-  console.error(`[app] Startup failed: ${redact(message)}`)
-  if (app.isReady()) dialog.showErrorBox('Fovea could not start', message)
+  const appError = toAppError(error)
+  console.error(`[app] Startup failed: ${appError.technicalDetails ?? appError.message}`)
+  if (app.isReady()) dialog.showErrorBox(appError.title, appError.message)
 })
 
 async function startApplication(): Promise<void> {
@@ -48,25 +49,26 @@ async function startApplication(): Promise<void> {
   const profiles = new ProfileManager(settings, credentials)
   const providers = new ProviderRegistry(profiles, codex)
   const services: { questions?: QuestionSessions } = {}
-  const capture = new CaptureService(screenshots, (completed) => services.questions!.open(completed), (message) => dialog.showErrorBox('Fovea capture', message))
+  const capture = new CaptureService(screenshots, (completed) => services.questions!.open(completed), (message) => showSafeError(message, 'capture-failed'))
   const questions = new QuestionSessions(providers, screenshots, () => capture.begin('region'))
   services.questions = questions
 
   let tray: TrayController | null = null
   const openSettingsSafely = (): void => {
     void showSettingsWindow(tray?.getBounds()).catch((error) => {
-      const message = error instanceof Error ? error.message : String(error)
-      console.error(`[window] Settings failed to open: ${redact(message)}`)
-      dialog.showErrorBox('Fovea Settings', message)
+      const appError = toAppError(error)
+      console.error(`[window] Settings failed to open: ${appError.technicalDetails ?? appError.message}`)
+      dialog.showErrorBox(appError.title, appError.message)
     })
   }
-  const captureSafely = (mode: Parameters<CaptureService['begin']>[0]): void => { void capture.begin(mode).catch((error) => dialog.showErrorBox('Fovea capture', error instanceof Error ? error.message : String(error))) }
+  const captureSafely = (mode: Parameters<CaptureService['begin']>[0]): void => { void capture.begin(mode).catch((error) => showSafeError(error, 'capture-failed')) }
   const shortcuts = new ShortcutManager(globalShortcut, settings, {
     region: () => captureSafely('region'), display: () => captureSafely('display'), window: () => captureSafely('window'), 'repeat-last': () => captureSafely('repeat-last'), settings: openSettingsSafely
   })
   shortcuts.initialise()
   tray = new TrayController(async (mode) => capture.begin(mode), shortcuts, providers, settings)
   tray.initialise()
+  providers.on('status', () => tray?.refreshStatus())
   registerIpc({ providers, settings, screenshots, capture, questions, shortcuts, appearance })
   app.setLoginItemSettings({ openAtLogin: settings.get().launchAtLogin, path: process.execPath })
 
@@ -81,3 +83,9 @@ async function startApplication(): Promise<void> {
 }
 
 function redact(message: string): string { return message.replace(/(?:sk|key)-[\w-]+/gi, '[redacted]') }
+
+function showSafeError(error: unknown, fallbackCode: 'capture-failed' | 'unexpected'): void {
+  const appError = toAppError(error, fallbackCode)
+  console.error(`[app] ${appError.title}: ${appError.technicalDetails ?? appError.message}`)
+  dialog.showErrorBox(appError.title, appError.message)
+}

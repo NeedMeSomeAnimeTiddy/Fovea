@@ -5,6 +5,7 @@ const validator = await import('../scripts/validate-design-tokens.mjs') as {
   formatReport(result: ValidationResult): string
   toDisplayPath(filePath: string, rootDir?: string): string
   validateSource(options: { filePath: string; rootDir?: string; source: string }): ValidationResult
+  validateTokenReferences(sources: Array<{ filePath: string; source: string }>, rootDir?: string): Finding[]
 }
 
 interface Finding {
@@ -111,6 +112,14 @@ const invalid = <div style={{ backgroundColor: '#fff', borderRadius: 8, boxShado
     expect(validator.toDisplayPath('C:\\repo\\src\\renderer\\settings\\main.tsx', WINDOWS_ROOT)).toBe(
       'src/renderer/settings/main.tsx'
     )
+  })
+
+  it('reports semantic token references that are not declared anywhere', () => {
+    const findings = validator.validateTokenReferences([
+      { filePath: CSS_FILE, source: ':root { --fovea-known: red; } .panel { color: var(--fovea-known); border-color: var(--fovea-missing); }' }
+    ], WINDOWS_ROOT)
+
+    expect(findings).toEqual([expect.objectContaining({ rule: 'undefined', value: '--fovea-missing' })])
   })
 })
 

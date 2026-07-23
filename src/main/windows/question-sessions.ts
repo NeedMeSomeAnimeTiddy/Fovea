@@ -3,6 +3,7 @@ import { app, BrowserWindow, nativeImage, screen } from 'electron'
 import { IPC, type QuestionViewState, type WindowMaterial } from '../../shared/contracts/ipc'
 import type { ConversationExchange, ConversationSegment, ConversationSelection, ProviderModelCapability, ResponsePhase } from '@shared/types/app'
 import type { ProviderEvent } from '@shared/types/provider'
+import { toAppError } from '../errors/app-error'
 import type { CompletedCapture } from '../capture/capture-service'
 import type { ProviderRegistry } from '../providers/provider-registry'
 import type { TempScreenshotStore } from '../storage/temp-screenshot-store'
@@ -34,7 +35,7 @@ export class QuestionSessions {
     session.initialization = this.selectInitial(session)
     const material = selectWindowMaterial({ disableTransparentWindows: app.commandLine.hasSwitch('disable-transparent-windows') })
     try {
-      const opened = await openBrowserWindowWithChrome({ kind: 'question', label: 'Question window', initialMaterial: material, surfaceSize: QUESTION_WINDOW_SIZES.surfaceSize, minimumSurfaceSize: QUESTION_WINDOW_SIZES.minimumSurfaceSize, screenSource: screen, timeoutMs: QUESTION_WINDOW_READY_TIMEOUT_MS, createWindow: (attempt) => this.createQuestionWindow(capture, session, attempt), loadRenderer: (window) => loadRenderer(window, 'question', { session: id }), isWindowCurrent: (window) => this.sessions.get(id) === session && session.window === window, beforeRetry: (window) => { if (session.window === window) session.window = null } })
+      const opened = await openBrowserWindowWithChrome({ kind: 'question', label: 'Question window', initialMaterial: material, surfaceSize: QUESTION_WINDOW_SIZES.surfaceSize, minimumSurfaceSize: QUESTION_WINDOW_SIZES.minimumSurfaceSize, screenSource: screen, timeoutMs: QUESTION_WINDOW_READY_TIMEOUT_MS, canMaximize: false, canResize: false, createWindow: (attempt) => this.createQuestionWindow(capture, session, attempt), loadRenderer: (window) => loadRenderer(window, 'question', { session: id }), isWindowCurrent: (window) => this.sessions.get(id) === session && session.window === window, beforeRetry: (window) => { if (session.window === window) session.window = null } })
       if (session.window === opened.window && !opened.window.isDestroyed()) opened.window.focus()
     } catch (error) { await this.cleanup(id); throw error }
   }
@@ -93,7 +94,15 @@ export class QuestionSessions {
     return this.snapshot(session)
   }
 
-  async stop(id: string): Promise<void> { const session = this.requireSession(id); const segment = session.segments.at(-1); if (session.selection && segment?.conversationId) await this.providers.cancel(segment.conversationId, session.selection.provider); session.phase = 'stopped'; session.busy = false }
+  async stop(id: string): Promise<void> {
+    const session = this.requireSession(id)
+    const segment = session.segments.at(-1)
+    const exchange = session.exchanges.at(-1)
+    session.phase = 'stopped'
+    session.busy = false
+    if (exchange) exchange.phase = 'stopped'
+    if (session.selection && segment?.conversationId) await this.providers.cancel(segment.conversationId, session.selection.provider)
+  }
   async close(id: string): Promise<void> { const session = this.requireSession(id); if (session.window && !session.window.isDestroyed()) session.window.close(); await this.cleanup(id) }
   async newSnip(id: string): Promise<void> { await this.close(id); await this.startNewCapture() }
   async dispose(): Promise<void> { await Promise.all([...this.sessions.keys()].map((id) => this.cleanup(id))) }
@@ -160,18 +169,23 @@ export class QuestionSessions {
         }
         if (event.type === 'error') {
           if (exchange.webSearch?.status === 'searching') exchange.webSearch.status = 'failed'
-          exchange.error = event.message
+          exchange.error = event.error
           this.setPhase(session, exchange, 'failed')
           this.emit(session, event)
           return
         }
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
       if (exchange.webSearch?.status === 'searching') exchange.webSearch.status = 'failed'
-      exchange.error = message
+      if (session.phase === 'stopped' || (error instanceof Error && (error.name === 'AbortError' || /stopped|aborted|cancelled/i.test(error.message)))) {
+        this.setPhase(session, exchange, 'stopped')
+        this.emit(session, { type: 'cancelled' })
+        return
+      }
+      const appError = toAppError(error, 'provider-unavailable')
+      exchange.error = appError
       this.setPhase(session, exchange, 'failed')
-      this.emit(session, { type: 'error', message })
+      this.emit(session, { type: 'error', error: appError })
     } finally { session.busy = false }
   }
   private async safeModels(profileId: string): Promise<ProviderModelCapability[]> { try { return await this.providers.listModels(profileId) } catch { return [] } }
@@ -180,7 +194,7 @@ export class QuestionSessions {
     const appearance = getWindowAppearanceOptions(QUESTION_WINDOW_SIZES, material, capture.display.workArea)
     const selection = { x: capture.display.bounds.x + capture.selectedBounds.x, y: capture.display.bounds.y + capture.selectedBounds.y, width: capture.selectedBounds.width, height: capture.selectedBounds.height }
     const placement = placeWindowAdjacentToSelection(selection, appearance.size, capture.display.workArea)
-    const window = secureWindow({ x: placement.x, y: placement.y, width: placement.width, height: placement.height, minWidth: appearance.minimumSize.width, minHeight: appearance.minimumSize.height, frame: appearance.frame, transparent: appearance.transparent, backgroundColor: appearance.backgroundColor, show: appearance.show, useContentSize: appearance.useContentSize, hasShadow: appearance.hasShadow, resizable: appearance.resizable, maximizable: appearance.maximizable, minimizable: appearance.minimizable, closable: appearance.closable, movable: appearance.movable, fullscreenable: appearance.fullscreenable, thickFrame: appearance.thickFrame, roundedCorners: appearance.roundedCorners, alwaysOnTop: true, skipTaskbar: false, title: 'Fovea', autoHideMenuBar: true })
+    const window = secureWindow({ x: placement.x, y: placement.y, width: placement.width, height: placement.height, minWidth: appearance.minimumSize.width, minHeight: appearance.minimumSize.height, frame: appearance.frame, transparent: appearance.transparent, backgroundColor: appearance.backgroundColor, show: appearance.show, useContentSize: appearance.useContentSize, hasShadow: appearance.hasShadow, resizable: false, maximizable: false, minimizable: appearance.minimizable, closable: appearance.closable, movable: appearance.movable, fullscreenable: appearance.fullscreenable, thickFrame: false, roundedCorners: appearance.roundedCorners, alwaysOnTop: true, skipTaskbar: false, title: 'Fovea', autoHideMenuBar: true })
     session.window = window; window.webContents.setWindowOpenHandler(() => ({ action: 'deny' })); window.once('closed', () => { if (session.window === window) void this.cleanup(session.id) }); return window
   }
   private snapshot(session: QuestionSession): QuestionViewState { return { sessionId: session.id, thumbnailDataUrl: session.thumbnailDataUrl, phase: session.phase, exchanges: structuredClone(session.exchanges), segments: session.segments.map((item) => structuredClone(item.segment)), selection: session.selection ? structuredClone(session.selection) : null, profiles: this.providers.listProfiles(), models: structuredClone(session.models), disclosure: session.disclosure, busy: session.busy } }

@@ -1,30 +1,55 @@
 import { randomUUID } from 'node:crypto'
+import { EventEmitter } from 'node:events'
 import type { ConversationSelection, ProviderModelCapability, ProviderProfileSummary } from '@shared/types/app'
-import type { ProviderEvent, VisionTurnInput } from '@shared/types/provider'
+import type { ProviderEvent, ProviderStatus, VisionTurnInput } from '@shared/types/provider'
+import { createAppError, FoveaError } from '../errors/app-error'
 import type { CodexAppServerProvider } from './codex-app-server/codex-app-server-provider'
 import { DirectApiProvider } from './direct-api-provider'
 import type { ProfileManager } from './profile-manager'
 
-export class ProviderRegistry {
+export class ProviderRegistry extends EventEmitter {
   private readonly direct = {
     openai: new DirectApiProvider('openai'),
     anthropic: new DirectApiProvider('anthropic'),
     openrouter: new DirectApiProvider('openrouter')
   }
   private readonly controllers = new Map<string, AbortController>()
+  private chatgptStatus: ProviderStatus | null = null
+  private statusRefresh: Promise<void> = Promise.resolve()
+  private readonly handleChatGptStatus = (status: ProviderStatus): void => {
+    this.chatgptStatus = structuredClone(status)
+    this.emit('status', structuredClone(status))
+    if (status.state === 'starting') return
+    this.statusRefresh = this.statusRefresh
+      .then(() => this.refreshChatGptHealth(status))
+      .catch(() => undefined)
+      .then(() => {
+        if (JSON.stringify(this.chatgptStatus) === JSON.stringify(status)) {
+          this.emit('status', structuredClone(status))
+        }
+      })
+  }
 
   constructor(
     readonly profiles: ProfileManager,
     private readonly chatgpt: CodexAppServerProvider
-  ) {}
+  ) {
+    super()
+    this.chatgpt.on('status', this.handleChatGptStatus)
+  }
 
   async initialise(): Promise<void> {
     await this.chatgpt.initialise()
-    await this.refreshChatGptHealth()
+    this.chatgptStatus = await this.chatgpt.getStatus()
+    await this.refreshChatGptHealth(this.chatgptStatus)
   }
 
   listProfiles(): ProviderProfileSummary[] {
-    return this.profiles.list()
+    return this.profiles.list().map((profile) => (
+      profile.provider === 'chatgpt' && this.chatgptStatus
+        ? { ...profile, status: structuredClone(this.chatgptStatus) }
+        : profile
+    ))
   }
 
   async authenticate(profileId: string): Promise<void> {
@@ -63,12 +88,19 @@ export class ProviderRegistry {
 
   async listModels(profileId: string): Promise<ProviderModelCapability[]> {
     const profile = this.profiles.require(profileId)
+    let models: ProviderModelCapability[]
     if (profile.provider === 'chatgpt') {
-      const models = await this.chatgpt.listModels()
-      return models.filter((model) => model.inputModalities.includes('image')).map((model) => ({ ...model, provider: 'chatgpt' }))
+      models = (await this.chatgpt.listModels())
+        .filter((model) => model.inputModalities.includes('image'))
+        .map((model) => ({ ...model, provider: 'chatgpt' }))
+    } else {
+      const secret = await this.profiles.getSecret(profile)
+      models = await this.direct[profile.provider].listModels(secret)
     }
-    const secret = await this.profiles.getSecret(profile)
-    return this.direct[profile.provider].listModels(secret)
+    if (!models.length) {
+      throw new FoveaError(createAppError('no-compatible-models', 'No compatible models', 'This profile does not currently offer an image-capable model.', 'choose-provider'))
+    }
+    return models
   }
 
   async validateSelection(selection: ConversationSelection): Promise<ProviderModelCapability> {
@@ -122,17 +154,19 @@ export class ProviderRegistry {
   async dispose(): Promise<void> {
     for (const controller of this.controllers.values()) controller.abort()
     this.controllers.clear()
+    this.chatgpt.off('status', this.handleChatGptStatus)
+    await this.statusRefresh
     await this.chatgpt.dispose()
   }
 
-  private async refreshChatGptHealth(): Promise<void> {
+  private async refreshChatGptHealth(currentStatus?: ProviderStatus): Promise<void> {
     const profile = this.profiles.list().find((candidate) => candidate.provider === 'chatgpt')
     if (!profile) return
-    const status = await this.chatgpt.getStatus()
+    const status = currentStatus ?? await this.chatgpt.getStatus()
     await this.profiles.setHealth(
       profile.id,
       status.state === 'ready' && status.account ? 'available' : 'unavailable',
-      status.error,
+      status.error?.message,
       status.account?.email ?? status.account?.planType ?? undefined
     )
   }

@@ -334,14 +334,14 @@ describe('question-session window migration', () => {
     expect(secondChrome.getState().focused).toBe(true)
 
     firstChrome.toggleMaximize()
-    expect(firstChrome.getState().maximized).toBe(true)
+    expect(firstChrome.getState()).toMatchObject({ maximized: false, canMaximize: false, canResize: false })
     expect(secondChrome.getState().maximized).toBe(false)
-    expect(first!.movable).toBe(false)
+    expect(first!.movable).toBe(true)
 
     mocks.screen.cursor = { x: second!.bounds.x, y: second!.bounds.y }
-    expect(secondChrome.beginResize('bottom-right')).toBe(true)
+    expect(secondChrome.beginResize('bottom-right')).toBe(false)
     expect(firstChrome.getSnapshot().resizeSession).toBeNull()
-    expect(secondChrome.getSnapshot().resizeSession).not.toBeNull()
+    expect(secondChrome.getSnapshot().resizeSession).toBeNull()
     secondChrome.endResize()
 
     firstChrome.closeWindow()
@@ -371,9 +371,9 @@ describe('question-session window migration', () => {
       transparent: false,
       backgroundColor: '#f3f6fa',
       hasShadow: true,
-      resizable: true,
-      maximizable: true,
-      thickFrame: true
+      resizable: false,
+      maximizable: false,
+      thickFrame: false
     })
     expect(mocks.deleteScreenshot).not.toHaveBeenCalled()
     expect(mocks.loadRenderer.mock.calls[0]![2]).toEqual(mocks.loadRenderer.mock.calls[1]![2])

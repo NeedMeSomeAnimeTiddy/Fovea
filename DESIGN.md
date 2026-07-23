@@ -19,7 +19,7 @@ The visual hierarchy should feel calm before it feels novel:
 
 Fovea must not resemble a generic dashboard, Windows Settings clone, RGB gaming launcher, or excessively glowing AI interface. It does not depend on Windows 11 Mica, acrylic, native rounded corners, vibrancy, desktop blur, `backdrop-filter`, animated gradients, animated noise, or persistent ambient glow.
 
-No renderer should introduce a parallel colour scheme, radius scale, shadow family, motion vocabulary, or component style.
+No renderer should introduce a parallel colour scheme, radius scale, shadow family, motion vocabulary, or component style. The shared state-driven spectral window edge is the sole continuous brand-motion surface and is active only while it communicates work.
 
 ## Delivery boundary
 
@@ -111,6 +111,7 @@ The tables below are exhaustive for Phase 2. CSS and documentation must change t
 | `--fovea-glass-fill-solid-fallback` | Opaque replacement for every glass fill |
 | `--fovea-glass-highlight` | Single static internal illumination gradient |
 | `--fovea-glass-edge-light` | Fine top/edge glass keyline |
+| `--fovea-edge-glow-ambient` | Theme-tuned diffuse cyan, violet, and soft-rose window halo |
 
 ### Borders
 
@@ -179,6 +180,7 @@ The minimum standalone target is 24 × 24 CSS pixels. Fovea controls default to 
 | --- | --- |
 | Durations | `--fovea-motion-instant`, `--fovea-motion-fast`, `--fovea-motion-standard`, `--fovea-motion-deliberate` |
 | Easings | `--fovea-ease-standard`, `--fovea-ease-enter`, `--fovea-ease-exit` |
+| Spectral activity cycles | `--fovea-spectral-cycle-gentle`, `--fovea-spectral-cycle-thinking`, `--fovea-spectral-cycle-streaming` |
 
 The duration scale is 120, 160, 200, and 240 ms. Components transition only required properties—normally colour, background, border, shadow, opacity, and at most 1–2 px of press movement. No ambient or decorative continuous motion is allowed.
 
@@ -329,7 +331,7 @@ These are solid-colour results. Any component that composites a translucent fore
 
 `prefers-reduced-motion: reduce` collapses motion durations to 1 ms, removes delays, limits animations to one iteration, and forces CSS scrolling to `auto`. Components must remove transform feedback and render Spinner as a static busy indicator in their Phase 3 CSS. The question renderer's explicit smooth `scrollTo` call must independently choose `behavior: 'auto'` during Phase 4 because CSS cannot override that JavaScript option.
 
-No animated gradient, animated noise, parallax, pulsing glow, or decorative continuous animation is permitted in either motion mode.
+No animated gradient, animated noise, parallax, pulsing glow, or decorative continuous animation is permitted in either motion mode. The state-driven window halo is the single exception: its narrow masked spectrum flows around the frame, with faster cycles for thinking and streaming. Stopped and error states remain static, hidden windows pause, and reduced-motion or increased-contrast treatments remove continuous motion.
 
 ## Windows 10 and performance budgets
 

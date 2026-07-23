@@ -22,6 +22,7 @@ export class TrayController {
 
   getBounds(): Rectangle | undefined { return this.tray?.getBounds() }
   setBusy(busy: boolean): void { this.tray?.setImage(this.icon(busy ? 'busy' : this.paused ? 'paused' : 'idle')) }
+  refreshStatus(): void { this.refreshMenu() }
   dispose(): void { this.tray?.destroy(); this.tray = null }
 
   private refreshMenu(): void {

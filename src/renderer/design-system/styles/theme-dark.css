@@ -65,6 +65,7 @@
   --fovea-glass-fill-solid-fallback: var(--fovea-surface-raised);
   --fovea-glass-highlight: linear-gradient(180deg, rgba(243, 246, 251, 0.055), rgba(243, 246, 251, 0) 44%);
   --fovea-glass-edge-light: rgba(243, 246, 251, 0.12);
+  --fovea-edge-glow-ambient: linear-gradient(105deg, rgba(66, 235, 255, 0.92), rgba(72, 136, 255, 0.82) 17%, rgba(145, 102, 255, 0.9) 34%, rgba(245, 104, 226, 0.86) 51%, rgba(255, 112, 137, 0.84) 67%, rgba(255, 190, 81, 0.82) 82%, rgba(89, 231, 180, 0.8) 94%, rgba(66, 235, 255, 0.92));
 
   /* Borders */
   --fovea-border-subtle: rgba(243, 246, 251, 0.08);

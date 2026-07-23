@@ -111,6 +111,9 @@
   --fovea-motion-fast: 160ms;
   --fovea-motion-standard: 200ms;
   --fovea-motion-deliberate: 240ms;
+  --fovea-spectral-cycle-gentle: 8s;
+  --fovea-spectral-cycle-thinking: 5s;
+  --fovea-spectral-cycle-streaming: 6s;
 
   --fovea-ease-standard: cubic-bezier(0.2, 0, 0, 1);
   --fovea-ease-enter: cubic-bezier(0.16, 1, 0.3, 1);

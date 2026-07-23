@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import readline from 'node:readline'
 import type { ProviderEvent, ProviderStatus, VisionModel, VisionTurnInput } from '@shared/types/provider'
+import { createAppError, FoveaError, toAppError } from '../../errors/app-error'
 import type { VisionProvider } from '../vision-provider'
 import { AsyncQueue } from './async-queue'
 import { JsonlRpcClient } from './jsonl-rpc-client'
@@ -107,7 +108,7 @@ export class CodexAppServerProvider extends EventEmitter implements VisionProvid
     if (this.modelRequest) return this.modelRequest
     if (now < this.modelRefreshBlockedUntil) {
       if (this.modelCache) return structuredClone(this.modelCache)
-      throw new Error('Models are temporarily unavailable after a rate limit. Try again in a minute.')
+      throw new FoveaError(createAppError('rate-limited', 'Provider is busy', 'Models are temporarily unavailable. Try again in a minute.', 'retry'))
     }
 
     this.modelRequest = this.fetchModels()
@@ -122,7 +123,7 @@ export class CodexAppServerProvider extends EventEmitter implements VisionProvid
     const rpc = await this.requireRpc()
     const models = await this.listModels()
     const model = selectedModelId ?? this.options.getSelectedModel() ?? models.find((entry) => entry.isDefault)?.id ?? models[0]?.id
-    if (!model) throw new Error('No image-capable Codex model is available for this account.')
+    if (!model) throw new FoveaError(createAppError('no-compatible-models', 'No compatible models', 'No image-capable model is available for this account.', 'choose-provider'))
     const params: ThreadStartParams = {
       model,
       cwd: this.options.workingDirectory,
@@ -147,7 +148,7 @@ export class CodexAppServerProvider extends EventEmitter implements VisionProvid
 
     const models = await this.listModels()
     const modelId = input.modelId ?? this.options.getSelectedModel() ?? models.find((model) => model.isDefault)?.id ?? models[0]?.id
-    if (!modelId) throw new Error('No image-capable Codex model is available for this account.')
+    if (!modelId) throw new FoveaError(createAppError('no-compatible-models', 'No compatible models', 'No image-capable model is available for this account.', 'choose-provider'))
     const model = models.find((entry) => entry.id === modelId)
     const efforts = model?.supportedReasoningEfforts ?? []
     const effort: TurnStartParams['effort'] = input.reasoningEffort && efforts.includes(input.reasoningEffort)
@@ -170,7 +171,7 @@ export class CodexAppServerProvider extends EventEmitter implements VisionProvid
       this.conversationTurns.set(conversationId, result.turn.id)
       queue.push({ type: 'started', turnId: result.turn.id })
     } catch (error) {
-      queue.push({ type: 'error', message: this.errorMessage(error) })
+      queue.push({ type: 'error', error: toAppError(error, 'provider-unavailable') })
       queue.close()
     }
 
@@ -197,7 +198,7 @@ export class CodexAppServerProvider extends EventEmitter implements VisionProvid
     if (this.restartTimer) clearTimeout(this.restartTimer)
     this.restartTimer = null
     for (const active of this.activeTurns.values()) {
-      active.queue.push({ type: 'error', message: 'Codex app-server stopped.' })
+      active.queue.push({ type: 'error', error: toAppError('Codex app-server stopped.', 'sidecar-terminated') })
       active.queue.close()
     }
     this.activeTurns.clear()
@@ -211,7 +212,7 @@ export class CodexAppServerProvider extends EventEmitter implements VisionProvid
 
   private async startSidecar(): Promise<void> {
     if (this.child || this.ready) return
-    this.setStatus({ ...this.status, state: 'starting', error: undefined })
+    this.setStatus({ ...this.status, state: 'starting', recovering: this.restartAttempts > 0, error: undefined })
     try {
       await stat(this.options.binaryPath)
     } catch {
@@ -267,6 +268,7 @@ export class CodexAppServerProvider extends EventEmitter implements VisionProvid
     const account = result.account?.type === 'chatgpt' || result.account?.type === 'apiKey' ? result.account : null
     this.setStatus({
       state: account ? 'ready' : 'signed-out',
+      recovering: false,
       version: PINNED_VERSION,
       account
     })
@@ -306,7 +308,7 @@ export class CodexAppServerProvider extends EventEmitter implements VisionProvid
   private handleNotification(notification: JsonRpcNotification): void {
     const params = notification.params ?? {}
     if (notification.method === 'account/updated') {
-      void this.refreshAccount().catch((error) => this.setStatus({ ...this.status, error: this.errorMessage(error) }))
+      void this.refreshAccount().catch((error) => this.setStatus({ ...this.status, error: toAppError(error, 'provider-unavailable') }))
       this.emit('notification', notification)
       return
     }
@@ -328,7 +330,7 @@ export class CodexAppServerProvider extends EventEmitter implements VisionProvid
       ['commandExecution', 'fileChange', 'mcpToolCall', 'dynamicToolCall', 'webSearch'].includes(toolType) &&
       !(toolType === 'webSearch' && active.webSearchAllowed)
     ) {
-      active.queue.push({ type: 'error', message: 'Fovea blocked an attempted tool action.' })
+      active.queue.push({ type: 'error', error: createAppError('validation', 'Unsupported provider action', 'Fovea blocked an attempted tool action.', 'none') })
       void this.rpc?.request('turn/interrupt', { threadId, turnId: active.turnId }).catch(() => undefined)
       return
     }
@@ -348,14 +350,14 @@ export class CodexAppServerProvider extends EventEmitter implements VisionProvid
       return
     }
     if (notification.method === 'error') {
-      active.queue.push({ type: 'error', message: String(params.error?.message ?? 'The model request failed.') })
+      active.queue.push({ type: 'error', error: toAppError(String(params.error?.message ?? 'The model request failed.'), 'provider-unavailable') })
       return
     }
     if (notification.method === 'turn/completed') {
       const status = params.turn?.status
       if (status === 'interrupted') active.queue.push({ type: 'cancelled' })
       else if (status === 'failed') {
-        active.queue.push({ type: 'error', message: String(params.turn?.error?.message ?? 'The model request failed.') })
+        active.queue.push({ type: 'error', error: toAppError(String(params.turn?.error?.message ?? 'The model request failed.'), 'provider-unavailable') })
       } else active.queue.push({ type: 'completed' })
       active.queue.close()
       this.activeTurns.delete(threadId)
@@ -387,11 +389,11 @@ export class CodexAppServerProvider extends EventEmitter implements VisionProvid
     this.rpc?.terminate(error)
     this.rpc = null
     for (const active of this.activeTurns.values()) {
-      active.queue.push({ type: 'error', message: 'The local Codex service stopped unexpectedly.' })
+      active.queue.push({ type: 'error', error: createAppError('sidecar-terminated', 'Local service unavailable', 'The local ChatGPT service stopped unexpectedly. Fovea will try to reconnect.', 'retry', error.message) })
       active.queue.close()
     }
     this.activeTurns.clear()
-    this.setStatus({ ...this.status, state: 'error', error: error.message })
+    this.setStatus({ ...this.status, state: 'error', error: toAppError(error, 'sidecar-terminated') })
 
     if (!this.disposing && this.restartAttempts < 3) {
       const delay = 1_000 * 2 ** this.restartAttempts++

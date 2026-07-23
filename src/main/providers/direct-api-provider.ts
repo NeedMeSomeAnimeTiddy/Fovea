@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import type { ProviderKind, ProviderModelCapability } from '@shared/types/app'
 import type { ProviderEvent, VisionTurnInput } from '@shared/types/provider'
+import { createAppError, FoveaError } from '../errors/app-error'
 import { parseSse } from './sse'
 
 type DirectKind = Exclude<ProviderKind, 'chatgpt'>
@@ -22,7 +23,7 @@ export class DirectApiProvider {
   ) {}
 
   async listModels(apiKey: string): Promise<ProviderModelCapability[]> {
-    const response = await this.request(`${ENDPOINTS[this.kind]}/models`, { headers: this.headers(apiKey) })
+    const response = await requestSafely(this.request, `${ENDPOINTS[this.kind]}/models`, { headers: this.headers(apiKey) })
     await requireOk(response)
     const payload = await response.json() as { data?: unknown[] }
     const models = (payload.data ?? []).flatMap((entry) => this.normaliseModel(entry))
@@ -31,7 +32,7 @@ export class DirectApiProvider {
 
   async *send(apiKey: string, input: VisionTurnInput, signal?: AbortSignal): AsyncIterable<ProviderEvent> {
     const image = input.imagePath ? (await readFile(input.imagePath)).toString('base64') : null
-    const response = await this.request(this.sendEndpoint(), {
+    const response = await requestSafely(this.request, this.sendEndpoint(), {
       method: 'POST',
       headers: { ...this.headers(apiKey), 'content-type': 'application/json' },
       body: JSON.stringify(this.requestBody(input, image)),
@@ -121,5 +122,25 @@ export class DirectApiProvider {
 async function requireOk(response: Response): Promise<void> {
   if (response.ok) return
   const detail = (await response.text()).slice(0, 500).replace(/(?:sk|key)-[\w-]+/gi, '[redacted]')
-  throw new Error(`Provider request failed (${response.status})${detail ? `: ${detail}` : '.'}`)
+  const technicalDetails = `Provider request failed (${response.status})${detail ? `: ${detail}` : '.'}`
+  if (response.status === 401 || response.status === 403) {
+    throw new FoveaError(createAppError('authentication-required', 'Authentication required', 'Update this provider profile before continuing.', 'authenticate', technicalDetails))
+  }
+  if (response.status === 408 || response.status === 504) {
+    throw new FoveaError(createAppError('timeout', 'Request timed out', 'The provider took too long to respond.', 'retry', technicalDetails))
+  }
+  if (response.status === 429) {
+    throw new FoveaError(createAppError('rate-limited', 'Provider is busy', 'The provider rate limit was reached. Wait a moment, then try again.', 'retry', technicalDetails))
+  }
+  throw new FoveaError(createAppError('provider-unavailable', 'Provider unavailable', 'The selected provider could not complete the operation.', 'open-settings', technicalDetails))
+}
+
+async function requestSafely(request: Fetch, input: string, init: RequestInit): Promise<Response> {
+  try {
+    return await request(input, init)
+  } catch (error) {
+    if (error instanceof Error && (error.name === 'AbortError' || /aborted|request stopped/i.test(error.message))) throw error
+    const detail = error instanceof Error ? error.message : String(error)
+    throw new FoveaError(createAppError('offline', 'You appear to be offline', 'Check the network connection, then try again.', 'retry', detail))
+  }
 }
