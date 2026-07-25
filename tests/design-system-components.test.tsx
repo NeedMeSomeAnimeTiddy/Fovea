@@ -18,6 +18,7 @@ import {
 } from '../src/renderer/design-system'
 import { WindowFrame } from '../src/renderer/window-chrome/WindowFrame'
 import { WINDOW_SURFACE_INSET } from '../src/main/windows/window-appearance'
+import { calculateTooltipPosition } from '../src/renderer/design-system/components/Tooltip'
 
 describe('Fovea design-system components', () => {
   it('renders actions as native buttons with stable loading semantics', () => {
@@ -41,6 +42,24 @@ describe('Fovea design-system components', () => {
     expect(markup).toContain('aria-label="Copy answer"')
     expect(markup).toContain('aria-hidden="true"')
     expect(() => renderToStaticMarkup(<IconButton icon={<svg />} label=" " />)).toThrow(/non-empty accessible label/)
+  })
+
+  it('keeps tooltips inside the viewport and flips above bottom-row controls', () => {
+    const tooltip = { width: 120, height: 28 }
+    const viewport = { width: 480, height: 320 }
+    const left = calculateTooltipPosition(
+      { left: 0, right: 32, top: 100, bottom: 132, width: 32, height: 32 },
+      tooltip,
+      viewport
+    )
+    const bottomRight = calculateTooltipPosition(
+      { left: 448, right: 480, top: 288, bottom: 320, width: 32, height: 32 },
+      tooltip,
+      viewport
+    )
+
+    expect(left).toMatchObject({ x: 68, placement: 'below' })
+    expect(bottomRight).toMatchObject({ x: 412, placement: 'above', y: 252 })
   })
 
   it('wires input descriptions, errors, invalid state, and native props', () => {
@@ -213,5 +232,25 @@ describe('Fovea design-system components', () => {
     expect(markup).toContain('aria-label="Maximize window"')
     expect(markup).toContain('aria-label="Close window"')
     expect(markup).toContain('window-titlebar__title">Fovea</span>')
+  })
+
+  it('can replace the full title bar with overlaid compact controls', () => {
+    const markup = renderToStaticMarkup(
+      <WindowFrame showCompactControls showTitlebar={false} title="Fovea" titlebarActions={<span>Pin action</span>}>
+        Question content
+      </WindowFrame>
+    )
+
+    expect(markup).toContain('class="window-compact-controls"')
+    expect(markup).toContain('Pin action')
+    expect(markup).toContain('aria-label="Minimize window"')
+    expect(markup).toContain('aria-label="Close window"')
+    expect(markup).not.toContain('aria-label="Maximize window"')
+    expect(markup).not.toContain('window-titlebar')
+    expect(markup.indexOf('window-compact-controls')).toBeGreaterThan(markup.indexOf('window-frame__content'))
+
+    const chrome = readFileSync(new URL('../src/renderer/window-chrome/window-chrome.css', import.meta.url), 'utf8')
+    expect(chrome).toMatch(/\.window-compact-controls\s*\{[^}]*pointer-events:\s*auto;/s)
+    expect(chrome).toMatch(/\.window-compact-controls,[^}]*-webkit-app-region:\s*no-drag;/s)
   })
 })

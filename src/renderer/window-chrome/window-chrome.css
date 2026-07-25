@@ -209,6 +209,38 @@ html:has(.window-shell) #root {
   -webkit-app-region: no-drag;
 }
 
+.window-compact-controls {
+  position: absolute;
+  z-index: var(--fovea-z-chrome);
+  top: var(--fovea-space-4);
+  right: var(--fovea-space-4);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--fovea-space-1);
+  isolation: isolate;
+  pointer-events: auto;
+  -webkit-app-region: no-drag;
+}
+
+.window-compact-controls,
+.window-compact-controls *,
+.window-compact-controls .fui-tooltip-anchor {
+  pointer-events: auto;
+  -webkit-app-region: no-drag;
+}
+
+.window-compact-controls .fui-window-controls__button {
+  width: var(--fovea-control-target-compact);
+  min-width: var(--fovea-control-target-compact);
+  height: var(--fovea-control-target-compact);
+}
+
+.window-compact-controls .fui-window-controls__button .fui-icon-button__icon,
+.window-compact-controls .fui-window-controls__button .fui-icon-button__icon svg {
+  width: var(--fovea-type-title-sm);
+  height: var(--fovea-type-title-sm);
+}
+
 .window-frame__content {
   min-width: 0;
   min-height: 0;

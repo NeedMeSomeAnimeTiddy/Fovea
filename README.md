@@ -1,7 +1,7 @@
 # Fovea prototype
 
 Fovea is a Windows-first Electron prototype for selecting part of the screen,
-asking a question, and continuing a streamed visual conversation. It bundles the
+receiving an automatic visual answer, and asking focused follow-up questions. It bundles the
 official Codex CLI `0.144.4` executable and runs `codex app-server` locally over
 JSONL/stdin/stdout; no global Codex, Node.js, Rust, Python, or separate server is
 needed by an installed user.
@@ -43,15 +43,15 @@ NSIS installer under `dist/`.
    billed separately.
 3. Confirm an image-capable model is selected, then press `Ctrl+Shift+Space`.
 4. Drag a rectangle at least 24 × 24 logical pixels on the primary display.
-5. Open the screenshot preview and confirm the original PNG fills the current
-   monitor against a dimmed backdrop; press `Esc` and confirm the response
-   window returns to its previous size and position.
-6. Ask a question and confirm text streams into the floating response panel.
-7. Switch between compact and expanded layouts and confirm the panel’s outer
-   size does not change.
-8. Ask a follow-up, press Stop during a turn, then try Regenerate, Copy, and
-   New capture.
-9. Close the panel and confirm its PNG disappears from the temporary path shown
+5. Confirm the compact response window immediately analyses the capture and
+   presents a concise answer without showing the category or screenshot.
+6. Open **Ask**, choose a contextual suggestion, then use **Custom question**
+   and confirm both questions and answers remain visible in the flowing
+   conversation.
+7. Expand **Show details**, then try the icon actions for View capture, Stop,
+   Regenerate, Copy, and New capture. Press `Esc` in the capture viewer and
+   confirm the response window remains open.
+8. Close the panel and confirm its PNG disappears from the temporary path shown
    in Settings. **Delete temporary files now** removes any remaining PNGs.
 
 ## Architecture and security

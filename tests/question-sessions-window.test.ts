@@ -154,7 +154,10 @@ const mocks = vi.hoisted(() => {
   const createConversation = vi.fn(async (selection?: unknown) => { void selection; return `conversation-${nextConversation++}` })
   const sendMessage = vi.fn((conversationId?: string, input?: unknown): AsyncIterable<{ type: string; [key: string]: unknown }> => { void conversationId; void input; return (async function* () {
     yield { type: 'started' as const }
-    yield { type: 'delta' as const, text: 'answer' }
+    yield {
+      type: 'delta' as const,
+      text: '<fovea-response>{"category":"general","summary":"Useful answer","suggestedQuestions":["Explain this simply","What should I do next?","Check the details","What might I have missed?"]}</fovea-response>answer'
+    }
     yield { type: 'completed' as const }
   })() })
   const listModels = vi.fn(async () => [{ id: 'vision-1', displayName: 'Vision', provider: 'chatgpt', inputModalities: ['text', 'image'], supportedReasoningEfforts: ['low'], defaultReasoningEffort: 'low', isDefault: true }])
@@ -248,13 +251,21 @@ async function createSessions(): Promise<any> {
   )
 }
 
-async function finishOpening(opening: Promise<void>, index: number): Promise<string> {
+async function finishOpening(opening: Promise<void>, index: number, waitForAnswer = true): Promise<string> {
   const window = mocks.windows[index]!
   const { windowChromeRegistry } = await import('../src/main/windows/window-chrome')
   window.emit('ready-to-show')
   windowChromeRegistry.get(window.webContents.id)!.markRendererReady()
   await opening
   const query = mocks.loadRenderer.mock.calls[index]![2]! as { session: string }
+  if (waitForAnswer) {
+    await vi.waitFor(() => {
+      const events = window.sent
+        .filter(([channel]) => channel === 'question:event')
+        .map(([, , event]) => event as { type?: string })
+      expect(events.some((event) => ['completed', 'error', 'web-search-requested'].includes(event.type ?? ''))).toBe(true)
+    })
+  }
   return query.session
 }
 
@@ -279,9 +290,9 @@ describe('question-session window migration', () => {
       x: -1138,
       y: -40,
       width: 504,
-      height: 664,
+      height: 504,
       minWidth: 424,
-      minHeight: 504,
+      minHeight: 344,
       frame: false,
       transparent: true,
       backgroundColor: '#00000000',
@@ -302,7 +313,24 @@ describe('question-session window migration', () => {
     const sessionId = await finishOpening(opening, 0)
     expect(window.showCalls).toBe(1)
     expect(window.focusCalls).toBe(1)
-    await expect(sessions.get(sessionId)).resolves.toMatchObject({ sessionId, busy: false })
+    await expect(sessions.get(sessionId)).resolves.toMatchObject({
+      sessionId,
+      busy: false,
+      phase: 'completed',
+      exchanges: [{
+        automatic: true,
+        answer: 'answer',
+        metadata: {
+          category: 'general',
+          summary: 'Useful answer',
+          suggestedQuestions: expect.any(Array)
+        }
+      }]
+    })
+    expect(mocks.sendMessage.mock.calls[0]?.[1]).toMatchObject({
+      text: expect.stringContaining('<fovea-response>'),
+      imagePath: capture().imagePath
+    })
   })
 
   it('starts renderer navigation before initial model discovery completes', async () => {
@@ -322,6 +350,7 @@ describe('question-session window migration', () => {
 
     resolveModels([{ id: 'vision-1', displayName: 'Vision', provider: 'chatgpt', inputModalities: ['text', 'image'], supportedReasoningEfforts: ['low'], defaultReasoningEffort: 'low', isDefault: true }])
     await expect(sessions.get(sessionId)).resolves.toMatchObject({ sessionId, selection: { modelId: 'vision-1' } })
+    await vi.waitFor(async () => expect((await sessions.get(sessionId)).busy).toBe(false))
   })
 
   it('keeps simultaneous sessions and their chrome state independent', async () => {
@@ -452,9 +481,9 @@ describe('question-session window migration', () => {
     expect(mocks.windows[0]!.destroyed).toBe(true)
     expect(mocks.windows[1]!.options).toMatchObject({
       width: 480,
-      height: 640,
+      height: 480,
       minWidth: 400,
-      minHeight: 480,
+      minHeight: 320,
       transparent: false,
       backgroundColor: '#f3f6fa',
       hasShadow: true,
@@ -465,21 +494,25 @@ describe('question-session window migration', () => {
     expect(mocks.deleteScreenshot).not.toHaveBeenCalled()
     expect(mocks.loadRenderer.mock.calls[0]![2]).toEqual(mocks.loadRenderer.mock.calls[1]![2])
 
-    const sessionId = await finishOpening(opening, 1)
+    const sessionId = await finishOpening(opening, 1, false)
     await expect(sessions.get(sessionId)).resolves.toMatchObject({ sessionId })
     expect(mocks.windows[1]!.showCalls).toBe(1)
   })
 
-  it('preserves provider events and cleans up after generic title-bar close', async () => {
+  it('keeps follow-up questions in one flowing provider conversation and cleans it up on close', async () => {
     const sessions = await createSessions()
     const opening = sessions.open(capture())
     const sessionId = await finishOpening(opening, 0)
     const window = mocks.windows[0]!
+    const initialEventCount = window.sent.filter(([channel]) => channel === 'question:event').length
 
     await sessions.send(sessionId, 'Explain this')
+    await sessions.send(sessionId, 'What should I do next?')
     expect(mocks.createConversation).toHaveBeenCalledTimes(1)
-    expect(mocks.sendMessage).toHaveBeenCalledTimes(1)
-    expect(window.sent.filter(([channel]) => channel === 'question:event')).toHaveLength(3)
+    expect(mocks.sendMessage).toHaveBeenCalledTimes(3)
+    expect(mocks.sendMessage.mock.calls[1]?.[0]).toBe('conversation-1')
+    expect(mocks.sendMessage.mock.calls[2]?.[0]).toBe('conversation-1')
+    expect(window.sent.filter(([channel]) => channel === 'question:event')).toHaveLength(initialEventCount + 8)
     await sessions.stop(sessionId)
     expect(mocks.cancel).toHaveBeenCalledWith('conversation-1')
 
@@ -490,27 +523,92 @@ describe('question-session window migration', () => {
     await expect(sessions.get(sessionId)).rejects.toThrow(/already closed/)
   })
 
-  it('regenerates a failed response in an auditable fresh context and cleans up both conversations', async () => {
-    mocks.sendMessage.mockImplementationOnce(() => (async function* () {
-      yield { type: 'started' as const, turnId: 'failed-turn' }
-      yield { type: 'error' as const, error: { code: 'offline' as const, title: 'Offline', message: 'Connection lost.', recovery: 'retry' as const } }
-    })())
+  it('allows a follow-up to prioritise web search immediately in the current conversation', async () => {
     const sessions = await createSessions()
     const opening = sessions.open(capture())
     const sessionId = await finishOpening(opening, 0)
 
+    await sessions.send(sessionId, 'Identify this episode from current sources', true)
+
+    expect(mocks.createConversation).toHaveBeenCalledTimes(1)
+    expect(mocks.sendMessage.mock.calls[1]?.[0]).toBe('conversation-1')
+    expect(mocks.sendMessage.mock.calls[1]?.[1]).toMatchObject({
+      text: expect.stringContaining('[FOVEA_WEB_SEARCH_PREFERRED]'),
+      webSearchAllowed: true,
+      webSearchPreferred: true
+    })
+    const searched = await sessions.get(sessionId)
+    expect(searched.exchanges[1]).toMatchObject({ webSearch: { status: 'completed' } })
+  })
+
+  it('removes follow-up suggestions that ask for unavailable screens or files', async () => {
+    mocks.sendMessage.mockImplementationOnce(() => (async function* () {
+      yield { type: 'started' as const }
+      yield {
+        type: 'delta' as const,
+        text: '<fovea-response>{"category":"error","summary":"A visible error is shown.","suggestedQuestions":["Can you share the screen just before this happened?","Please upload the log file","What does the visible error code mean?"]}</fovea-response>'
+      }
+      yield { type: 'completed' as const }
+    })())
+    const sessions = await createSessions()
+    const opening = sessions.open(capture())
+    const sessionId = await finishOpening(opening, 0)
+    const suggestions = (await sessions.get(sessionId)).exchanges[0]!.metadata!.suggestedQuestions
+
+    expect(suggestions).toHaveLength(4)
+    expect(suggestions).toContain('What does the visible error code mean?')
+    expect(suggestions.join(' ')).not.toMatch(/share the screen|upload the log/i)
+  })
+
+  it('starts a fresh conversation segment when the model or thinking effort changes', async () => {
+    mocks.listModels.mockResolvedValue([
+      { id: 'vision-1', displayName: 'Vision Fast', provider: 'chatgpt', inputModalities: ['text', 'image'], supportedReasoningEfforts: ['low'], defaultReasoningEffort: 'low', isDefault: true },
+      { id: 'vision-2', displayName: 'Vision Deep', provider: 'chatgpt', inputModalities: ['text', 'image'], supportedReasoningEfforts: ['medium', 'high'], defaultReasoningEffort: 'medium', isDefault: false }
+    ])
+    const sessions = await createSessions()
+    const opening = sessions.open(capture())
+    const sessionId = await finishOpening(opening, 0)
+
+    const changed = await sessions.setSelection(sessionId, {
+      profileId: 'profile-1',
+      provider: 'chatgpt',
+      modelId: 'vision-2',
+      reasoningEffort: 'high'
+    })
+    expect(changed.selection).toMatchObject({ modelId: 'vision-2', reasoningEffort: 'high' })
+    expect(changed.segments).toHaveLength(2)
+
+    await sessions.send(sessionId, 'Explain with more thought')
+    expect(mocks.createConversation).toHaveBeenCalledTimes(2)
+    expect(mocks.createConversation.mock.calls[1]?.[0]).toMatchObject({ modelId: 'vision-2', reasoningEffort: 'high' })
+    expect(mocks.sendMessage.mock.calls[1]?.[0]).toBe('conversation-2')
+    expect(mocks.sendMessage.mock.calls[1]?.[1]).toMatchObject({
+      text: expect.stringContaining('Explain with more thought'),
+      imagePath: capture().imagePath
+    })
+  })
+
+  it('regenerates a failed response in an auditable fresh context and cleans up both conversations', async () => {
+    const sessions = await createSessions()
+    const opening = sessions.open(capture())
+    const sessionId = await finishOpening(opening, 0)
+    mocks.sendMessage.mockImplementationOnce(() => (async function* () {
+      yield { type: 'started' as const, turnId: 'failed-turn' }
+      yield { type: 'error' as const, error: { code: 'offline' as const, title: 'Offline', message: 'Connection lost.', recovery: 'retry' as const } }
+    })())
+
     await sessions.send(sessionId, 'Explain this')
     const failed = await sessions.get(sessionId)
     expect(failed).toMatchObject({ busy: false, phase: 'failed' })
-    expect(failed.exchanges[0]).toMatchObject({ question: 'Explain this', phase: 'failed' })
+    expect(failed.exchanges[1]).toMatchObject({ question: 'Explain this', phase: 'failed' })
 
-    await sessions.retry(sessionId, failed.exchanges[0]!.id)
+    await sessions.retry(sessionId, failed.exchanges[1]!.id)
     const regenerated = await sessions.get(sessionId)
     expect(mocks.createConversation).toHaveBeenCalledTimes(2)
-    expect(mocks.sendMessage).toHaveBeenCalledTimes(2)
-    expect(mocks.sendMessage.mock.calls[1]?.[0]).toBe('conversation-2')
-    expect(mocks.sendMessage.mock.calls[1]?.[1]).toMatchObject({
-      text: expect.stringMatching(/^\[FOVEA_REGENERATE\][\s\S]*Final user request:\nExplain this$/),
+    expect(mocks.sendMessage).toHaveBeenCalledTimes(3)
+    expect(mocks.sendMessage.mock.calls[2]?.[0]).toBe('conversation-2')
+    expect(mocks.sendMessage.mock.calls[2]?.[1]).toMatchObject({
+      text: expect.stringMatching(/\[FOVEA_REGENERATE\][\s\S]*Final user request:\nExplain this$/),
       imagePath: capture().imagePath
     })
     expect(regenerated).toMatchObject({
@@ -518,12 +616,17 @@ describe('question-session window migration', () => {
       phase: 'completed',
       disclosure: expect.stringMatching(/fresh provider context/i)
     })
-    expect(regenerated.exchanges).toHaveLength(2)
-    expect(regenerated.exchanges[1]).toMatchObject({
+    expect(regenerated.exchanges).toHaveLength(3)
+    expect(regenerated.exchanges[2]).toMatchObject({
       question: 'Explain this',
       answer: 'answer',
+      metadata: {
+        category: 'general',
+        summary: 'Useful answer',
+        suggestedQuestions: expect.any(Array)
+      },
       phase: 'completed',
-      retryOf: failed.exchanges[0]!.id
+      retryOf: failed.exchanges[1]!.id
     })
     expect(regenerated.segments).toHaveLength(2)
 
@@ -547,7 +650,7 @@ describe('question-session window migration', () => {
       yield { type: 'cancelled' as const }
     })())
 
-    const retrying = sessions.retry(sessionId, original.exchanges[0]!.id)
+    const retrying = sessions.retry(sessionId, original.exchanges.at(-1)!.id)
     await vi.waitFor(async () => expect((await sessions.get(sessionId)).busy).toBe(true))
     await sessions.stop(sessionId)
     expect(mocks.cancel).toHaveBeenCalledWith('conversation-2')
@@ -556,7 +659,7 @@ describe('question-session window migration', () => {
     await expect(sessions.get(sessionId)).resolves.toMatchObject({ busy: false, phase: 'stopped' })
   })
 
-  it('holds an uncertain answer for explicit web-search approval and can decline locally', async () => {
+  it('holds an uncertain automatic answer for explicit web-search approval and can decline locally', async () => {
     mocks.sendMessage.mockImplementationOnce(() => (async function* () {
       yield { type: 'started' as const }
       yield { type: 'delta' as const, text: '<fovea-web-' }
@@ -567,7 +670,6 @@ describe('question-session window migration', () => {
     const opening = sessions.open(capture())
     const sessionId = await finishOpening(opening, 0)
 
-    await sessions.send(sessionId, 'What is this?')
     const pending = await sessions.get(sessionId)
     expect(pending).toMatchObject({ busy: false, phase: 'awaiting-approval' })
     expect(pending.exchanges[0]).toMatchObject({ answer: '', webSearch: { query: 'latest object details', status: 'requested' } })
@@ -583,7 +685,7 @@ describe('question-session window migration', () => {
     expect(declined.exchanges[0]).toMatchObject({ phase: 'completed', webSearch: { status: 'declined' } })
   })
 
-  it('retries an approved search with explicit network permission and the screenshot', async () => {
+  it('strips search narration and hidden metadata from an approved automatic search result', async () => {
     mocks.sendMessage.mockImplementationOnce(() => (async function* () {
       yield { type: 'started' as const }
       yield { type: 'delta' as const, text: '<fovea-web-search-request>{"query":"identify unfamiliar device"}</fovea-web-search-request>' }
@@ -591,14 +693,18 @@ describe('question-session window migration', () => {
     })())
     mocks.sendMessage.mockImplementationOnce(() => (async function* () {
       yield { type: 'started' as const }
-      yield { type: 'delta' as const, text: 'Verified answer with a source.' }
+      yield { type: 'delta' as const, text: 'I’ll search for the distinctive “Brașov, Romania — Beer or Bear” segment to identify the exact Cold Ones episode.' }
+      yield {
+        type: 'delta' as const,
+        text: '<fovea-response>{"category":"episode-identification","summary":"This screenshot is from Cold Ones’ episode “We Drank EVERY Country’s Alcohol… and Survived?!”","suggestedQuestions":["When was this episode released?","What is the Romanian drink they try?","Who wins the Beer or Bear round?","Where can I watch the full episode?"]}</fovea-response>'
+      }
+      yield { type: 'delta' as const, text: '\n\nThe episode is listed by [Apple Podcasts](https://podcasts.apple.com/example).' }
       yield { type: 'completed' as const }
     })())
     const sessions = await createSessions()
     const opening = sessions.open(capture())
     const sessionId = await finishOpening(opening, 0)
 
-    await sessions.send(sessionId, 'What is this?')
     const pending = await sessions.get(sessionId)
     const approved = await sessions.resolveWebSearch(sessionId, pending.exchanges[0]!.webSearch!.id, true)
 
@@ -609,7 +715,16 @@ describe('question-session window migration', () => {
       webSearchAllowed: true
     })
     expect(approved).toMatchObject({ busy: false, phase: 'completed' })
-    expect(approved.exchanges[0]).toMatchObject({ answer: 'Verified answer with a source.', webSearch: { status: 'completed' } })
+    expect(approved.exchanges[0]).toMatchObject({
+      answer: 'The episode is listed by [Apple Podcasts](https://podcasts.apple.com/example).',
+      metadata: {
+        category: 'episode-identification',
+        summary: 'This screenshot is from Cold Ones’ episode “We Drank EVERY Country’s Alcohol… and Survived?!”',
+        suggestedQuestions: expect.any(Array)
+      },
+      webSearch: { status: 'completed' }
+    })
+    expect(approved.exchanges[0]!.answer).not.toMatch(/I’ll search|fovea-response/)
   })
 
   it('keeps New snip session-scoped and starts a fresh capture after cleanup', async () => {

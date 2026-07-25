@@ -7,13 +7,15 @@ import './window-chrome.css'
 
 export interface WindowFrameProps extends PropsWithChildren {
   title: string
+  compactCanMaximize?: boolean
   showTitlebar?: boolean
+  showCompactControls?: boolean
   showResizeRegions?: boolean
   edgeState?: SpectralEdgeState
   titlebarActions?: ReactNode
 }
 
-export function WindowFrame({ children, title, showTitlebar = true, showResizeRegions = true, edgeState = 'idle', titlebarActions }: WindowFrameProps): React.JSX.Element {
+export function WindowFrame({ children, title, compactCanMaximize = false, showTitlebar = true, showCompactControls = false, showResizeRegions = true, edgeState = 'idle', titlebarActions }: WindowFrameProps): React.JSX.Element {
   const chrome = useWindowChrome()
   const { state } = chrome
   const [visible, setVisible] = useState(() => typeof document === 'undefined' || document.visibilityState !== 'hidden')
@@ -56,6 +58,17 @@ export function WindowFrame({ children, title, showTitlebar = true, showResizeRe
           </div>
         </header>}
         <div className="window-frame__content">{children}</div>
+        {!showTitlebar && showCompactControls && (
+          <div className="window-compact-controls">
+            {titlebarActions}
+            <WindowControls
+              maximized={state.maximized}
+              onClose={chrome.close}
+              onMaximize={compactCanMaximize && state.canMaximize ? chrome.toggleMaximize : undefined}
+              onMinimize={state.canMinimize ? chrome.minimize : undefined}
+            />
+          </div>
+        )}
       </section>
     </div>
   )

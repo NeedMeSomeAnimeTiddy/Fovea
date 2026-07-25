@@ -1,4 +1,4 @@
-import type { ProviderStatus } from './provider'
+import type { AssistantResponseMetadata, ProviderStatus } from './provider'
 import type { AppError } from './app-error'
 
 export type AppearancePreference = 'system' | 'dark' | 'light'
@@ -91,6 +91,8 @@ export interface ConversationExchange {
   answer: string
   phase: ResponsePhase
   segmentId: string
+  automatic?: boolean
+  metadata?: AssistantResponseMetadata
   retryOf?: string
   error?: AppError
   webSearch?: {

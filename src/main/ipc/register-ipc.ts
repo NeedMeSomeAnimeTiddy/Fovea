@@ -66,7 +66,10 @@ export function registerIpc(dependencies: IpcDependencies): void {
     if (typeof open !== 'boolean') throw new Error('Invalid preview state.')
     return dependencies.questions.setPreviewOpen(requireId(id), open)
   }, 'validation')
-  handle(IPC.questionSend, (_event, id, text) => dependencies.questions.send(requireId(id), requireString(text, 10_000)), 'provider-unavailable')
+  handle(IPC.questionSend, (_event, id, text, preferWebSearch = false) => {
+    if (typeof preferWebSearch !== 'boolean') throw new Error('Invalid web-search preference.')
+    return dependencies.questions.send(requireId(id), requireString(text, 10_000), preferWebSearch)
+  }, 'provider-unavailable')
   handle(IPC.questionRetry, (_event, id, exchangeId) => dependencies.questions.retry(requireId(id), requireId(exchangeId)), 'provider-unavailable')
   handle(IPC.questionResolveWebSearch, (_event, id, requestId, approved) => { if (typeof approved !== 'boolean') throw new Error('Invalid web-search approval.'); return dependencies.questions.resolveWebSearch(requireId(id), requireId(requestId), approved) }, 'provider-unavailable')
   handle(IPC.questionStop, (_event, id) => dependencies.questions.stop(requireId(id)))
