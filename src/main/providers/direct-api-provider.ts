@@ -15,6 +15,7 @@ const ENDPOINTS = {
 
 const WEB_SEARCH_REQUEST_INSTRUCTION = `Web search is disabled for this turn. First inspect the screenshot carefully and answer from visible evidence and stable knowledge when you are confident. If you cannot confidently identify a visible object, product, logo, place, artwork, interface, error, or other subject and a focused web search could identify or explain it, do not stop at saying it is unidentifiable. Request approval by responding with exactly <fovea-web-search-request>{"query":"a concise search query based on the visible clues"}</fovea-web-search-request>. Use the same request when current or unfamiliar information is essential and you are not confident. Do not request web access when the screenshot lacks enough clues for a useful search or for ordinary stable facts you already know.`
 const WEB_SEARCH_APPROVED_INSTRUCTION = `The user approved web access for this turn. Use web search only if it is necessary to resolve the uncertainty in their question. Prefer authoritative sources and cite them with links. Do not use any other tools.`
+const WEB_SEARCH_PREFERRED_INSTRUCTION = `The user explicitly prioritised web search for this turn. Search before answering whenever current sources could improve identification, accuracy, context, or verification. Do not stop at "I don't know" without attempting a focused search from the visible clues. Prefer authoritative sources, cite them with links, and do not use any other tools.`
 
 export class DirectApiProvider {
   constructor(
@@ -83,7 +84,9 @@ export class DirectApiProvider {
   }
 
   private requestBody(input: VisionTurnInput, image: string | null): Record<string, unknown> {
-    const instructions = input.webSearchAllowed ? WEB_SEARCH_APPROVED_INSTRUCTION : WEB_SEARCH_REQUEST_INSTRUCTION
+    const instructions = input.webSearchPreferred
+      ? WEB_SEARCH_PREFERRED_INSTRUCTION
+      : input.webSearchAllowed ? WEB_SEARCH_APPROVED_INSTRUCTION : WEB_SEARCH_REQUEST_INSTRUCTION
     if (this.kind === 'openai') {
       return {
         model: input.modelId,

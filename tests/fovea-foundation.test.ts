@@ -66,7 +66,7 @@ describe('provider normalisation and SSE', () => {
     ['openai', [{ type: 'web_search' }]],
     ['anthropic', [{ type: 'web_search_20250305', name: 'web_search', max_uses: 3 }]],
     ['openrouter', [{ type: 'openrouter:web_search' }]]
-  ] as const)('exposes %s web search only after approval', async (kind, approvedTools) => {
+  ] as const)('exposes %s web search only after approval or an explicit preference', async (kind, approvedTools) => {
     const request = vi.fn(async (input: string | URL | Request, init?: RequestInit) => { void input; void init; return new Response('', { status: 200 }) })
     const provider = new DirectApiProvider(kind, request as typeof fetch)
     const input = { text: 'What is this?', modelId: 'vision-model', reasoningEffort: null }
@@ -80,6 +80,11 @@ describe('provider normalisation and SSE', () => {
     const approvedBody = JSON.parse(String(request.mock.calls[1]?.[1]?.body)) as Record<string, unknown>
     expect(approvedBody.tools).toEqual(approvedTools)
     expect(JSON.stringify(approvedBody)).toContain('user approved web access')
+
+    for await (const event of provider.send('secret', { ...input, webSearchAllowed: true, webSearchPreferred: true })) { void event }
+    const preferredBody = JSON.parse(String(request.mock.calls[2]?.[1]?.body)) as Record<string, unknown>
+    expect(preferredBody.tools).toEqual(approvedTools)
+    expect(JSON.stringify(preferredBody)).toContain('explicitly prioritised web search')
   })
 })
 

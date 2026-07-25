@@ -3,117 +3,870 @@ import { createRoot } from 'react-dom/client'
 import ReactMarkdown from 'react-markdown'
 import rehypeHighlight from 'rehype-highlight'
 import type { QuestionViewState } from '@shared/contracts/ipc'
-import type { ConversationExchange, ConversationSelection, ResponsePhase } from '@shared/types/app'
+import type { ConversationExchange, ConversationSelection, ProviderModelCapability, ResponsePhase } from '@shared/types/app'
 import type { ProviderEvent } from '@shared/types/provider'
 import type { AppError, AppRecoveryKind } from '@shared/types/app-error'
-import { Badge, Button, Select, Spinner, StatusBanner, TextArea, Tooltip } from '../design-system'
+import { Button, IconButton, Spinner, StatusBanner, TextArea, Tooltip } from '../design-system'
 import { initialiseAppearance } from '../appearance'
-import { AppStatusNotice, ResponseStatus, appErrorFromUnknown, spectralStateForPhase } from '../status/status-presentation'
+import { AppStatusNotice, appErrorFromUnknown, spectralStateForPhase } from '../status/status-presentation'
 import { WindowFrame } from '../window-chrome/WindowFrame'
 import { QuestionTitlebarActions } from './QuestionTitlebarActions'
 import '../design-system/index.css'
 import 'highlight.js/styles/github-dark.css'
 import './question.css'
 
-const SUGGESTED_QUESTIONS = [
-  { icon: 'spark', label: 'Explain what I’m looking at' },
-  { icon: 'identify', label: 'Identify the main subject' },
-  { icon: 'alert', label: 'What appears to be wrong?' },
-  { icon: 'fix', label: 'How can I fix this?' },
-  { icon: 'steps', label: 'What should I do next?' },
-  { icon: 'summary', label: 'Summarise the important details' },
-  { icon: 'text', label: 'Extract all visible text' },
-  { icon: 'compare', label: 'Compare the visible options' }
+const FALLBACK_SUGGESTIONS = [
+  'What do the most important visible details mean?',
+  'Is anything in this image unusual or incorrect?',
+  'What is the most useful next step based on this image?',
+  'What could a web search verify about what is shown?'
 ]
+const TYPING_INTERVAL_MS = 12
 
-function QuestionApp(): React.JSX.Element {
+type TerminalPhase = Extract<ResponsePhase, 'completed' | 'stopped' | 'failed'>
+
+export function QuestionApp(): React.JSX.Element {
   const sessionId = useMemo(() => new URLSearchParams(location.search).get('session') ?? '', [])
-  const [state, setState] = useState<QuestionViewState | null>(null); const [text, setText] = useState(''); const [error, setError] = useState<AppError | null>(null); const [compact, setCompact] = useState(false); const [copied, setCopied] = useState(''); const [nearBottom, setNearBottom] = useState(true)
-  const scrollRef = useRef<HTMLDivElement>(null); const pendingDelta = useRef(''); const animation = useRef<number | null>(null)
+  const [state, setState] = useState<QuestionViewState | null>(null)
+  const [text, setText] = useState('')
+  const [error, setError] = useState<AppError | null>(null)
+  const [copyStatus, setCopyStatus] = useState('')
+  const [askOpen, setAskOpen] = useState(false)
+  const [customOpen, setCustomOpen] = useState(false)
+  const [preferWebSearch, setPreferWebSearch] = useState(false)
+  const [modelOpen, setModelOpen] = useState(false)
+  const [expandedModelId, setExpandedModelId] = useState<string | null>(null)
+  const askRef = useRef<HTMLDivElement>(null)
+  const modelRef = useRef<HTMLDivElement>(null)
+  const responseContentRef = useRef<HTMLDivElement>(null)
+  const stickToBottom = useRef(true)
+  const stateReady = useRef(false)
+  const pendingSummary = useRef('')
+  const pendingAnswer = useRef('')
+  const pendingTerminal = useRef<TerminalPhase | null>(null)
+  const typingTimer = useRef<number | null>(null)
 
-  // The subscription intentionally remains stable for the lifetime of this session.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { void initialiseAppearance(); void window.fovea.question.get(sessionId).then(setState).catch((reason) => setError(appErrorFromUnknown(reason))); return window.fovea.question.onEvent((eventSessionId, event) => { if (eventSessionId === sessionId) consume(event) }) }, [sessionId])
-  useEffect(() => { if (!nearBottom) return; const node = scrollRef.current; node?.scrollTo({ top: node.scrollHeight, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }) }, [state?.exchanges, nearBottom])
-
-  const updateLatest = (update: (exchange: ConversationExchange) => ConversationExchange): void => setState((current) => current ? { ...current, exchanges: current.exchanges.map((item, index) => index === current.exchanges.length - 1 ? update(item) : item) } : current)
-  const consume = (event: ProviderEvent): void => {
-    if (event.type === 'web-search-requested') { void refresh(); return }
-    if (event.type === 'delta') { pendingDelta.current += event.text; if (animation.current === null) animation.current = requestAnimationFrame(() => { const delta = pendingDelta.current; pendingDelta.current = ''; animation.current = null; updateLatest((item) => ({ ...item, answer: item.answer + delta, phase: 'streaming' })); setState((current) => current ? { ...current, phase: 'streaming' } : current) }); return }
-    if (event.type === 'started') setPhase('thinking')
-    if (event.type === 'completed' || event.type === 'cancelled') { setPhase(event.type === 'completed' ? 'completed' : 'stopped'); void refresh() }
-    if (event.type === 'error') { setPhase('failed'); void refresh() }
+  const updateLatest = (update: (exchange: ConversationExchange) => ConversationExchange): void => {
+    setState((current) => current
+      ? { ...current, exchanges: current.exchanges.map((item, index) => index === current.exchanges.length - 1 ? update(item) : item) }
+      : current)
   }
-  const setPhase = (phase: ResponsePhase): void => { updateLatest((item) => ({ ...item, phase })); setState((current) => current ? { ...current, phase, busy: ['connecting','thinking','streaming'].includes(phase) } : current) }
-  const refresh = async (): Promise<void> => setState(await window.fovea.question.get(sessionId))
-  const send = async (override?: string): Promise<void> => { const question = (override ?? text).trim(); if (!state || !question || state.busy || !state.selection) return; setText(''); setError(null); const optimistic: ConversationExchange = { id: `pending-${Date.now()}`, question, answer: '', phase: 'connecting', segmentId: state.segments.at(-1)?.id ?? '' }; setState({ ...state, busy: true, phase: 'connecting', exchanges: [...state.exchanges, optimistic] }); void window.fovea.question.send(sessionId, question).catch((reason) => { setError(appErrorFromUnknown(reason)); setPhase('failed') }) }
-  const changeProfile = async (profileId: string): Promise<void> => { if (!state) return; const profile = state.profiles.find((item) => item.id === profileId); if (!profile) return; try { const models = await window.fovea.profiles.models(profileId); const model = models.find((item) => item.id === profile.defaultModelId) ?? models.find((item) => item.isDefault) ?? models[0]; if (!model) throw new Error('No confirmed image-capable model is available.'); await changeSelection({ profileId, provider: profile.provider, modelId: model.id, reasoningEffort: model.defaultReasoningEffort ?? null }) } catch (reason) { setError(appErrorFromUnknown(reason)) } }
-  const changeSelection = async (selection: ConversationSelection): Promise<void> => { setError(null); try { setState(await window.fovea.question.setSelection(sessionId, selection)) } catch (reason) { setError(appErrorFromUnknown(reason)) } }
-  const resolveWebSearch = (requestId: string, approved: boolean): void => { setError(null); setState((current) => current ? { ...current, busy: approved, phase: approved ? 'connecting' : 'completed', exchanges: current.exchanges.map((exchange) => exchange.webSearch?.id === requestId ? { ...exchange, phase: approved ? 'connecting' : 'completed', webSearch: { ...exchange.webSearch, status: approved ? 'searching' : 'declined' }, answer: approved ? '' : exchange.answer } : exchange) } : current); void window.fovea.question.resolveWebSearch(sessionId, requestId, approved).then(setState).catch((reason) => { setError(appErrorFromUnknown(reason)); void refresh() }) }
-  const copy = async (value: string, label: string): Promise<void> => { await navigator.clipboard.writeText(value); setCopied(label); setTimeout(() => setCopied(''), 1500) }
-  const openPreview = async (): Promise<void> => { try { await window.fovea.question.setPreviewOpen(sessionId, true) } catch (reason) { setError(appErrorFromUnknown(reason)) } }
+  const setPhase = (phase: ResponsePhase): void => {
+    updateLatest((item) => ({ ...item, phase }))
+    setState((current) => current
+      ? { ...current, phase, busy: ['connecting', 'thinking', 'streaming'].includes(phase) }
+      : current)
+  }
+  const refresh = async (): Promise<void> => {
+    const next = await window.fovea.question.get(sessionId)
+    stateReady.current = true
+    setState(next)
+  }
+  const clearTypingQueue = (): void => {
+    pendingSummary.current = ''
+    pendingAnswer.current = ''
+    pendingTerminal.current = null
+    if (typingTimer.current !== null) clearTimeout(typingTimer.current)
+    typingTimer.current = null
+  }
+  const finishTyping = (): void => {
+    const phase = pendingTerminal.current
+    if (!phase) return
+    pendingTerminal.current = null
+    setPhase(phase)
+    void refresh()
+  }
+  const drainTypingQueue = (): void => {
+    typingTimer.current = null
+    if (!stateReady.current) {
+      typingTimer.current = window.setTimeout(drainTypingQueue, TYPING_INTERVAL_MS)
+      return
+    }
+    let wroteCharacter = false
+    const summary = takeNextTypingCharacter(pendingSummary.current)
+    if (summary.character) {
+      wroteCharacter = true
+      pendingSummary.current = summary.remainder
+      updateLatest((item) => item.metadata
+        ? { ...item, metadata: { ...item.metadata, summary: item.metadata.summary + summary.character }, phase: 'streaming' }
+        : item)
+    } else {
+      const answer = takeNextTypingCharacter(pendingAnswer.current)
+      if (answer.character) {
+        wroteCharacter = true
+        pendingAnswer.current = answer.remainder
+        updateLatest((item) => ({ ...item, answer: item.answer + answer.character, phase: 'streaming' }))
+      }
+    }
+    if (wroteCharacter) setState((current) => current ? { ...current, phase: 'streaming', busy: true } : current)
+    if (pendingSummary.current || pendingAnswer.current) {
+      typingTimer.current = window.setTimeout(drainTypingQueue, TYPING_INTERVAL_MS)
+    } else {
+      finishTyping()
+    }
+  }
+  const scheduleTyping = (): void => {
+    if (typingTimer.current !== null) return
+    typingTimer.current = window.setTimeout(drainTypingQueue, TYPING_INTERVAL_MS)
+  }
+  const queueTerminal = (phase: TerminalPhase): void => {
+    pendingTerminal.current = phase
+    if (pendingSummary.current || pendingAnswer.current) scheduleTyping()
+    else finishTyping()
+  }
+  const consume = (event: ProviderEvent): void => {
+    if (event.type === 'web-search-requested') {
+      clearTypingQueue()
+      void refresh()
+      return
+    }
+    if (event.type === 'response-metadata') {
+      pendingSummary.current += event.metadata.summary
+      updateLatest((item) => ({ ...item, metadata: { ...event.metadata, summary: '' }, phase: 'streaming' }))
+      scheduleTyping()
+      return
+    }
+    if (event.type === 'delta') {
+      pendingAnswer.current += event.text
+      scheduleTyping()
+      return
+    }
+    if (event.type === 'started') {
+      pendingTerminal.current = null
+      setPhase('thinking')
+    }
+    if (event.type === 'completed' || event.type === 'cancelled') {
+      queueTerminal(event.type === 'completed' ? 'completed' : 'stopped')
+    }
+    if (event.type === 'error') {
+      queueTerminal('failed')
+    }
+  }
+
+  useEffect(() => {
+    void initialiseAppearance()
+    void refresh().catch((reason) => setError(appErrorFromUnknown(reason)))
+    return window.fovea.question.onEvent((eventSessionId, event) => {
+      if (eventSessionId === sessionId) consume(event)
+    })
+    // The subscription intentionally remains stable for the lifetime of this session.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId])
+  useEffect(() => () => clearTypingQueue(), [])
+
+  const latestExchange = state?.exchanges.at(-1)
+  const latestVisibleLength = (latestExchange?.metadata?.summary.length ?? 0) + (latestExchange?.answer.length ?? 0)
+
+  useEffect(() => {
+    if (!stickToBottom.current) return
+    const frame = requestAnimationFrame(() => {
+      const content = responseContentRef.current
+      if (content) content.scrollTop = content.scrollHeight
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [latestExchange?.id, latestVisibleLength])
+
+  useEffect(() => {
+    if (!askOpen && !modelOpen) return
+    const closeOnPointer = (event: MouseEvent): void => {
+      const target = event.target as Node
+      if (askOpen && !askRef.current?.contains(target)) {
+        setAskOpen(false)
+        setCustomOpen(false)
+      }
+      if (modelOpen && !modelRef.current?.contains(target)) {
+        setModelOpen(false)
+        setExpandedModelId(null)
+      }
+    }
+    const closeOnEscape = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return
+      setAskOpen(false)
+      setCustomOpen(false)
+      setModelOpen(false)
+      setExpandedModelId(null)
+    }
+    document.addEventListener('mousedown', closeOnPointer)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('mousedown', closeOnPointer)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [askOpen, modelOpen])
+
+  const send = async (override?: string): Promise<void> => {
+    const question = (override ?? text).trim()
+    if (!state || !question || state.busy || !state.selection) return
+    const searchPreferred = preferWebSearch
+    setText('')
+    setError(null)
+    setAskOpen(false)
+    setCustomOpen(false)
+    setModelOpen(false)
+    setExpandedModelId(null)
+    setPreferWebSearch(false)
+    clearTypingQueue()
+    stickToBottom.current = true
+    const optimistic: ConversationExchange = {
+      id: `pending-${Date.now()}`,
+      question,
+      answer: '',
+      phase: 'connecting',
+      segmentId: state.segments.at(-1)?.id ?? '',
+      ...(searchPreferred ? { webSearch: { id: `preferred-${Date.now()}`, query: question, status: 'searching' as const } } : {})
+    }
+    setState({ ...state, busy: true, phase: 'connecting', exchanges: [...state.exchanges, optimistic] })
+    void window.fovea.question.send(sessionId, question, searchPreferred).catch((reason) => {
+      setError(appErrorFromUnknown(reason))
+      setPhase('failed')
+    })
+  }
+  const resolveWebSearch = (requestId: string, approved: boolean): void => {
+    setError(null)
+    clearTypingQueue()
+    stickToBottom.current = true
+    setState((current) => current
+      ? {
+          ...current,
+          busy: approved,
+          phase: approved ? 'connecting' : 'completed',
+          exchanges: current.exchanges.map((exchange) => exchange.webSearch?.id === requestId
+            ? {
+                ...exchange,
+                phase: approved ? 'connecting' : 'completed',
+                webSearch: { ...exchange.webSearch, status: approved ? 'searching' : 'declined' },
+                answer: approved ? '' : exchange.answer
+              }
+            : exchange)
+        }
+      : current)
+    void window.fovea.question.resolveWebSearch(sessionId, requestId, approved).then(setState).catch((reason) => {
+      setError(appErrorFromUnknown(reason))
+      void refresh()
+    })
+  }
+  const copy = async (value: string, label = 'Answer copied'): Promise<void> => {
+    await navigator.clipboard.writeText(value)
+    setCopyStatus(label)
+    setTimeout(() => setCopyStatus(''), 1500)
+  }
+  const openPreview = async (): Promise<void> => {
+    try {
+      await window.fovea.question.setPreviewOpen(sessionId, true)
+    } catch (reason) {
+      setError(appErrorFromUnknown(reason))
+    }
+  }
+  const changeModel = async (modelId: string, reasoningEffort: string | null): Promise<void> => {
+    if (!state?.selection || state.busy || state.exchanges.some((exchange) => exchange.webSearch?.status === 'requested')) return
+    const selection: ConversationSelection = { ...state.selection, modelId, reasoningEffort }
+    setError(null)
+    setModelOpen(false)
+    setExpandedModelId(null)
+    try {
+      setState(await window.fovea.question.setSelection(sessionId, selection))
+    } catch (reason) {
+      setError(appErrorFromUnknown(reason))
+      void refresh()
+    }
+  }
   const retryExchange = (exchange: ConversationExchange): void => {
     if (!state || state.busy || state.exchanges.at(-1)?.id !== exchange.id) return
     setError(null)
-    const optimistic: ConversationExchange = { id: `retry-${Date.now()}`, question: exchange.question, answer: '', phase: 'connecting', segmentId: state.segments.at(-1)?.id ?? '', retryOf: exchange.id }
+    clearTypingQueue()
+    stickToBottom.current = true
+    const optimistic: ConversationExchange = {
+      id: `retry-${Date.now()}`,
+      question: exchange.question,
+      answer: '',
+      phase: 'connecting',
+      segmentId: state.segments.at(-1)?.id ?? '',
+      automatic: exchange.automatic,
+      retryOf: exchange.id
+    }
     setState({ ...state, busy: true, phase: 'connecting', exchanges: [...state.exchanges, optimistic] })
-    void window.fovea.question.retry(sessionId, exchange.id).catch((reason) => { setError(appErrorFromUnknown(reason)); void refresh() })
+    void window.fovea.question.retry(sessionId, exchange.id).catch((reason) => {
+      setError(appErrorFromUnknown(reason))
+      void refresh()
+    })
   }
   const togglePinned = async (): Promise<void> => {
     if (!state) return
     const pinned = !state.pinned
     setState({ ...state, pinned })
-    try { await window.fovea.question.setPinned(sessionId, pinned) } catch (reason) { setError(appErrorFromUnknown(reason)); void refresh() }
+    try {
+      await window.fovea.question.setPinned(sessionId, pinned)
+    } catch (reason) {
+      setError(appErrorFromUnknown(reason))
+      void refresh()
+    }
   }
   const recover = (recovery: AppRecoveryKind): void => {
-    if (recovery === 'open-settings' || recovery === 'authenticate' || recovery === 'choose-provider') void window.fovea.application.openSettings()
-    else if (recovery === 'recapture') void window.fovea.question.newSnip(sessionId)
-    else if (recovery === 'retry') { setError(null); void refresh().catch((reason) => setError(appErrorFromUnknown(reason))) }
+    if (recovery === 'open-settings' || recovery === 'authenticate' || recovery === 'choose-provider') {
+      void window.fovea.application.openSettings()
+    } else if (recovery === 'recapture') {
+      void window.fovea.question.newSnip(sessionId)
+    } else if (recovery === 'retry') {
+      setError(null)
+      void refresh().catch((reason) => setError(appErrorFromUnknown(reason)))
+    }
   }
-  if (!state) return <WindowFrame title="Fovea" edgeState={error ? 'error' : 'connecting'} showResizeRegions={false}><main className="question-loading"><Spinner label="Preparing capture" size="large" /><span>Preparing capture…</span>{error && <AppStatusNotice error={error} onRecovery={recover} />}</main></WindowFrame>
-  const selectedModel = state.models.find((item) => item.id === state.selection?.modelId); const hasSent = state.exchanges.length > 0; const hasPendingWebSearch = state.exchanges.some((exchange) => exchange.webSearch?.status === 'requested'); const missingModels = state.profiles.length > 0 && !state.selection; const latestExchange = state.exchanges.at(-1)
-  return <WindowFrame title="Fovea" edgeState={error || missingModels ? 'error' : spectralStateForPhase(state.phase)} showResizeRegions={false} titlebarActions={<QuestionTitlebarActions compact={compact} layoutDisabled={!hasSent} pinned={state.pinned} onToggleCompact={() => setCompact((value) => !value)} onTogglePinned={() => void togglePinned()} />}><main className="panel" data-has-sent={hasSent} data-layout={compact ? 'compact' : 'expanded'}>
-    <div className="selector-bar"><Select label={<span className="fui-sr-only">Profile</span>} value={state.selection?.profileId ?? ''} onChange={(event) => void changeProfile(event.target.value)}><option value="" disabled>Choose profile</option>{state.profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {profile.provider}</option>)}</Select><Select label={<span className="fui-sr-only">Model</span>} value={state.selection?.modelId ?? ''} disabled={!state.selection} onChange={(event) => state.selection && void changeSelection({ ...state.selection, modelId: event.target.value, reasoningEffort: null })}>{state.models.map((model) => <option key={model.id} value={model.id}>{model.displayName}</option>)}</Select>{selectedModel && selectedModel.supportedReasoningEfforts.length > 0 && <Select label={<span className="fui-sr-only">Reasoning</span>} value={state.selection?.reasoningEffort ?? ''} onChange={(event) => state.selection && void changeSelection({ ...state.selection, reasoningEffort: event.target.value || null })}><option value="">Default reasoning</option>{selectedModel.supportedReasoningEfforts.map((effort) => <option key={effort}>{effort}</option>)}</Select>}</div>
-    <div className="content" ref={scrollRef} onScroll={(event) => { const node = event.currentTarget; setNearBottom(node.scrollHeight - node.scrollTop - node.clientHeight < 72) }}>
-      <div className={hasSent ? 'preview-card compact' : 'preview-card'}><img src={state.thumbnailDataUrl} alt="Selected screenshot" /><div className="preview-actions"><Tooltip content="View full-screen original"><button aria-label="View full-screen original" onClick={() => void openPreview()}><Icon name="expand" /></button></Tooltip><Tooltip content="Recapture"><button aria-label="Recapture" onClick={() => void window.fovea.question.newSnip(sessionId)}><Icon name="recapture" /></button></Tooltip><Tooltip content="Discard capture"><button aria-label="Discard capture" onClick={() => void window.fovea.question.close(sessionId)}><Icon name="discard" /></button></Tooltip></div></div>
-      {state.disclosure && <StatusBanner tone="warning">{state.disclosure}</StatusBanner>}
-      {!state.selection && <StatusBanner title={state.profiles.length ? 'No compatible models' : 'Connect a provider'} tone="warning">{state.profiles.length ? 'Test this provider or choose another profile in Settings.' : 'Add and authenticate a provider profile in Settings.'}<div><Button size="compact" variant="secondary" onClick={() => void window.fovea.application.openSettings()}>Open Settings</Button></div></StatusBanner>}
-      {!hasSent && <>
-        <details className="suggestions">
-          <summary><span>Suggested questions</span><small>{SUGGESTED_QUESTIONS.length} prompts</small><Icon name="chevron" /></summary>
-          <div className="suggestion-list">{SUGGESTED_QUESTIONS.map((suggestion) => <Button key={suggestion.label} size="compact" variant="secondary" disabled={state.busy || !state.selection} onClick={() => void send(suggestion.label)}><Icon name={suggestion.icon} />{suggestion.label}</Button>)}</div>
-        </details>
-        <Composer text={text} setText={setText} send={send} busy={state.busy} autoFocus />
-      </>}
-      {hasSent && <div className="transcript">{state.exchanges.map((exchange) => <article key={exchange.id}><div className="question">{exchange.question}</div><div className="phase-label"><ResponseStatus phase={exchange.phase} />{exchange.retryOf && <Badge tone="info">Regenerated</Badge>}</div>{exchange.webSearch?.status === 'requested' && <div className="web-approval" role="group" aria-label="Web search approval"><strong>Search the web?</strong><p>The AI isn’t confident it can identify or explain this reliably without checking sources.</p><code>{exchange.webSearch.query}</code><div><Button size="compact" variant="secondary" onClick={() => resolveWebSearch(exchange.webSearch!.id, false)}>Continue without browsing</Button><Button size="compact" onClick={() => resolveWebSearch(exchange.webSearch!.id, true)}>Approve search</Button></div></div>}{exchange.webSearch?.status === 'searching' && <StatusBanner tone="info">Searching approved sources…</StatusBanner>}{exchange.webSearch?.status === 'declined' && <StatusBanner tone="info">Web search declined.</StatusBanner>}<div className="answer">{exchange.answer ? <Markdown text={exchange.answer} onCopy={copy} /> : exchange.webSearch?.status !== 'requested' && <span className="thinking">{phaseLabel(exchange.phase)}</span>}{exchange.error && <AppStatusNotice error={exchange.error} onRecovery={(recovery) => recovery === 'retry' ? retryExchange(exchange) : recover(recovery)} />}</div></article>)}</div>}
-      {error && <AppStatusNotice error={error} onRecovery={error.recovery === 'retry' ? undefined : recover} />}
-    </div>
-    {!nearBottom && hasSent && <Button className="jump-latest" size="compact" variant="secondary" onClick={() => { setNearBottom(true); const node = scrollRef.current; node?.scrollTo({ top: node.scrollHeight }) }}>Jump to latest</Button>}
-    {hasSent && <footer className="response-footer"><Composer text={text} setText={setText} send={send} busy={state.busy || hasPendingWebSearch} /><div className="toolbar"><Button size="compact" variant="secondary" onClick={() => void window.fovea.question.newSnip(sessionId)}>New capture</Button>{state.busy ? <Button size="compact" variant="danger" onClick={() => void window.fovea.question.stop(sessionId)}>Stop</Button> : <Button size="compact" disabled={!text.trim() || !state.selection || hasPendingWebSearch} onClick={() => void send()}>Send</Button>}{copied && <Badge className="copy-status" tone="success">{copied}</Badge>}<span className="spacer"/><Tooltip content="Generate a fresh answer"><Button size="compact" variant="secondary" disabled={!latestExchange || state.busy || hasPendingWebSearch || !state.selection} onClick={() => latestExchange && retryExchange(latestExchange)}>Regenerate</Button></Tooltip><Tooltip content="Copy latest answer"><Button size="compact" variant="secondary" disabled={!latestExchange?.answer} onClick={() => void copy(latestExchange?.answer ?? '', 'Answer copied')}>Copy</Button></Tooltip></div></footer>}
-    <div className="fui-sr-only" aria-live="polite">{copied}</div>
-  </main></WindowFrame>
+
+  if (!state) {
+    return (
+      <WindowFrame title="Fovea" edgeState={error ? 'error' : 'thinking'} showCompactControls showResizeRegions={false} showTitlebar={false}>
+        <main className="response-loading">
+          <Spinner label="Looking at your capture" size="large" />
+          <strong>Looking at your capture…</strong>
+          <span>Finding the most useful answer.</span>
+          {error && <AppStatusNotice error={error} onRecovery={recover} />}
+        </main>
+      </WindowFrame>
+    )
+  }
+
+  const hasPendingWebSearch = state.exchanges.some((exchange) => exchange.webSearch?.status === 'requested')
+  const missingModels = state.profiles.length > 0 && !state.selection
+  const suggestions = latestExchange?.metadata?.suggestedQuestions.length
+    ? latestExchange.metadata.suggestedQuestions
+    : FALLBACK_SUGGESTIONS
+  const askDisabled = state.busy || hasPendingWebSearch || !state.selection || !latestExchange
+  const selectedModel = state.models.find((model) => model.id === state.selection?.modelId)
+  const modelLabel = selectedModel && state.selection
+    ? `${selectedModel.displayName} · ${thinkingEffortLabel(state.selection.reasoningEffort)} thinking`
+    : 'Choose model and thinking effort'
+
+  return (
+    <WindowFrame
+      title="Fovea"
+      edgeState={error || missingModels ? 'error' : spectralStateForPhase(state.phase)}
+      showCompactControls
+      showResizeRegions={false}
+      showTitlebar={false}
+      titlebarActions={<QuestionTitlebarActions pinned={state.pinned} onTogglePinned={() => void togglePinned()} />}
+    >
+      <main className="response-shell">
+        {!state.selection
+          ? (
+              <section className="setup-card">
+                <StatusBanner title={state.profiles.length ? 'No compatible AI model' : 'Connect an AI provider'} tone="warning">
+                  {state.profiles.length
+                    ? 'Choose an image-capable model in Settings.'
+                    : 'Connect a provider once, then every capture can be answered automatically.'}
+                </StatusBanner>
+                <Button onClick={() => void window.fovea.application.openSettings()}>Open Settings</Button>
+              </section>
+            )
+          : (
+              <section className="response-card" aria-label="AI response">
+                <header className="response-card__header">
+                  <FriendlyStatus phase={state.phase} />
+                  <div className="ask-wrap" ref={askRef}>
+                    <Button
+                      aria-controls="ask-menu"
+                      aria-expanded={askOpen}
+                      aria-haspopup="menu"
+                      className="ask-trigger"
+                      disabled={askDisabled}
+                      size="compact"
+                      variant="ghost"
+                      onClick={() => {
+                        setModelOpen(false)
+                        setExpandedModelId(null)
+                        setAskOpen((open) => !open)
+                        setCustomOpen(false)
+                      }}
+                    >
+                      Ask <Icon name="chevron" />
+                    </Button>
+                    {askOpen && (
+                      <AskMenu
+                        busy={state.busy}
+                        customOpen={customOpen}
+                        preferWebSearch={preferWebSearch}
+                        suggestions={suggestions}
+                        text={text}
+                        onCustom={() => setCustomOpen(true)}
+                        onSend={send}
+                        onTextChange={setText}
+                        onToggleWebSearch={() => setPreferWebSearch((preferred) => !preferred)}
+                      />
+                    )}
+                  </div>
+                </header>
+
+                {state.disclosure && <StatusBanner tone="info">{state.disclosure}</StatusBanner>}
+
+                <div
+                  className="response-content"
+                  ref={responseContentRef}
+                  onScroll={(event) => {
+                    const content = event.currentTarget
+                    stickToBottom.current = content.scrollHeight - content.scrollTop - content.clientHeight < 48
+                  }}
+                >
+                  {state.exchanges.length
+                    ? (
+                        <ConversationTimeline
+                          exchanges={state.exchanges}
+                          onCopy={copy}
+                          onRecover={(exchange, recovery) => recovery === 'retry' ? retryExchange(exchange) : recover(recovery)}
+                          onResolveWebSearch={resolveWebSearch}
+                        />
+                      )
+                    : <AnswerSkeleton />}
+                  {error && <AppStatusNotice error={error} onRecovery={error.recovery === 'retry' ? undefined : recover} />}
+                </div>
+
+                <footer className="response-actions">
+                  <Tooltip content="Start a new capture">
+                    <IconButton
+                      icon={<Icon name="recapture" />}
+                      label="Start a new capture"
+                      size="compact"
+                      onClick={() => void window.fovea.question.newSnip(sessionId)}
+                    />
+                  </Tooltip>
+                  <Tooltip content="View the captured image">
+                    <IconButton
+                      icon={<Icon name="capture" />}
+                      label="View the captured image"
+                      size="compact"
+                      onClick={() => void openPreview()}
+                    />
+                  </Tooltip>
+                  {state.selection && (
+                    <div className="model-wrap" ref={modelRef}>
+                      <Tooltip content={modelLabel}>
+                        <IconButton
+                          aria-expanded={modelOpen}
+                          aria-haspopup="menu"
+                          aria-pressed={modelOpen}
+                          disabled={state.busy || hasPendingWebSearch || state.models.length === 0}
+                          icon={<Icon name="chip" />}
+                          label="Choose model and thinking effort"
+                          size="compact"
+                          onClick={() => {
+                            setAskOpen(false)
+                            setCustomOpen(false)
+                            setModelOpen((open) => {
+                              const next = !open
+                              setExpandedModelId(next ? state.selection?.modelId ?? state.models[0]?.id ?? null : null)
+                              return next
+                            })
+                          }}
+                        />
+                      </Tooltip>
+                      {modelOpen && (
+                        <ModelMenu
+                          expandedModelId={expandedModelId}
+                          models={state.models}
+                          selection={state.selection}
+                          onExpand={setExpandedModelId}
+                          onSelect={(modelId, effort) => void changeModel(modelId, effort)}
+                        />
+                      )}
+                    </div>
+                  )}
+                  <span className="response-actions__spacer" />
+                  {state.busy
+                    ? (
+                        <Tooltip content="Stop answering">
+                          <IconButton
+                            icon={<Icon name="stop" />}
+                            label="Stop answering"
+                            size="compact"
+                            variant="danger"
+                            onClick={() => void window.fovea.question.stop(sessionId)}
+                          />
+                        </Tooltip>
+                      )
+                    : (
+                        <Tooltip content="Generate a fresh answer">
+                          <IconButton
+                            disabled={!latestExchange || hasPendingWebSearch}
+                            icon={<Icon name="regenerate" />}
+                            label="Generate a fresh answer"
+                            size="compact"
+                            onClick={() => latestExchange && retryExchange(latestExchange)}
+                          />
+                        </Tooltip>
+                      )}
+                  <Tooltip content={copyStatus || 'Copy answer'}>
+                    <IconButton
+                      disabled={!latestExchange || !exchangeText(latestExchange)}
+                      icon={<Icon name={copyStatus ? 'check' : 'copy'} />}
+                      label={copyStatus || 'Copy answer'}
+                      size="compact"
+                      onClick={() => latestExchange && void copy(exchangeText(latestExchange))}
+                    />
+                  </Tooltip>
+                </footer>
+              </section>
+            )}
+        <div className="fui-sr-only" aria-live="polite">{copyStatus}</div>
+      </main>
+    </WindowFrame>
+  )
 }
 
-function Composer({ text, setText, send, busy, autoFocus = false }: { text: string; setText(value: string): void; send(): Promise<void>; busy: boolean; autoFocus?: boolean }): React.JSX.Element { const ref = useRef<HTMLTextAreaElement>(null); useEffect(() => { const node = ref.current; if (node) { node.style.height = 'auto'; node.style.height = `${Math.min(150, node.scrollHeight)}px` } }, [text]); return <div className="composer-wrap"><TextArea ref={ref} label={<span className="fui-sr-only">Question</span>} className="composer" resize="none" rows={2} value={text} disabled={busy} autoFocus={autoFocus} placeholder={busy ? 'Waiting for the answer…' : 'Ask about this screenshot…'} onChange={(event) => setText(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send() } }} /><Button className="composer-send" size="compact" disabled={!text.trim() || busy} onClick={() => void send()} aria-label="Send question"><Icon name="send" /></Button></div> }
-function Markdown({ text, onCopy }: { text: string; onCopy(value: string, label: string): Promise<void> }): React.JSX.Element { return <ReactMarkdown rehypePlugins={[rehypeHighlight]} components={{ a: ({ href, children }) => <a href={href} onClick={(event) => { event.preventDefault(); if (href) void window.fovea.openExternal(href) }}>{children}</a>, pre: ({ children }) => { const value = nodeText(children); return <div className="code-block"><button onClick={() => void onCopy(value, 'Code copied')}>Copy</button><pre>{children}</pre></div> } }}>{text}</ReactMarkdown> }
-function nodeText(node: ReactNode): string { if (typeof node === 'string' || typeof node === 'number') return String(node); if (Array.isArray(node)) return node.map(nodeText).join(''); if (node && typeof node === 'object' && 'props' in node) return nodeText((node as { props: { children?: ReactNode } }).props.children); return '' }
-function phaseLabel(phase: ResponsePhase): string { return ({ idle: 'Ready', connecting: 'Connecting…', thinking: 'Thinking…', streaming: 'Answering…', 'awaiting-approval': 'Needs approval', stopped: 'Stopped', completed: 'Complete', failed: 'Failed' })[phase] }
+export function AskMenu({
+  busy,
+  customOpen,
+  preferWebSearch,
+  suggestions,
+  text,
+  onCustom,
+  onSend,
+  onTextChange,
+  onToggleWebSearch
+}: {
+  busy: boolean
+  customOpen: boolean
+  preferWebSearch: boolean
+  suggestions: string[]
+  text: string
+  onCustom(): void
+  onSend(question?: string): Promise<void>
+  onTextChange(value: string): void
+  onToggleWebSearch(): void
+}): React.JSX.Element {
+  return (
+    <div className="ask-menu" id="ask-menu" role="menu" aria-label="Questions about this capture">
+      <div className="ask-menu__heading">You could ask…</div>
+      <div className="ask-menu__suggestions">
+        {suggestions.map((suggestion) => (
+          <button
+            disabled={busy}
+            key={suggestion}
+            role="menuitem"
+            onClick={() => void onSend(suggestion)}
+          >
+            <span>{suggestion}</span>
+            <Icon name="arrow" />
+          </button>
+        ))}
+      </div>
+      <div className="ask-menu__search">
+        <button
+          aria-checked={preferWebSearch}
+          className="search-priority"
+          disabled={busy}
+          role="menuitemcheckbox"
+          onClick={onToggleWebSearch}
+        >
+          <Icon name="globe" />
+          <span className="search-priority__copy">
+            <strong>Search web</strong>
+            <small>Prioritise current sources for this question</small>
+          </span>
+          <span className="search-priority__state" aria-hidden="true">
+            <small>{preferWebSearch ? 'On' : 'Off'}</small>
+            <span className="search-priority__track">
+              <span className="search-priority__thumb" />
+            </span>
+          </span>
+        </button>
+      </div>
+      <div className="ask-menu__custom">
+        {!customOpen
+          ? (
+              <button className="custom-trigger" role="menuitem" onClick={onCustom}>
+                <Icon name="edit" />
+                <span>Custom question</span>
+              </button>
+            )
+          : (
+              <div className="custom-composer">
+                <TextArea
+                  autoFocus
+                  className="custom-composer__input"
+                  disabled={busy}
+                  label={<span className="fui-sr-only">Custom question</span>}
+                  placeholder="Ask in your own words…"
+                  resize="none"
+                  rows={2}
+                  value={text}
+                  onChange={(event) => onTextChange(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' && !event.shiftKey) {
+                      event.preventDefault()
+                      void onSend()
+                    }
+                  }}
+                />
+                <IconButton
+                  className="custom-composer__send"
+                  disabled={!text.trim() || busy}
+                  icon={<Icon name="send" />}
+                  label="Send custom question"
+                  size="compact"
+                  onClick={() => void onSend()}
+                />
+              </div>
+            )}
+      </div>
+    </div>
+  )
+}
+
+export function ModelMenu({
+  expandedModelId,
+  models,
+  selection,
+  onExpand,
+  onSelect
+}: {
+  expandedModelId: string | null
+  models: ProviderModelCapability[]
+  selection: ConversationSelection
+  onExpand(modelId: string | null): void
+  onSelect(modelId: string, reasoningEffort: string | null): void
+}): React.JSX.Element {
+  return (
+    <div className="model-menu" role="menu" aria-label="Model and thinking effort">
+      <div className="model-menu__heading">Model &amp; thinking</div>
+      {models.map((model) => {
+        const expanded = model.id === expandedModelId
+        const selected = model.id === selection.modelId
+        const options: Array<string | null> = [null, ...model.supportedReasoningEfforts]
+        return (
+          <div className="model-menu__model" key={model.id}>
+            <button
+              aria-expanded={expanded}
+              aria-haspopup="menu"
+              className="model-menu__model-trigger"
+              role="menuitem"
+              onClick={() => onExpand(expanded ? null : model.id)}
+            >
+              <Icon name="chip" />
+              <span>{model.displayName}</span>
+              {selected && <small>{thinkingEffortLabel(selection.reasoningEffort)}</small>}
+              <Icon name="chevron" />
+            </button>
+            {expanded && (
+              <div className="model-effort-menu" role="menu" aria-label={`${model.displayName} thinking effort`}>
+                {options.map((effort) => {
+                  const current = selected && selection.reasoningEffort === effort
+                  return (
+                    <button
+                      aria-checked={current}
+                      key={effort ?? 'default'}
+                      role="menuitemradio"
+                      onClick={() => onSelect(model.id, effort)}
+                    >
+                      <span>{thinkingEffortLabel(effort)}</span>
+                      {current && <Icon name="check" />}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+export function ConversationTimeline({
+  exchanges,
+  onCopy,
+  onRecover,
+  onResolveWebSearch
+}: {
+  exchanges: ConversationExchange[]
+  onCopy(value: string, label?: string): Promise<void>
+  onRecover(exchange: ConversationExchange, recovery: AppRecoveryKind): void
+  onResolveWebSearch(requestId: string, approved: boolean): void
+}): React.JSX.Element {
+  return (
+    <div className="conversation-thread" role="log" aria-label="Conversation" aria-live="polite">
+      {exchanges.map((exchange) => (
+        <section className="conversation-turn" key={exchange.id}>
+          {!exchange.automatic && !exchange.retryOf && (
+            <div className="conversation-message conversation-message--user">
+              <span className="fui-sr-only">You asked: </span>
+              {exchange.question}
+            </div>
+          )}
+          {exchange.retryOf && <small className="conversation-retry-label">Regenerated reply</small>}
+          <div className={`conversation-message conversation-message--assistant${exchange.automatic ? ' conversation-message--opening' : ''}`}>
+            <span className="fui-sr-only">AI response: </span>
+            <ResponseBody
+              exchange={exchange}
+              onCopy={onCopy}
+              onRecover={(recovery) => onRecover(exchange, recovery)}
+              onResolveWebSearch={onResolveWebSearch}
+            />
+          </div>
+        </section>
+      ))}
+    </div>
+  )
+}
+
+function FriendlyStatus({ phase }: { phase: ResponsePhase }): React.JSX.Element {
+  const busy = ['connecting', 'thinking', 'streaming'].includes(phase)
+  return (
+    <div className="friendly-status" role="status">
+      {busy && <Spinner />}
+      <span>{friendlyPhaseLabel(phase)}</span>
+    </div>
+  )
+}
+
+function ResponseBody({
+  exchange,
+  onCopy,
+  onRecover,
+  onResolveWebSearch
+}: {
+  exchange: ConversationExchange
+  onCopy(value: string, label?: string): Promise<void>
+  onRecover(recovery: AppRecoveryKind): void
+  onResolveWebSearch(requestId: string, approved: boolean): void
+}): React.JSX.Element {
+  const summary = exchange.metadata?.summary
+  const detail = exchange.answer.trim()
+  const waiting = ['connecting', 'thinking'].includes(exchange.phase) && !summary && !detail
+  return (
+    <article className="answer-card">
+      {waiting && <TypingIndicator />}
+      {summary && <div className="answer-summary"><Markdown text={summary} onCopy={onCopy} /></div>}
+      {!summary && detail && <div className="answer answer--primary"><Markdown text={detail} onCopy={onCopy} /></div>}
+      {summary && detail && (
+        <details className="answer-details">
+          <summary>Show details</summary>
+          <div className="answer"><Markdown text={detail} onCopy={onCopy} /></div>
+        </details>
+      )}
+      {exchange.webSearch?.status === 'requested' && (
+        <div className="web-approval" role="group" aria-label="Web search approval">
+          <strong>Should I check the web?</strong>
+          <p>The image does not contain enough reliable information for a confident answer.</p>
+          <code>{exchange.webSearch.query}</code>
+          <div>
+            <Button size="compact" variant="secondary" onClick={() => onResolveWebSearch(exchange.webSearch!.id, false)}>Use the image only</Button>
+            <Button size="compact" onClick={() => onResolveWebSearch(exchange.webSearch!.id, true)}>Check the web</Button>
+          </div>
+        </div>
+      )}
+      {exchange.webSearch?.status === 'searching' && <StatusBanner tone="info">Checking reliable sources…</StatusBanner>}
+      {exchange.webSearch?.status === 'declined' && <StatusBanner tone="info">Continuing without a web search.</StatusBanner>}
+      {exchange.phase === 'stopped' && !summary && !detail && <StatusBanner tone="warning">Answer stopped.</StatusBanner>}
+      {exchange.error && <AppStatusNotice error={exchange.error} onRecovery={onRecover} />}
+    </article>
+  )
+}
+
+function TypingIndicator(): React.JSX.Element {
+  return (
+    <div className="typing-indicator" aria-label="AI is writing" role="status">
+      <span />
+      <span />
+      <span />
+    </div>
+  )
+}
+
+function AnswerSkeleton(): React.JSX.Element {
+  return (
+    <div className="answer-skeleton" aria-label="Looking at your capture" role="status">
+      <span />
+      <span />
+      <span />
+    </div>
+  )
+}
+
+function Markdown({ text, onCopy }: { text: string; onCopy(value: string, label?: string): Promise<void> }): React.JSX.Element {
+  return (
+    <ReactMarkdown
+      rehypePlugins={[rehypeHighlight]}
+      components={{
+        a: ({ href, children }) => (
+          <a
+            href={href}
+            onClick={(event) => {
+              event.preventDefault()
+              if (href) void window.fovea.openExternal(href)
+            }}
+          >
+            {children}
+          </a>
+        ),
+        pre: ({ children }) => {
+          const value = nodeText(children)
+          return (
+            <div className="code-block">
+              <button onClick={() => void onCopy(value, 'Code copied')}>Copy</button>
+              <pre>{children}</pre>
+            </div>
+          )
+        }
+      }}
+    >
+      {text}
+    </ReactMarkdown>
+  )
+}
+
+function exchangeText(exchange: ConversationExchange): string {
+  return [exchange.metadata?.summary, exchange.answer].filter(Boolean).join('\n\n').trim()
+}
+
+export function takeNextTypingCharacter(value: string): { character: string; remainder: string } {
+  if (!value) return { character: '', remainder: '' }
+  const codePoint = value.codePointAt(0)
+  const length = codePoint !== undefined && codePoint > 0xFFFF ? 2 : 1
+  return { character: value.slice(0, length), remainder: value.slice(length) }
+}
+
+function nodeText(node: ReactNode): string {
+  if (typeof node === 'string' || typeof node === 'number') return String(node)
+  if (Array.isArray(node)) return node.map(nodeText).join('')
+  if (node && typeof node === 'object' && 'props' in node) {
+    return nodeText((node as { props: { children?: ReactNode } }).props.children)
+  }
+  return ''
+}
+
+function friendlyPhaseLabel(phase: ResponsePhase): string {
+  return ({
+    idle: 'Ready',
+    connecting: 'Looking at your capture…',
+    thinking: 'Working out the answer…',
+    streaming: 'Writing the answer…',
+    'awaiting-approval': 'Your choice is needed',
+    stopped: 'Answer stopped',
+    completed: 'Answer',
+    failed: 'Couldn’t finish'
+  })[phase]
+}
+
+function thinkingEffortLabel(effort: string | null | undefined): string {
+  if (!effort) return 'Default'
+  return effort.charAt(0).toUpperCase() + effort.slice(1)
+}
+
 function Icon({ name }: { name: string }): React.JSX.Element {
   const paths: Record<string, ReactNode> = {
-    expand: <path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5" />,
+    arrow: <path d="M5 12h14m-5-5 5 5-5 5" />,
+    capture: <><rect x="4" y="5" width="16" height="14" rx="2" /><path d="m7 15 3-3 2.5 2.5L15 12l3 3M8 9h.01" /></>,
+    check: <path d="m5 12 4 4L19 6" />,
+    chevron: <path d="m8 10 4 4 4-4" />,
+    chip: <><rect x="6" y="6" width="12" height="12" rx="2" /><rect x="9" y="9" width="6" height="6" rx="1" /><path d="M9 1v5m6-5v5M9 18v5m6-5v5M1 9h5m-5 6h5m12-6h5m-5 6h5" /></>,
+    copy: <><rect x="8" y="8" width="11" height="11" rx="2" /><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" /></>,
+    edit: <><path d="m4 20 4.5-1 10-10-3.5-3.5-10 10L4 20Z" /><path d="m13.5 7 3.5 3.5" /></>,
+    globe: <><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3c2.2 2.5 3.3 5.5 3.3 9S14.2 18.5 12 21M12 3C9.8 5.5 8.7 8.5 8.7 12S9.8 18.5 12 21" /></>,
     recapture: <path d="M20 7v5h-5M4 17v-5h5M6.2 8a7 7 0 0 1 11.2-2l2.6 6M17.8 16a7 7 0 0 1-11.2 2L4 12" />,
-    discard: <path d="M4 7h16M9 7V4h6v3m3 0-1 14H7L6 7m4 4v6m4-6v6" />,
+    regenerate: <><path d="m12 3 1.3 4.7L18 9l-4.7 1.3L12 15l-1.3-4.7L6 9l4.7-1.3L12 3Z" /><path d="m18 15 .7 2.3L21 18l-2.3.7L18 21l-.7-2.3L15 18l2.3-.7L18 15Z" /></>,
     send: <path d="m3 11 18-8-8 18-2-8-8-2Zm8 2 4-4" />,
-    spark: <path d="m12 2 1.5 5.5L19 9l-5.5 1.5L12 16l-1.5-5.5L5 9l5.5-1.5L12 2Z" />,
-    identify: <><circle cx="12" cy="12" r="3" /><path d="M4 8V4h4m8 0h4v4m0 8v4h-4M8 20H4v-4" /></>,
-    alert: <path d="M12 3 2.8 20h18.4L12 3Zm0 6v5m0 3h.01" />,
-    fix: <path d="M14.5 6.5a4 4 0 0 0-5-5L7 4l3 3-6.8 6.8a2.4 2.4 0 0 0 3.4 3.4L13.4 10l3 3 2.5-2.5a4 4 0 0 0-4.4-4Z" />,
-    steps: <path d="M4 6h9m-9 6h13M4 18h16m-3-15 3 3-3 3" />,
-    summary: <path d="M5 5h14M5 9h14M5 13h9M5 17h11" />,
-    text: <path d="M4 5h16M8 9h8M6 13h12M9 17h6" />,
-    compare: <path d="M4 5h6v14H4V5Zm10 0h6v14h-6V5Z" />,
-    chevron: <path d="m8 10 4 4 4-4" />
+    stop: <rect x="7" y="7" width="10" height="10" rx="1" />
   }
-  return <svg className="mono-icon" viewBox="0 0 24 24" aria-hidden="true">{paths[name] ?? paths.spark}</svg>
+  return <svg className="mono-icon" viewBox="0 0 24 24" aria-hidden="true">{paths[name] ?? paths.arrow}</svg>
 }
-createRoot(document.getElementById('root')!).render(<QuestionApp />)
+
+const root = document.getElementById('root')
+if (root) createRoot(root).render(<QuestionApp />)

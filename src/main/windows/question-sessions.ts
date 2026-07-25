@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises'
 import { app, BrowserWindow, nativeImage, screen } from 'electron'
 import { IPC, type QuestionViewState, type WindowMaterial } from '../../shared/contracts/ipc'
 import type { ConversationExchange, ConversationSegment, ConversationSelection, ProviderModelCapability, ResponsePhase } from '@shared/types/app'
-import type { ProviderEvent } from '@shared/types/provider'
+import type { AssistantResponseMetadata, ProviderEvent } from '@shared/types/provider'
 import { toAppError } from '../errors/app-error'
 import type { CompletedCapture } from '../capture/capture-service'
 import type { ProviderRegistry } from '../providers/provider-registry'
@@ -13,12 +13,30 @@ import { openBrowserWindowWithChrome, WINDOW_CHROME_READY_TIMEOUT_MS } from './w
 import { loadRenderer, secureWindow } from './window-factory'
 import { placeWindowAdjacentToSelection } from './window-geometry'
 
-export const QUESTION_WINDOW_SIZES: WindowSurfaceSizes = { surfaceSize: { width: 480, height: 640 }, minimumSurfaceSize: { width: 400, height: 480 } }
+export const QUESTION_WINDOW_SIZES: WindowSurfaceSizes = { surfaceSize: { width: 480, height: 480 }, minimumSurfaceSize: { width: 400, height: 320 } }
 export const QUESTION_WINDOW_READY_TIMEOUT_MS = WINDOW_CHROME_READY_TIMEOUT_MS
 const WEB_SEARCH_REQUEST_PREFIX = '<fovea-web-search-request>'
 const WEB_SEARCH_APPROVED_PREFIX = '[FOVEA_WEB_SEARCH_APPROVED]'
+const WEB_SEARCH_PREFERRED_PREFIX = '[FOVEA_WEB_SEARCH_PREFERRED]'
+const RESPONSE_METADATA_PREFIX = '<fovea-response>'
+const RESPONSE_METADATA_SUFFIX = '</fovea-response>'
+const RESPONSE_METADATA_LIMIT = 12_000
+const RESPONSE_PREAMBLE_LIMIT = 2_000
+const INITIAL_QUESTION = 'Analyse this capture'
+const SAFE_SUGGESTED_QUESTIONS = [
+  'What do the most important visible details mean?',
+  'Is anything in this image unusual or incorrect?',
+  'What is the most useful next step based on this image?',
+  'What could a web search verify about what is shown?'
+]
+const RESPONSE_INSTRUCTION = `Respond as a clean productivity assistant for a non-technical user. First output exactly one compact metadata tag in this form, with valid JSON and no Markdown fence:
+<fovea-response>{"category":"a short internal category","summary":"a concise direct answer","suggestedQuestions":["four specific follow-up questions"]}</fovea-response>
+Never narrate or announce searching, browsing, tool use, analysis, or a plan. Even after an approved web search, begin directly with the metadata tag. The category is internal and must not be mentioned in the visible answer. The summary must give the most useful result first in plain language, normally in one to three sentences and at most 70 words. Supply exactly four short follow-up questions that the user can ask Fovea now and that are directly grounded in the current capture, the existing conversation, or facts a web search can verify. Never ask the user to share, upload, attach, provide, capture, or show another screen, screenshot, image, file, link, recording, or an earlier/later state. Do not suggest an action that this app cannot perform. After the tag, optionally provide useful Markdown detail that expands on the summary without repeating it. Do not add a visible category heading.`
+const INITIAL_ANALYSIS_INSTRUCTION = `Inspect the capture carefully and infer the user's most likely goal from its content. Give the useful result immediately: solve a visible problem, explain an error, summarise a document, interpret a chart, identify an interface, or otherwise perform the clearest likely task. If the likely goal is genuinely ambiguous, briefly explain what is visible and make the suggested questions resolve the ambiguity.`
+const PREFERRED_WEB_SEARCH_INSTRUCTION = `The user explicitly chose Search web for this question. Search before answering whenever current sources could improve identification, accuracy, context, or verification. Do not answer "I don't know" without first attempting a focused search using the visible clues and conversation context.`
 
 interface ProviderSegmentState { segment: ConversationSegment; conversationId: string | null; screenshotAttached: boolean }
+interface ResponseControlOptions { detectMetadata: boolean; detectWebSearch: boolean }
 interface QuestionSession {
   id: string; imagePath: string; thumbnailDataUrl: string; window: BrowserWindow | null; previewWindow: BrowserWindow | null; busy: boolean; cleaningUp: boolean
   phase: ResponsePhase; selection: ConversationSelection | null; exchanges: ConversationExchange[]; segments: ProviderSegmentState[]; disclosure: string | null
@@ -59,8 +77,14 @@ export class QuestionSessions {
     session.models = await this.providers.listModels(selection.profileId)
     const previous = session.selection
     const providerChanged = Boolean(previous && (previous.profileId !== selection.profileId || previous.provider !== selection.provider))
+    const selectionChanged = Boolean(previous && (
+      previous.profileId !== selection.profileId ||
+      previous.provider !== selection.provider ||
+      previous.modelId !== selection.modelId ||
+      previous.reasoningEffort !== selection.reasoningEffort
+    ))
     session.selection = structuredClone(selection)
-    if (providerChanged || !session.segments.length) this.startSegment(session, providerChanged)
+    if (selectionChanged || !session.segments.length) this.startSegment(session, providerChanged)
     return this.snapshot(session)
   }
 
@@ -129,18 +153,36 @@ export class QuestionSessions {
     }
   }
 
-  async send(id: string, text: string): Promise<void> {
+  async send(id: string, text: string, preferWebSearch = false): Promise<void> {
     const session = await this.requireInitializedSession(id); const question = text.trim()
     if (!question) throw new Error('Type a question first.'); if (question.length > 10_000) throw new Error('The question is too long.'); if (session.busy) throw new Error('Wait for the current answer or press Stop.'); if (!session.selection) throw new Error('Choose an authenticated provider profile and model first.')
     if (this.pendingWebSearch(session)) throw new Error('Approve or decline the pending web search before sending another message.')
     await this.providers.validateSelection(session.selection)
     let providerSegment = session.segments.at(-1); if (!providerSegment) { this.startSegment(session, false); providerSegment = session.segments.at(-1)! }
     if (!providerSegment.conversationId) providerSegment.conversationId = await this.providers.createConversation(session.selection)
-    const exchange: ConversationExchange = { id: randomUUID(), question, answer: '', phase: 'connecting', segmentId: providerSegment.segment.id }
+    const exchange: ConversationExchange = {
+      id: randomUUID(),
+      question,
+      answer: '',
+      phase: 'connecting',
+      segmentId: providerSegment.segment.id,
+      ...(preferWebSearch ? { webSearch: { id: randomUUID(), query: question, status: 'searching' as const } } : {})
+    }
     session.exchanges.push(exchange); session.busy = true; this.setPhase(session, exchange, 'connecting')
-    const attachScreenshot = !providerSegment.screenshotAttached
+    const attachScreenshot = session.selection.provider !== 'chatgpt' || !providerSegment.screenshotAttached
     providerSegment.screenshotAttached = true
-    await this.runTurn(session, exchange, providerSegment, { text: question, imagePath: attachScreenshot ? session.imagePath : undefined }, true)
+    await this.runTurn(
+      session,
+      exchange,
+      providerSegment,
+      {
+        text: responsePrompt(question, false, preferWebSearch, preferWebSearch),
+        imagePath: attachScreenshot ? session.imagePath : undefined,
+        webSearchAllowed: preferWebSearch,
+        webSearchPreferred: preferWebSearch
+      },
+      { detectMetadata: true, detectWebSearch: !preferWebSearch }
+    )
   }
 
   async retry(id: string, exchangeId: string): Promise<void> {
@@ -156,12 +198,18 @@ export class QuestionSessions {
     if (!providerSegment) throw new Error('The regeneration provider context could not be created.')
     providerSegment.conversationId = conversationId
     providerSegment.screenshotAttached = true
-    const exchange: ConversationExchange = { id: randomUUID(), question: target.question, answer: '', phase: 'connecting', segmentId: providerSegment.segment.id, retryOf: target.id }
+    const exchange: ConversationExchange = { id: randomUUID(), question: target.question, answer: '', phase: 'connecting', segmentId: providerSegment.segment.id, automatic: target.automatic, retryOf: target.id }
     const previousExchanges = [...session.exchanges]
     session.exchanges.push(exchange)
     session.busy = true
     this.setPhase(session, exchange, 'connecting')
-    await this.runTurn(session, exchange, providerSegment, { text: regenerationPrompt(previousExchanges, target), imagePath: session.imagePath }, true)
+    await this.runTurn(
+      session,
+      exchange,
+      providerSegment,
+      { text: responsePrompt(regenerationPrompt(previousExchanges, target), target.automatic), imagePath: session.imagePath },
+      { detectMetadata: true, detectWebSearch: true }
+    )
   }
 
   async resolveWebSearch(id: string, requestId: string, approved: boolean): Promise<QuestionViewState> {
@@ -172,6 +220,11 @@ export class QuestionSessions {
     if (!approved) {
       exchange.webSearch.status = 'declined'
       exchange.answer = 'Web search was not approved, so I cannot verify this confidently.'
+      exchange.metadata = {
+        category: 'uncertain',
+        summary: exchange.answer,
+        suggestedQuestions: SAFE_SUGGESTED_QUESTIONS
+      }
       this.setPhase(session, exchange, 'completed')
       return this.snapshot(session)
     }
@@ -180,10 +233,17 @@ export class QuestionSessions {
     if (!segment.conversationId) segment.conversationId = await this.providers.createConversation(segment.segment.selection)
     exchange.webSearch.status = 'searching'
     exchange.answer = ''
+    exchange.metadata = undefined
     exchange.error = undefined
     session.busy = true
     this.setPhase(session, exchange, 'connecting')
-    await this.runTurn(session, exchange, segment, { text: `${WEB_SEARCH_APPROVED_PREFIX}\n${exchange.question}`, imagePath: session.imagePath, webSearchAllowed: true }, false)
+    await this.runTurn(
+      session,
+      exchange,
+      segment,
+      { text: responsePrompt(exchange.question, exchange.automatic, true), imagePath: session.imagePath, webSearchAllowed: true },
+      { detectMetadata: true, detectWebSearch: false }
+    )
     return this.snapshot(session)
   }
 
@@ -204,7 +264,40 @@ export class QuestionSessions {
     const profiles = this.providers.listProfiles(); const profile = profiles.find((item) => item.isDefault) ?? profiles[0]; if (!profile) return
     const models = await this.safeModels(profile.id); session.models = models; const model = models.find((item) => item.id === profile.defaultModelId) ?? models.find((item) => item.isDefault) ?? models[0]; if (!model) return
     session.selection = { profileId: profile.id, provider: profile.provider, modelId: model.id, reasoningEffort: profile.defaultReasoningEffort && model.supportedReasoningEfforts.includes(profile.defaultReasoningEffort) ? profile.defaultReasoningEffort : model.defaultReasoningEffort ?? null }
-    this.startSegment(session, false)
+    const segment = this.startSegment(session, false)
+    if (segment) this.startInitialAnalysis(session, segment)
+  }
+  private startInitialAnalysis(session: QuestionSession, providerSegment: ProviderSegmentState): void {
+    const exchange: ConversationExchange = { id: randomUUID(), question: INITIAL_QUESTION, answer: '', phase: 'connecting', segmentId: providerSegment.segment.id, automatic: true }
+    session.exchanges.push(exchange)
+    session.busy = true
+    this.setPhase(session, exchange, 'connecting')
+    void (async () => {
+      try {
+        const selection = session.selection
+        if (!selection) throw new Error('Choose an authenticated provider profile and model first.')
+        const conversationId = await this.providers.createConversation(selection)
+        if (this.sessions.get(session.id) !== session || session.cleaningUp || exchange.phase === 'stopped') {
+          await this.providers.deleteConversation(conversationId, selection.provider).catch(() => undefined)
+          return
+        }
+        providerSegment.conversationId = conversationId
+        providerSegment.screenshotAttached = true
+        await this.runTurn(
+          session,
+          exchange,
+          providerSegment,
+          { text: responsePrompt(INITIAL_QUESTION, true), imagePath: session.imagePath },
+          { detectMetadata: true, detectWebSearch: true }
+        )
+      } catch (error) {
+        const appError = toAppError(error, 'provider-unavailable')
+        exchange.error = appError
+        this.setPhase(session, exchange, 'failed')
+        session.busy = false
+        this.emit(session, { type: 'error', error: appError })
+      }
+    })()
   }
   private startSegment(session: QuestionSession, switchedProvider: boolean, disclosureOverride?: string): ProviderSegmentState | undefined {
     if (!session.selection) return undefined
@@ -216,30 +309,52 @@ export class QuestionSessions {
   }
   private setPhase(session: QuestionSession, exchange: ConversationExchange, phase: ResponsePhase): void { session.phase = phase; exchange.phase = phase }
   private pendingWebSearch(session: QuestionSession): ConversationExchange | undefined { return session.exchanges.find((exchange) => exchange.webSearch?.status === 'requested') }
-  private async runTurn(session: QuestionSession, exchange: ConversationExchange, providerSegment: ProviderSegmentState, input: { text: string; imagePath?: string; webSearchAllowed?: boolean }, detectWebSearchRequest: boolean): Promise<void> {
+  private async runTurn(session: QuestionSession, exchange: ConversationExchange, providerSegment: ProviderSegmentState, input: { text: string; imagePath?: string; webSearchAllowed?: boolean; webSearchPreferred?: boolean }, controls: ResponseControlOptions): Promise<void> {
     let probe = ''
-    let probing = detectWebSearchRequest
-    const flush = (): void => { if (!probe) return; exchange.answer += probe; this.setPhase(session, exchange, 'streaming'); this.emit(session, { type: 'delta', text: probe }); probe = '' }
+    let probing = controls.detectMetadata || controls.detectWebSearch
+    const appendAnswer = (text: string): void => {
+      const visibleText = exchange.answer ? text : text.replace(/^\s+/, '')
+      if (!visibleText) return
+      exchange.answer += visibleText
+      this.setPhase(session, exchange, 'streaming')
+      this.emit(session, { type: 'delta', text: visibleText })
+    }
+    const flush = (): void => { if (!probe) return; appendAnswer(probe); probe = '' }
+    const consumeMetadata = (): 'complete' | 'partial' | 'none' => {
+      if (!controls.detectMetadata) return 'none'
+      const parsed = parseResponseMetadata(probe)
+      if (parsed.state !== 'complete') return parsed.state
+      probe = ''
+      probing = false
+      if (parsed.metadata) {
+        exchange.metadata = parsed.metadata
+        this.emit(session, { type: 'response-metadata', metadata: parsed.metadata })
+      }
+      appendAnswer(parsed.remainder)
+      return 'complete'
+    }
     try {
       for await (const event of this.providers.send(providerSegment.conversationId!, providerSegment.segment.selection, input)) {
         if (event.type === 'started') { this.setPhase(session, exchange, 'thinking'); this.emit(session, event); continue }
         if (event.type === 'delta') {
           if (probing) {
             probe += event.text
+            const metadataState = consumeMetadata()
+            if (metadataState === 'complete') continue
             const candidate = probe.trimStart()
-            if (WEB_SEARCH_REQUEST_PREFIX.startsWith(candidate) || candidate.startsWith(WEB_SEARCH_REQUEST_PREFIX)) continue
+            const possibleMetadata = controls.detectMetadata && (metadataState === 'partial' || candidate.startsWith(RESPONSE_METADATA_PREFIX))
+            const possibleWebSearch = controls.detectWebSearch && (WEB_SEARCH_REQUEST_PREFIX.startsWith(candidate) || candidate.startsWith(WEB_SEARCH_REQUEST_PREFIX))
+            if ((possibleMetadata || possibleWebSearch) && probe.length <= RESPONSE_METADATA_LIMIT) continue
             probing = false
             flush()
             continue
           }
-          exchange.answer += event.text
-          this.setPhase(session, exchange, 'streaming')
-          this.emit(session, event)
+          appendAnswer(event.text)
           continue
         }
         if (event.type === 'completed') {
           if (probing) {
-            const query = parseWebSearchRequest(probe)
+            const query = controls.detectWebSearch ? parseWebSearchRequest(probe) : null
             if (query) {
               const requestId = randomUUID()
               exchange.webSearch = { id: requestId, query, status: 'requested' }
@@ -248,8 +363,18 @@ export class QuestionSessions {
               this.emit(session, { type: 'web-search-requested', requestId, query })
               return
             }
-            probing = false
-            flush()
+            if (consumeMetadata() !== 'complete') {
+              probing = false
+              flush()
+            }
+          }
+          const recovered = parseResponseMetadata(exchange.answer)
+          if (recovered.state === 'complete') {
+            exchange.answer = recovered.remainder
+            if (recovered.metadata) {
+              exchange.metadata = recovered.metadata
+              this.emit(session, { type: 'response-metadata', metadata: recovered.metadata })
+            }
           }
           if (exchange.webSearch?.status === 'searching') exchange.webSearch.status = 'completed'
           this.setPhase(session, exchange, 'completed')
@@ -300,12 +425,79 @@ export class QuestionSessions {
 }
 
 function parseWebSearchRequest(value: string): string | null {
-  const match = value.trim().match(/^<fovea-web-search-request>([\s\S]{1,1000})<\/fovea-web-search-request>$/i)
+  const match = value.match(/<fovea-web-search-request>([\s\S]{1,1000})<\/fovea-web-search-request>/i)
   if (!match) return null
   try {
     const payload = JSON.parse(match[1]!) as { query?: unknown }
     return typeof payload.query === 'string' && payload.query.trim() ? payload.query.trim().slice(0, 500) : null
   } catch { return null }
+}
+
+function responsePrompt(question: string, automatic = false, webSearchApproved = false, webSearchPreferred = false): string {
+  return [
+    ...(webSearchApproved ? [WEB_SEARCH_APPROVED_PREFIX] : []),
+    ...(webSearchPreferred ? [WEB_SEARCH_PREFERRED_PREFIX, PREFERRED_WEB_SEARCH_INSTRUCTION] : []),
+    RESPONSE_INSTRUCTION,
+    ...(automatic ? [INITIAL_ANALYSIS_INSTRUCTION] : []),
+    `User request:\n${question}`
+  ].join('\n\n')
+}
+
+function parseResponseMetadata(value: string): {
+  state: 'complete' | 'partial' | 'none'
+  metadata?: AssistantResponseMetadata
+  remainder: string
+} {
+  const candidate = value.trimStart()
+  const lowerCandidate = candidate.toLowerCase()
+  const start = lowerCandidate.indexOf(RESPONSE_METADATA_PREFIX)
+  if (start < 0) {
+    if (candidate.length <= RESPONSE_PREAMBLE_LIMIT) return { state: 'partial', remainder: '' }
+    return { state: 'none', remainder: value }
+  }
+  const end = lowerCandidate.indexOf(RESPONSE_METADATA_SUFFIX, start + RESPONSE_METADATA_PREFIX.length)
+  if (end < 0) return { state: 'partial', remainder: '' }
+
+  const payloadText = candidate.slice(start + RESPONSE_METADATA_PREFIX.length, end)
+  const remainder = candidate.slice(end + RESPONSE_METADATA_SUFFIX.length).replace(/^\s+/, '')
+  try {
+    const payload = JSON.parse(payloadText) as {
+      category?: unknown
+      summary?: unknown
+      suggestedQuestions?: unknown
+    }
+    const summary = typeof payload.summary === 'string' ? payload.summary.trim().slice(0, 1_200) : ''
+    if (!summary) return { state: 'complete', remainder }
+    const category = typeof payload.category === 'string' && payload.category.trim()
+      ? payload.category.trim().slice(0, 80)
+      : 'general'
+    const suggestedQuestions = [
+      ...(Array.isArray(payload.suggestedQuestions)
+        ? payload.suggestedQuestions
+        .filter((item): item is string => typeof item === 'string')
+        .map((item) => item.trim())
+        .filter((item) => item && !requiresUnavailableInput(item))
+        : []),
+      ...SAFE_SUGGESTED_QUESTIONS
+    ]
+    const uniqueSuggestedQuestions = [...new Set(suggestedQuestions)]
+      .slice(0, 4)
+      .map((item) => item.slice(0, 180))
+    return {
+      state: 'complete',
+      metadata: { category, summary, suggestedQuestions: uniqueSuggestedQuestions },
+      remainder
+    }
+  } catch {
+    return { state: 'complete', remainder }
+  }
+}
+
+function requiresUnavailableInput(question: string): boolean {
+  const requestsUserAction = /\b(?:can|could|would)\s+you\b|\b(?:please|share|upload|attach|send|provide|capture|record|show me|take another)\b/i.test(question)
+  const unavailableInput = /\b(?:screens?|screenshots?|images?|photos?|pictures?|files?|links?|videos?|recordings?|logs?)\b/i.test(question)
+  const unavailableMoment = /\b(?:just before|just after|previous screen|next screen|earlier screen|later screen)\b/i.test(question)
+  return unavailableMoment || (requestsUserAction && unavailableInput)
 }
 
 function regenerationPrompt(exchanges: ConversationExchange[], target: ConversationExchange): string {

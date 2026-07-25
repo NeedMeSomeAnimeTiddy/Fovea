@@ -8,29 +8,20 @@ import { QuestionTitlebarActions } from '../src/renderer/question-window/Questio
 afterEach(cleanup)
 
 describe('question title-bar actions', () => {
-  it('switches fixed-window presentation modes with accessible pressed state', async () => {
+  it('keeps the answer-first title bar minimal and exposes pin state accessibly', async () => {
     const user = userEvent.setup()
-    const onToggleCompact = vi.fn()
     const onTogglePinned = vi.fn()
-    const { rerender } = render(<QuestionTitlebarActions compact={false} pinned={false} onToggleCompact={onToggleCompact} onTogglePinned={onTogglePinned} />)
-
-    const compact = screen.getByRole('button', { name: 'Use compact layout' })
-    expect(compact.getAttribute('aria-pressed')).toBe('false')
-    await user.click(compact)
-    expect(onToggleCompact).toHaveBeenCalledTimes(1)
-
-    rerender(<QuestionTitlebarActions compact pinned={false} onToggleCompact={onToggleCompact} onTogglePinned={onTogglePinned} />)
-    expect(screen.getByRole('button', { name: 'Use expanded layout' }).getAttribute('aria-pressed')).toBe('true')
+    const { rerender } = render(
+      <QuestionTitlebarActions pinned={false} onTogglePinned={onTogglePinned} />
+    )
 
     const pin = screen.getByRole('button', { name: 'Keep this window on top' })
     expect(pin.getAttribute('aria-pressed')).toBe('false')
     await user.click(pin)
     expect(onTogglePinned).toHaveBeenCalledTimes(1)
-  })
+    expect(screen.queryByRole('button', { name: /layout/i })).toBeNull()
 
-  it('keeps layout switching unavailable until a response exists', () => {
-    render(<QuestionTitlebarActions compact={false} layoutDisabled pinned={false} onToggleCompact={vi.fn()} onTogglePinned={vi.fn()} />)
-    expect((screen.getByRole('button', { name: 'Use compact layout' }) as HTMLButtonElement).disabled).toBe(true)
-    expect((screen.getByRole('button', { name: 'Keep this window on top' }) as HTMLButtonElement).disabled).toBe(false)
+    rerender(<QuestionTitlebarActions pinned onTogglePinned={onTogglePinned} />)
+    expect(screen.getByRole('button', { name: 'Stop keeping this window on top' }).getAttribute('aria-pressed')).toBe('true')
   })
 })

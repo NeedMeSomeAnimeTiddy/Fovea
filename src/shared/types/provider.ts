@@ -30,6 +30,13 @@ export interface VisionTurnInput {
   reasoningEffort?: string | null
   history?: Array<{ role: 'user' | 'assistant'; text: string }>
   webSearchAllowed?: boolean
+  webSearchPreferred?: boolean
+}
+
+export interface AssistantResponseMetadata {
+  category: string
+  summary: string
+  suggestedQuestions: string[]
 }
 
 export type ProviderEvent =
@@ -37,5 +44,6 @@ export type ProviderEvent =
   | { type: 'delta'; text: string }
   | { type: 'completed' }
   | { type: 'cancelled' }
+  | { type: 'response-metadata'; metadata: AssistantResponseMetadata }
   | { type: 'web-search-requested'; requestId: string; query: string }
   | { type: 'error'; error: AppError }
