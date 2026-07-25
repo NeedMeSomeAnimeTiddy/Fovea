@@ -1,0 +1,51 @@
+:root,
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: transparent;
+}
+
+.image-preview {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  place-items: center;
+  padding: var(--fovea-space-12);
+  background: var(--fovea-color-scrim);
+  cursor: zoom-out;
+  user-select: none;
+}
+
+.image-preview__image {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  cursor: default;
+}
+
+.image-preview__error {
+  display: grid;
+  max-width: 420px;
+  gap: var(--fovea-space-2);
+  padding: var(--fovea-space-6);
+  border-radius: var(--fovea-radius-md);
+  color: var(--fovea-status-error-foreground);
+  background: var(--fovea-status-error-surface);
+}
+
+.image-preview__instructions {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  clip-path: inset(50%);
+}

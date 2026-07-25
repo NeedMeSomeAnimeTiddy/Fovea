@@ -21,7 +21,8 @@ export default defineConfig({
         input: {
           settings: resolve('src/renderer/settings/index.html'),
           overlay: resolve('src/renderer/capture-overlay/index.html'),
-          question: resolve('src/renderer/question-window/index.html')
+          question: resolve('src/renderer/question-window/index.html'),
+          preview: resolve('src/renderer/image-preview/index.html')
         }
       }
     }

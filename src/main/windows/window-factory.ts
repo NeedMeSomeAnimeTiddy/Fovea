@@ -6,7 +6,8 @@ const preload = join(__dirname, '../preload/index.js')
 const rendererDirectory = {
   settings: 'settings',
   overlay: 'capture-overlay',
-  question: 'question-window'
+  question: 'question-window',
+  preview: 'image-preview'
 } as const
 const windowMaterials = new WeakMap<BrowserWindow, WindowMaterial>()
 
@@ -32,7 +33,7 @@ export function getCreatedWindowMaterial(window: BrowserWindow): WindowMaterial 
 
 export async function loadRenderer(
   window: BrowserWindow,
-  page: 'settings' | 'overlay' | 'question',
+  page: 'settings' | 'overlay' | 'question' | 'preview',
   query: Record<string, string> = {}
 ): Promise<void> {
   const directory = rendererDirectory[page]

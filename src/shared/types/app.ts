@@ -91,6 +91,7 @@ export interface ConversationExchange {
   answer: string
   phase: ResponsePhase
   segmentId: string
+  retryOf?: string
   error?: AppError
   webSearch?: {
     id: string

@@ -43,9 +43,15 @@ NSIS installer under `dist/`.
    billed separately.
 3. Confirm an image-capable model is selected, then press `Ctrl+Shift+Space`.
 4. Drag a rectangle at least 24 × 24 logical pixels on the primary display.
-5. Ask a question and confirm text streams into the floating response panel.
-6. Ask a follow-up, press Stop during a turn, and try Copy and New snip.
-7. Close the panel and confirm its PNG disappears from the temporary path shown
+5. Open the screenshot preview and confirm the original PNG fills the current
+   monitor against a dimmed backdrop; press `Esc` and confirm the response
+   window returns to its previous size and position.
+6. Ask a question and confirm text streams into the floating response panel.
+7. Switch between compact and expanded layouts and confirm the panel’s outer
+   size does not change.
+8. Ask a follow-up, press Stop during a turn, then try Regenerate, Copy, and
+   New capture.
+9. Close the panel and confirm its PNG disappears from the temporary path shown
    in Settings. **Delete temporary files now** removes any remaining PNGs.
 
 ## Architecture and security

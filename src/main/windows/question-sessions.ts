@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { readFile } from 'node:fs/promises'
 import { app, BrowserWindow, nativeImage, screen } from 'electron'
 import { IPC, type QuestionViewState, type WindowMaterial } from '../../shared/contracts/ipc'
 import type { ConversationExchange, ConversationSegment, ConversationSelection, ProviderModelCapability, ResponsePhase } from '@shared/types/app'
@@ -19,18 +20,18 @@ const WEB_SEARCH_APPROVED_PREFIX = '[FOVEA_WEB_SEARCH_APPROVED]'
 
 interface ProviderSegmentState { segment: ConversationSegment; conversationId: string | null; screenshotAttached: boolean }
 interface QuestionSession {
-  id: string; imagePath: string; thumbnailDataUrl: string; window: BrowserWindow | null; busy: boolean; cleaningUp: boolean
+  id: string; imagePath: string; thumbnailDataUrl: string; window: BrowserWindow | null; previewWindow: BrowserWindow | null; busy: boolean; cleaningUp: boolean
   phase: ResponsePhase; selection: ConversationSelection | null; exchanges: ConversationExchange[]; segments: ProviderSegmentState[]; disclosure: string | null
-  models: ProviderModelCapability[]; initialization: Promise<void>
+  models: ProviderModelCapability[]; initialization: Promise<void>; pinned: boolean
 }
 
 export class QuestionSessions {
   private readonly sessions = new Map<string, QuestionSession>()
-  constructor(private readonly providers: ProviderRegistry, private readonly screenshots: TempScreenshotStore, private readonly startNewCapture: () => Promise<void>) {}
+  constructor(private readonly providers: ProviderRegistry, private readonly screenshots: TempScreenshotStore, private readonly startNewCapture: () => Promise<void>, private readonly readImage: (path: string) => Promise<Buffer> = readFile) {}
 
   async open(capture: CompletedCapture): Promise<void> {
     const id = randomUUID(); const image = nativeImage.createFromPath(capture.imagePath)
-    const session: QuestionSession = { id, imagePath: capture.imagePath, thumbnailDataUrl: image.resize({ width: Math.min(380, image.getSize().width), quality: 'good' }).toDataURL(), window: null, busy: false, cleaningUp: false, phase: 'idle', selection: null, exchanges: [], segments: [], disclosure: null, models: [], initialization: Promise.resolve() }
+    const session: QuestionSession = { id, imagePath: capture.imagePath, thumbnailDataUrl: image.resize({ width: Math.min(380, image.getSize().width), quality: 'good' }).toDataURL(), window: null, previewWindow: null, busy: false, cleaningUp: false, phase: 'idle', selection: null, exchanges: [], segments: [], disclosure: null, models: [], initialization: Promise.resolve(), pinned: false }
     this.sessions.set(id, session)
     session.initialization = this.selectInitial(session)
     const material = selectWindowMaterial({ disableTransparentWindows: app.commandLine.hasSwitch('disable-transparent-windows') })
@@ -42,6 +43,12 @@ export class QuestionSessions {
 
   async get(id: string): Promise<QuestionViewState> {
     return this.snapshot(await this.requireInitializedSession(id))
+  }
+
+  async getFullImage(id: string): Promise<string> {
+    const session = await this.requireInitializedSession(id)
+    const png = await this.readImage(session.imagePath)
+    return `data:image/png;base64,${png.toString('base64')}`
   }
 
   async setSelection(id: string, selection: ConversationSelection): Promise<QuestionViewState> {
@@ -57,6 +64,71 @@ export class QuestionSessions {
     return this.snapshot(session)
   }
 
+  async setPinned(id: string, pinned: boolean): Promise<void> {
+    const session = await this.requireInitializedSession(id)
+    session.pinned = pinned
+    if (session.window && !session.window.isDestroyed()) session.window.setAlwaysOnTop(pinned)
+  }
+
+  async setPreviewOpen(id: string, open: boolean): Promise<void> {
+    const session = await this.requireInitializedSession(id)
+    if (!open) {
+      this.closePreview(session)
+      return
+    }
+    if (session.previewWindow && !session.previewWindow.isDestroyed()) {
+      session.previewWindow.focus()
+      return
+    }
+    const responseWindow = session.window
+    if (!responseWindow || responseWindow.isDestroyed()) throw new Error('The response window is no longer available.')
+    const displayBounds = screen.getDisplayMatching(responseWindow.getBounds()).bounds
+    const preview = secureWindow({
+      x: displayBounds.x,
+      y: displayBounds.y,
+      width: displayBounds.width,
+      height: displayBounds.height,
+      show: false,
+      frame: false,
+      transparent: true,
+      backgroundColor: '#00000000',
+      fullscreen: true,
+      fullscreenable: true,
+      resizable: false,
+      movable: false,
+      minimizable: false,
+      maximizable: false,
+      closable: true,
+      hasShadow: false,
+      alwaysOnTop: true,
+      skipTaskbar: true,
+      autoHideMenuBar: true,
+      title: 'Fovea image preview'
+    })
+    session.previewWindow = preview
+    preview.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+    preview.webContents.on('before-input-event', (event, input) => {
+      if (input.type !== 'keyDown' || input.key !== 'Escape') return
+      event.preventDefault()
+      preview.close()
+    })
+    preview.once('ready-to-show', () => {
+      if (session.previewWindow !== preview || preview.isDestroyed()) return
+      preview.show()
+      preview.focus()
+    })
+    preview.once('closed', () => {
+      if (session.previewWindow === preview) session.previewWindow = null
+    })
+    try {
+      await loadRenderer(preview, 'preview', { session: id })
+    } catch (error) {
+      if (!preview.isDestroyed()) preview.destroy()
+      if (session.previewWindow === preview) session.previewWindow = null
+      throw error
+    }
+  }
+
   async send(id: string, text: string): Promise<void> {
     const session = await this.requireInitializedSession(id); const question = text.trim()
     if (!question) throw new Error('Type a question first.'); if (question.length > 10_000) throw new Error('The question is too long.'); if (session.busy) throw new Error('Wait for the current answer or press Stop.'); if (!session.selection) throw new Error('Choose an authenticated provider profile and model first.')
@@ -69,6 +141,27 @@ export class QuestionSessions {
     const attachScreenshot = !providerSegment.screenshotAttached
     providerSegment.screenshotAttached = true
     await this.runTurn(session, exchange, providerSegment, { text: question, imagePath: attachScreenshot ? session.imagePath : undefined }, true)
+  }
+
+  async retry(id: string, exchangeId: string): Promise<void> {
+    const session = await this.requireInitializedSession(id)
+    if (session.busy) throw new Error('Stop the current response before regenerating it.')
+    if (this.pendingWebSearch(session)) throw new Error('Approve or decline the pending web search before regenerating.')
+    const target = session.exchanges.at(-1)
+    if (!target || target.id !== exchangeId) throw new Error('Only the latest response can be regenerated.')
+    if (!session.selection) throw new Error('Choose an authenticated provider profile and model first.')
+    await this.providers.validateSelection(session.selection)
+    const conversationId = await this.providers.createConversation(session.selection)
+    const providerSegment = this.startSegment(session, false, 'Response regenerated in a fresh provider context using the current profile and model. Earlier transcript remains visible locally.')
+    if (!providerSegment) throw new Error('The regeneration provider context could not be created.')
+    providerSegment.conversationId = conversationId
+    providerSegment.screenshotAttached = true
+    const exchange: ConversationExchange = { id: randomUUID(), question: target.question, answer: '', phase: 'connecting', segmentId: providerSegment.segment.id, retryOf: target.id }
+    const previousExchanges = [...session.exchanges]
+    session.exchanges.push(exchange)
+    session.busy = true
+    this.setPhase(session, exchange, 'connecting')
+    await this.runTurn(session, exchange, providerSegment, { text: regenerationPrompt(previousExchanges, target), imagePath: session.imagePath }, true)
   }
 
   async resolveWebSearch(id: string, requestId: string, approved: boolean): Promise<QuestionViewState> {
@@ -113,11 +206,13 @@ export class QuestionSessions {
     session.selection = { profileId: profile.id, provider: profile.provider, modelId: model.id, reasoningEffort: profile.defaultReasoningEffort && model.supportedReasoningEfforts.includes(profile.defaultReasoningEffort) ? profile.defaultReasoningEffort : model.defaultReasoningEffort ?? null }
     this.startSegment(session, false)
   }
-  private startSegment(session: QuestionSession, switchedProvider: boolean): void {
-    if (!session.selection) return
-    const disclosure = switchedProvider ? 'Provider changed. The new provider receives the screenshot once and only messages sent from this point; earlier transcript remains local.' : null
+  private startSegment(session: QuestionSession, switchedProvider: boolean, disclosureOverride?: string): ProviderSegmentState | undefined {
+    if (!session.selection) return undefined
+    const disclosure = disclosureOverride ?? (switchedProvider ? 'Provider changed. The new provider receives the screenshot once and only messages sent from this point; earlier transcript remains local.' : null)
     const segment: ConversationSegment = { id: randomUUID(), selection: structuredClone(session.selection), startedAt: new Date().toISOString(), disclosure }
-    session.segments.push({ segment, conversationId: null, screenshotAttached: false }); session.disclosure = disclosure
+    const state: ProviderSegmentState = { segment, conversationId: null, screenshotAttached: false }
+    session.segments.push(state); session.disclosure = disclosure
+    return state
   }
   private setPhase(session: QuestionSession, exchange: ConversationExchange, phase: ResponsePhase): void { session.phase = phase; exchange.phase = phase }
   private pendingWebSearch(session: QuestionSession): ConversationExchange | undefined { return session.exchanges.find((exchange) => exchange.webSearch?.status === 'requested') }
@@ -194,13 +289,14 @@ export class QuestionSessions {
     const appearance = getWindowAppearanceOptions(QUESTION_WINDOW_SIZES, material, capture.display.workArea)
     const selection = { x: capture.display.bounds.x + capture.selectedBounds.x, y: capture.display.bounds.y + capture.selectedBounds.y, width: capture.selectedBounds.width, height: capture.selectedBounds.height }
     const placement = placeWindowAdjacentToSelection(selection, appearance.size, capture.display.workArea)
-    const window = secureWindow({ x: placement.x, y: placement.y, width: placement.width, height: placement.height, minWidth: appearance.minimumSize.width, minHeight: appearance.minimumSize.height, frame: appearance.frame, transparent: appearance.transparent, backgroundColor: appearance.backgroundColor, show: appearance.show, useContentSize: appearance.useContentSize, hasShadow: appearance.hasShadow, resizable: false, maximizable: false, minimizable: appearance.minimizable, closable: appearance.closable, movable: appearance.movable, fullscreenable: appearance.fullscreenable, thickFrame: false, roundedCorners: appearance.roundedCorners, alwaysOnTop: true, skipTaskbar: false, title: 'Fovea', autoHideMenuBar: true })
+    const window = secureWindow({ x: placement.x, y: placement.y, width: placement.width, height: placement.height, minWidth: appearance.minimumSize.width, minHeight: appearance.minimumSize.height, frame: appearance.frame, transparent: appearance.transparent, backgroundColor: appearance.backgroundColor, show: appearance.show, useContentSize: appearance.useContentSize, hasShadow: appearance.hasShadow, resizable: false, maximizable: false, minimizable: appearance.minimizable, closable: appearance.closable, movable: appearance.movable, fullscreenable: appearance.fullscreenable, thickFrame: false, roundedCorners: appearance.roundedCorners, alwaysOnTop: session.pinned, skipTaskbar: false, title: 'Fovea', autoHideMenuBar: true })
     session.window = window; window.webContents.setWindowOpenHandler(() => ({ action: 'deny' })); window.once('closed', () => { if (session.window === window) void this.cleanup(session.id) }); return window
   }
-  private snapshot(session: QuestionSession): QuestionViewState { return { sessionId: session.id, thumbnailDataUrl: session.thumbnailDataUrl, phase: session.phase, exchanges: structuredClone(session.exchanges), segments: session.segments.map((item) => structuredClone(item.segment)), selection: session.selection ? structuredClone(session.selection) : null, profiles: this.providers.listProfiles(), models: structuredClone(session.models), disclosure: session.disclosure, busy: session.busy } }
+  private snapshot(session: QuestionSession): QuestionViewState { return { sessionId: session.id, thumbnailDataUrl: session.thumbnailDataUrl, phase: session.phase, exchanges: structuredClone(session.exchanges), segments: session.segments.map((item) => structuredClone(item.segment)), selection: session.selection ? structuredClone(session.selection) : null, profiles: this.providers.listProfiles(), models: structuredClone(session.models), disclosure: session.disclosure, busy: session.busy, pinned: session.pinned } }
   private async requireInitializedSession(id: string): Promise<QuestionSession> { const session = this.requireSession(id); await session.initialization; if (this.sessions.get(id) !== session) throw new Error('This capture session has already closed.'); return session }
   private requireSession(id: string): QuestionSession { const session = this.sessions.get(id); if (!session) throw new Error('This capture session has already closed.'); return session }
-  private async cleanup(id: string): Promise<void> { const session = this.sessions.get(id); if (!session || session.cleaningUp) return; session.cleaningUp = true; this.sessions.delete(id); await this.screenshots.delete(session.imagePath); await Promise.all(session.segments.flatMap((item) => item.conversationId ? [this.providers.deleteConversation(item.conversationId, item.segment.selection.provider).catch(() => undefined)] : [])) }
+  private closePreview(session: QuestionSession): void { const preview = session.previewWindow; session.previewWindow = null; if (preview && !preview.isDestroyed()) preview.close() }
+  private async cleanup(id: string): Promise<void> { const session = this.sessions.get(id); if (!session || session.cleaningUp) return; session.cleaningUp = true; this.sessions.delete(id); this.closePreview(session); await this.screenshots.delete(session.imagePath); await Promise.all(session.segments.flatMap((item) => item.conversationId ? [this.providers.deleteConversation(item.conversationId, item.segment.selection.provider).catch(() => undefined)] : [])) }
 }
 
 function parseWebSearchRequest(value: string): string | null {
@@ -210,4 +306,21 @@ function parseWebSearchRequest(value: string): string | null {
     const payload = JSON.parse(match[1]!) as { query?: unknown }
     return typeof payload.query === 'string' && payload.query.trim() ? payload.query.trim().slice(0, 500) : null
   } catch { return null }
+}
+
+function regenerationPrompt(exchanges: ConversationExchange[], target: ConversationExchange): string {
+  const priorTranscript = exchanges
+    .filter((exchange) => exchange.id !== target.id)
+    .flatMap((exchange) => [
+      `User: ${exchange.question}`,
+      ...(exchange.answer ? [`Assistant: ${exchange.answer}`] : [])
+    ])
+    .join('\n\n')
+    .slice(-12_000)
+  return [
+    '[FOVEA_REGENERATE]',
+    'Generate a fresh answer to the final user request. Do not refer to the previous attempt.',
+    ...(priorTranscript ? ['Prior conversation context:', priorTranscript] : []),
+    `Final user request:\n${target.question}`
+  ].join('\n\n')
 }

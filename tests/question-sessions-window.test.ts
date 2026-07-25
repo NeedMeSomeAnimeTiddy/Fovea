@@ -53,11 +53,13 @@ const mocks = vi.hoisted(() => {
     maximizeCalls = 0
     unmaximizeCalls = 0
     movable = true
+    alwaysOnTop: boolean
     readonly sent: Array<[string, ...unknown[]]> = []
 
     constructor(options: Record<string, any>) {
       super()
       this.options = options
+      this.alwaysOnTop = Boolean(options.alwaysOnTop)
       this.bounds = { x: options.x, y: options.y, width: options.width, height: options.height }
       const contents = new FakeEmitter() as FakeWindow['webContents']
       contents.id = this.id + 100
@@ -79,6 +81,10 @@ const mocks = vi.hoisted(() => {
 
     setMovable(movable: boolean): void {
       this.movable = movable
+    }
+
+    setAlwaysOnTop(alwaysOnTop: boolean): void {
+      this.alwaysOnTop = alwaysOnTop
     }
 
     minimize(): void {
@@ -121,13 +127,13 @@ const mocks = vi.hoisted(() => {
     cursor: { x: number; y: number }
     workArea: { x: number; y: number; width: number; height: number }
     getCursorScreenPoint(): { x: number; y: number }
-    getDisplayMatching(): { workArea: { x: number; y: number; width: number; height: number } }
+    getDisplayMatching(): { bounds: { x: number; y: number; width: number; height: number }; workArea: { x: number; y: number; width: number; height: number } }
     getAllDisplays(): Array<{ workArea: { x: number; y: number; width: number; height: number } }>
   }
   screen.cursor = { x: -1200, y: 0 }
   screen.workArea = { x: -1600, y: -120, width: 1600, height: 900 }
   screen.getCursorScreenPoint = () => ({ ...screen.cursor })
-  screen.getDisplayMatching = () => ({ workArea: { ...screen.workArea } })
+  screen.getDisplayMatching = () => ({ bounds: { ...screen.workArea }, workArea: { ...screen.workArea } })
   screen.getAllDisplays = () => [{ workArea: { ...screen.workArea } }]
 
   const windows: FakeWindow[] = []
@@ -146,13 +152,14 @@ const mocks = vi.hoisted(() => {
   const cancel = vi.fn(async (conversationId?: string) => { void conversationId })
   let nextConversation = 1
   const createConversation = vi.fn(async (selection?: unknown) => { void selection; return `conversation-${nextConversation++}` })
-  const sendMessage = vi.fn((conversationId?: string, input?: unknown) => { void conversationId; void input; return (async function* () {
+  const sendMessage = vi.fn((conversationId?: string, input?: unknown): AsyncIterable<{ type: string; [key: string]: unknown }> => { void conversationId; void input; return (async function* () {
     yield { type: 'started' as const }
     yield { type: 'delta' as const, text: 'answer' }
     yield { type: 'completed' as const }
   })() })
   const listModels = vi.fn(async () => [{ id: 'vision-1', displayName: 'Vision', provider: 'chatgpt', inputModalities: ['text', 'image'], supportedReasoningEfforts: ['low'], defaultReasoningEffort: 'low', isDefault: true }])
   const startNewCapture = vi.fn(async () => undefined)
+  const readImage = vi.fn(async () => Buffer.from('original-png-bytes'))
 
   return {
     FakeWindow,
@@ -172,6 +179,7 @@ const mocks = vi.hoisted(() => {
       cancel: (conversationId: string) => cancel(conversationId),
       deleteConversation: (conversationId: string) => deleteConversation(conversationId)
     },
+    readImage,
     reset: () => {
       windows.length = 0
       nextWindowId = 1
@@ -189,6 +197,7 @@ const mocks = vi.hoisted(() => {
       createConversation.mockClear()
       sendMessage.mockClear()
       startNewCapture.mockClear()
+      readImage.mockClear()
       screen.cursor = { x: -1200, y: 0 }
       screen.workArea = { x: -1600, y: -120, width: 1600, height: 900 }
       screen.removeAllListeners()
@@ -234,7 +243,8 @@ async function createSessions(): Promise<any> {
   return new QuestionSessions(
     mocks.provider as any,
     { delete: mocks.deleteScreenshot } as any,
-    mocks.startNewCapture
+    mocks.startNewCapture,
+    mocks.readImage
   )
 }
 
@@ -285,7 +295,7 @@ describe('question-session window migration', () => {
       fullscreenable: false,
       thickFrame: false,
       roundedCorners: false,
-      alwaysOnTop: true,
+      alwaysOnTop: false,
       skipTaskbar: false
     })
 
@@ -352,6 +362,83 @@ describe('question-session window migration', () => {
     expect(windowChromeRegistry.get(second!.webContents.id)).toBe(secondChrome)
   })
 
+  it('pins only the requested question window and exposes the state to its renderer', async () => {
+    const sessions = await createSessions()
+    const firstOpening = sessions.open(capture(150))
+    const firstId = await finishOpening(firstOpening, 0)
+    const secondOpening = sessions.open(capture(900))
+    const secondId = await finishOpening(secondOpening, 1)
+    const [first, second] = mocks.windows
+
+    expect(first!.alwaysOnTop).toBe(false)
+    expect(second!.alwaysOnTop).toBe(false)
+    await expect(sessions.setPinned(firstId, true)).resolves.toBeUndefined()
+    expect(first!.alwaysOnTop).toBe(true)
+    expect(second!.alwaysOnTop).toBe(false)
+    await expect(sessions.get(firstId)).resolves.toMatchObject({ pinned: true })
+    await expect(sessions.get(secondId)).resolves.toMatchObject({ pinned: false })
+
+    await expect(sessions.setPinned(firstId, false)).resolves.toBeUndefined()
+    expect(first!.alwaysOnTop).toBe(false)
+  })
+
+  it('opens the original PNG in an isolated borderless monitor preview', async () => {
+    const sessions = await createSessions()
+    const firstOpening = sessions.open(capture(150))
+    const firstId = await finishOpening(firstOpening, 0)
+    const secondOpening = sessions.open(capture(900))
+    await finishOpening(secondOpening, 1)
+    const [first, second] = mocks.windows
+    const originalBounds = first!.getBounds()
+
+    await expect(sessions.getFullImage(firstId)).resolves.toBe(`data:image/png;base64,${Buffer.from('original-png-bytes').toString('base64')}`)
+    expect(mocks.readImage).toHaveBeenCalledWith(capture(150).imagePath)
+    await sessions.setPreviewOpen(firstId, true)
+    expect(mocks.windows).toHaveLength(3)
+    const preview = mocks.windows[2]!
+    expect(preview.options).toMatchObject({
+      x: -1600,
+      y: -120,
+      width: 1600,
+      height: 900,
+      show: false,
+      frame: false,
+      transparent: true,
+      backgroundColor: '#00000000',
+      fullscreen: true,
+      fullscreenable: true,
+      resizable: false,
+      movable: false,
+      minimizable: false,
+      maximizable: false,
+      hasShadow: false,
+      alwaysOnTop: true,
+      skipTaskbar: true
+    })
+    expect(mocks.loadRenderer).toHaveBeenLastCalledWith(preview, 'preview', { session: firstId })
+    expect(preview.showCalls).toBe(0)
+    preview.emit('ready-to-show')
+    expect(preview.showCalls).toBe(1)
+    expect(preview.focusCalls).toBe(1)
+    expect(first!.getBounds()).toEqual(originalBounds)
+    expect(second!.destroyed).toBe(false)
+
+    await sessions.setPreviewOpen(firstId, true)
+    expect(mocks.windows).toHaveLength(3)
+    expect(preview.focusCalls).toBe(2)
+
+    await sessions.setPreviewOpen(firstId, false)
+    expect(preview.destroyed).toBe(true)
+    expect(first!.getBounds()).toEqual(originalBounds)
+
+    await sessions.setPreviewOpen(firstId, true)
+    const replacementPreview = mocks.windows[3]!
+    expect(replacementPreview.destroyed).toBe(false)
+    await sessions.close(firstId)
+    expect(replacementPreview.destroyed).toBe(true)
+    expect(second!.destroyed).toBe(false)
+  })
+
   it('replaces one timed-out transparent attempt with one solid attempt without cleaning the session', async () => {
     vi.useFakeTimers()
     vi.spyOn(console, 'info').mockImplementation(() => undefined)
@@ -401,6 +488,72 @@ describe('question-session window migration', () => {
     await vi.waitFor(() => expect(mocks.deleteScreenshot).toHaveBeenCalledWith(capture().imagePath))
     await vi.waitFor(() => expect(mocks.deleteConversation).toHaveBeenCalledWith('conversation-1'))
     await expect(sessions.get(sessionId)).rejects.toThrow(/already closed/)
+  })
+
+  it('regenerates a failed response in an auditable fresh context and cleans up both conversations', async () => {
+    mocks.sendMessage.mockImplementationOnce(() => (async function* () {
+      yield { type: 'started' as const, turnId: 'failed-turn' }
+      yield { type: 'error' as const, error: { code: 'offline' as const, title: 'Offline', message: 'Connection lost.', recovery: 'retry' as const } }
+    })())
+    const sessions = await createSessions()
+    const opening = sessions.open(capture())
+    const sessionId = await finishOpening(opening, 0)
+
+    await sessions.send(sessionId, 'Explain this')
+    const failed = await sessions.get(sessionId)
+    expect(failed).toMatchObject({ busy: false, phase: 'failed' })
+    expect(failed.exchanges[0]).toMatchObject({ question: 'Explain this', phase: 'failed' })
+
+    await sessions.retry(sessionId, failed.exchanges[0]!.id)
+    const regenerated = await sessions.get(sessionId)
+    expect(mocks.createConversation).toHaveBeenCalledTimes(2)
+    expect(mocks.sendMessage).toHaveBeenCalledTimes(2)
+    expect(mocks.sendMessage.mock.calls[1]?.[0]).toBe('conversation-2')
+    expect(mocks.sendMessage.mock.calls[1]?.[1]).toMatchObject({
+      text: expect.stringMatching(/^\[FOVEA_REGENERATE\][\s\S]*Final user request:\nExplain this$/),
+      imagePath: capture().imagePath
+    })
+    expect(regenerated).toMatchObject({
+      busy: false,
+      phase: 'completed',
+      disclosure: expect.stringMatching(/fresh provider context/i)
+    })
+    expect(regenerated.exchanges).toHaveLength(2)
+    expect(regenerated.exchanges[1]).toMatchObject({
+      question: 'Explain this',
+      answer: 'answer',
+      phase: 'completed',
+      retryOf: failed.exchanges[0]!.id
+    })
+    expect(regenerated.segments).toHaveLength(2)
+
+    await sessions.close(sessionId)
+    await vi.waitFor(() => expect(mocks.deleteConversation).toHaveBeenCalledWith('conversation-1'))
+    await vi.waitFor(() => expect(mocks.deleteConversation).toHaveBeenCalledWith('conversation-2'))
+    await vi.waitFor(() => expect(mocks.deleteScreenshot).toHaveBeenCalledWith(capture().imagePath))
+  })
+
+  it('stops an active regeneration through the new provider conversation', async () => {
+    const sessions = await createSessions()
+    const opening = sessions.open(capture())
+    const sessionId = await finishOpening(opening, 0)
+    await sessions.send(sessionId, 'Explain this')
+    const original = await sessions.get(sessionId)
+    let releaseRegeneration!: () => void
+    const regenerationGate = new Promise<void>((resolve) => { releaseRegeneration = resolve })
+    mocks.sendMessage.mockImplementationOnce(() => (async function* () {
+      yield { type: 'started' as const, turnId: 'retry-turn' }
+      await regenerationGate
+      yield { type: 'cancelled' as const }
+    })())
+
+    const retrying = sessions.retry(sessionId, original.exchanges[0]!.id)
+    await vi.waitFor(async () => expect((await sessions.get(sessionId)).busy).toBe(true))
+    await sessions.stop(sessionId)
+    expect(mocks.cancel).toHaveBeenCalledWith('conversation-2')
+    releaseRegeneration()
+    await retrying
+    await expect(sessions.get(sessionId)).resolves.toMatchObject({ busy: false, phase: 'stopped' })
   })
 
   it('holds an uncertain answer for explicit web-search approval and can decline locally', async () => {

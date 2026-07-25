@@ -1,4 +1,4 @@
-import { useEffect, useState, type PropsWithChildren } from 'react'
+import { useEffect, useState, type PropsWithChildren, type ReactNode } from 'react'
 import type { SpectralEdgeState } from '../../shared/types/app'
 import { WINDOW_RESIZE_EDGES, type WindowResizeEdge } from '../../shared/contracts/ipc'
 import { WindowControls } from '../design-system'
@@ -10,9 +10,10 @@ export interface WindowFrameProps extends PropsWithChildren {
   showTitlebar?: boolean
   showResizeRegions?: boolean
   edgeState?: SpectralEdgeState
+  titlebarActions?: ReactNode
 }
 
-export function WindowFrame({ children, title, showTitlebar = true, showResizeRegions = true, edgeState = 'idle' }: WindowFrameProps): React.JSX.Element {
+export function WindowFrame({ children, title, showTitlebar = true, showResizeRegions = true, edgeState = 'idle', titlebarActions }: WindowFrameProps): React.JSX.Element {
   const chrome = useWindowChrome()
   const { state } = chrome
   const [visible, setVisible] = useState(() => typeof document === 'undefined' || document.visibilityState !== 'hidden')
@@ -44,12 +45,15 @@ export function WindowFrame({ children, title, showTitlebar = true, showResizeRe
       <section aria-label={title} className="window-surface">
         {showTitlebar && <header className="window-titlebar">
           <span className="window-titlebar__title">{title}</span>
-          <WindowControls
-            maximized={state.maximized}
-            onClose={chrome.close}
-            onMaximize={state.canMaximize ? chrome.toggleMaximize : undefined}
-            onMinimize={state.canMinimize ? chrome.minimize : undefined}
-          />
+          <div className="window-titlebar__actions">
+            {titlebarActions}
+            <WindowControls
+              maximized={state.maximized}
+              onClose={chrome.close}
+              onMaximize={state.canMaximize ? chrome.toggleMaximize : undefined}
+              onMinimize={state.canMinimize ? chrome.minimize : undefined}
+            />
+          </div>
         </header>}
         <div className="window-frame__content">{children}</div>
       </section>
