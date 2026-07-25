@@ -161,7 +161,7 @@ const mocks = vi.hoisted(() => {
     yield { type: 'completed' as const }
   })() })
   const listModels = vi.fn(async () => [{ id: 'vision-1', displayName: 'Vision', provider: 'chatgpt', inputModalities: ['text', 'image'], supportedReasoningEfforts: ['low'], defaultReasoningEffort: 'low', isDefault: true }])
-  const startNewCapture = vi.fn(async () => undefined)
+  const startNewCapture = vi.fn<(destination?: { onCompleted(capture: any): Promise<void>; onCancelled?(): void }) => Promise<void>>(async () => undefined)
   const readImage = vi.fn(async () => Buffer.from('original-png-bytes'))
 
   return {
@@ -329,7 +329,7 @@ describe('question-session window migration', () => {
     })
     expect(mocks.sendMessage.mock.calls[0]?.[1]).toMatchObject({
       text: expect.stringContaining('<fovea-response>'),
-      imagePath: capture().imagePath
+      imagePaths: [capture().imagePath]
     })
   })
 
@@ -419,10 +419,11 @@ describe('question-session window migration', () => {
     await finishOpening(secondOpening, 1)
     const [first, second] = mocks.windows
     const originalBounds = first!.getBounds()
+    const attachmentId = (await sessions.get(firstId)).attachments[0].id
 
-    await expect(sessions.getFullImage(firstId)).resolves.toBe(`data:image/png;base64,${Buffer.from('original-png-bytes').toString('base64')}`)
+    await expect(sessions.getFullImage(firstId, attachmentId)).resolves.toBe(`data:image/png;base64,${Buffer.from('original-png-bytes').toString('base64')}`)
     expect(mocks.readImage).toHaveBeenCalledWith(capture(150).imagePath)
-    await sessions.setPreviewOpen(firstId, true)
+    await sessions.setPreviewOpen(firstId, attachmentId)
     expect(mocks.windows).toHaveLength(3)
     const preview = mocks.windows[2]!
     expect(preview.options).toMatchObject({
@@ -444,7 +445,7 @@ describe('question-session window migration', () => {
       alwaysOnTop: true,
       skipTaskbar: true
     })
-    expect(mocks.loadRenderer).toHaveBeenLastCalledWith(preview, 'preview', { session: firstId })
+    expect(mocks.loadRenderer).toHaveBeenLastCalledWith(preview, 'preview', { session: firstId, attachment: attachmentId })
     expect(preview.showCalls).toBe(0)
     preview.emit('ready-to-show')
     expect(preview.showCalls).toBe(1)
@@ -452,15 +453,15 @@ describe('question-session window migration', () => {
     expect(first!.getBounds()).toEqual(originalBounds)
     expect(second!.destroyed).toBe(false)
 
-    await sessions.setPreviewOpen(firstId, true)
+    await sessions.setPreviewOpen(firstId, attachmentId)
     expect(mocks.windows).toHaveLength(3)
     expect(preview.focusCalls).toBe(2)
 
-    await sessions.setPreviewOpen(firstId, false)
+    await sessions.setPreviewOpen(firstId, null)
     expect(preview.destroyed).toBe(true)
     expect(first!.getBounds()).toEqual(originalBounds)
 
-    await sessions.setPreviewOpen(firstId, true)
+    await sessions.setPreviewOpen(firstId, attachmentId)
     const replacementPreview = mocks.windows[3]!
     expect(replacementPreview.destroyed).toBe(false)
     await sessions.close(firstId)
@@ -584,7 +585,7 @@ describe('question-session window migration', () => {
     expect(mocks.sendMessage.mock.calls[1]?.[0]).toBe('conversation-2')
     expect(mocks.sendMessage.mock.calls[1]?.[1]).toMatchObject({
       text: expect.stringContaining('Explain with more thought'),
-      imagePath: capture().imagePath
+      imagePaths: [capture().imagePath]
     })
   })
 
@@ -609,7 +610,7 @@ describe('question-session window migration', () => {
     expect(mocks.sendMessage.mock.calls[2]?.[0]).toBe('conversation-2')
     expect(mocks.sendMessage.mock.calls[2]?.[1]).toMatchObject({
       text: expect.stringMatching(/\[FOVEA_REGENERATE\][\s\S]*Final user request:\nExplain this$/),
-      imagePath: capture().imagePath
+      imagePaths: [capture().imagePath]
     })
     expect(regenerated).toMatchObject({
       busy: false,
@@ -711,7 +712,7 @@ describe('question-session window migration', () => {
     expect(mocks.sendMessage).toHaveBeenCalledTimes(2)
     expect(mocks.sendMessage.mock.calls[1]?.[1]).toMatchObject({
       text: expect.stringMatching(/^\[FOVEA_WEB_SEARCH_APPROVED\]/),
-      imagePath: capture().imagePath,
+      imagePaths: [],
       webSearchAllowed: true
     })
     expect(approved).toMatchObject({ busy: false, phase: 'completed' })
@@ -727,14 +728,87 @@ describe('question-session window migration', () => {
     expect(approved.exchanges[0]!.answer).not.toMatch(/I’ll search|fovea-response/)
   })
 
-  it('keeps New snip session-scoped and starts a fresh capture after cleanup', async () => {
+  it('adds and removes a draft screenshot without replacing the active session', async () => {
+    const sessions = await createSessions()
+    const opening = sessions.open(capture())
+    const sessionId = await finishOpening(opening, 0)
+    const window = mocks.windows[0]!
+    const sendsBeforeCapture = mocks.sendMessage.mock.calls.length
+
+    await sessions.addSnip(sessionId)
+    expect(mocks.startNewCapture).toHaveBeenCalledTimes(1)
+    await expect(sessions.get(sessionId)).resolves.toMatchObject({ capturePending: true, attachments: [{ status: 'sent' }] })
+    const destination = mocks.startNewCapture.mock.calls[0]![0]!
+    await destination.onCompleted(capture(900))
+
+    const attached = await sessions.get(sessionId)
+    expect(attached).toMatchObject({
+      capturePending: false,
+      attachments: [{ status: 'sent' }, { status: 'draft' }]
+    })
+    expect(window.destroyed).toBe(false)
+    expect(mocks.sendMessage).toHaveBeenCalledTimes(sendsBeforeCapture)
+
+    const draftId = attached.attachments[1]!.id
+    const afterRemoval = await sessions.removeAttachment(sessionId, draftId)
+    expect(afterRemoval.attachments).toHaveLength(1)
+    expect(mocks.deleteScreenshot).toHaveBeenCalledWith(capture(900).imagePath)
+    expect(window.destroyed).toBe(false)
+  })
+
+  it('sends ordered draft screenshots in the existing provider conversation and cleans every file on close', async () => {
     const sessions = await createSessions()
     const opening = sessions.open(capture())
     const sessionId = await finishOpening(opening, 0)
 
-    await sessions.newSnip(sessionId)
-    await vi.waitFor(() => expect(mocks.deleteScreenshot).toHaveBeenCalledTimes(1))
-    expect(mocks.startNewCapture).toHaveBeenCalledTimes(1)
+    await sessions.addSnip(sessionId)
+    await mocks.startNewCapture.mock.calls[0]![0]!.onCompleted(capture(900))
+    const draft = (await sessions.get(sessionId)).attachments[1]!
+    await sessions.send(sessionId, 'Compare these screenshots')
+
+    expect(mocks.sendMessage.mock.calls[1]?.[0]).toBe('conversation-1')
+    expect(mocks.sendMessage.mock.calls[1]?.[1]).toMatchObject({
+      text: expect.stringContaining('Compare these screenshots'),
+      imagePaths: [capture(900).imagePath]
+    })
+    await expect(sessions.get(sessionId)).resolves.toMatchObject({
+      attachments: [{ status: 'sent' }, { id: draft.id, status: 'sent' }],
+      exchanges: [expect.any(Object), expect.objectContaining({ attachmentIds: [draft.id] })]
+    })
+
+    await sessions.close(sessionId)
+    await vi.waitFor(() => expect(mocks.deleteScreenshot).toHaveBeenCalledWith(capture().imagePath))
+    await vi.waitFor(() => expect(mocks.deleteScreenshot).toHaveBeenCalledWith(capture(900).imagePath))
+  })
+
+  it('keeps cancellation session-scoped and deletes a capture that completes after the session closes', async () => {
+    const sessions = await createSessions()
+    const opening = sessions.open(capture())
+    const sessionId = await finishOpening(opening, 0)
+
+    await sessions.addSnip(sessionId)
+    const cancelledDestination = mocks.startNewCapture.mock.calls[0]![0]!
+    cancelledDestination.onCancelled!()
+    await expect(sessions.get(sessionId)).resolves.toMatchObject({ capturePending: false, attachments: [expect.any(Object)] })
+
+    await sessions.addSnip(sessionId)
+    const lateDestination = mocks.startNewCapture.mock.calls[1]![0]!
+    await sessions.close(sessionId)
+    await lateDestination.onCompleted(capture(900))
+    await vi.waitFor(() => expect(mocks.deleteScreenshot).toHaveBeenCalledWith(capture(900).imagePath))
     await expect(sessions.get(sessionId)).rejects.toThrow(/already closed/)
+  })
+
+  it('starts a new chat by cleaning the current session before opening a standalone capture', async () => {
+    const sessions = await createSessions()
+    const opening = sessions.open(capture())
+    const sessionId = await finishOpening(opening, 0)
+
+    await sessions.newChat(sessionId)
+
+    await expect(sessions.get(sessionId)).rejects.toThrow(/already closed/)
+    expect(mocks.startNewCapture).toHaveBeenCalledWith()
+    await vi.waitFor(() => expect(mocks.deleteScreenshot).toHaveBeenCalledWith(capture().imagePath))
+    await vi.waitFor(() => expect(mocks.deleteConversation).toHaveBeenCalledWith('conversation-1'))
   })
 })

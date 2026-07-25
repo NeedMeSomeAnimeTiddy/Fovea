@@ -32,11 +32,11 @@ export class DirectApiProvider {
   }
 
   async *send(apiKey: string, input: VisionTurnInput, signal?: AbortSignal): AsyncIterable<ProviderEvent> {
-    const image = input.imagePath ? (await readFile(input.imagePath)).toString('base64') : null
+    const images = await Promise.all((input.imagePaths ?? []).map(async (imagePath) => (await readFile(imagePath)).toString('base64')))
     const response = await requestSafely(this.request, this.sendEndpoint(), {
       method: 'POST',
       headers: { ...this.headers(apiKey), 'content-type': 'application/json' },
-      body: JSON.stringify(this.requestBody(input, image)),
+      body: JSON.stringify(this.requestBody(input, images)),
       signal
     })
     await requireOk(response)
@@ -83,7 +83,7 @@ export class DirectApiProvider {
     return [{ id, displayName: typeof item.name === 'string' ? item.name : id, provider: this.kind, inputModalities: ['text', 'image'], supportedReasoningEfforts: [], isDefault: false }]
   }
 
-  private requestBody(input: VisionTurnInput, image: string | null): Record<string, unknown> {
+  private requestBody(input: VisionTurnInput, images: string[]): Record<string, unknown> {
     const instructions = input.webSearchPreferred
       ? WEB_SEARCH_PREFERRED_INSTRUCTION
       : input.webSearchAllowed ? WEB_SEARCH_APPROVED_INSTRUCTION : WEB_SEARCH_REQUEST_INSTRUCTION
@@ -94,21 +94,21 @@ export class DirectApiProvider {
         instructions,
         ...(input.webSearchAllowed ? { tools: [{ type: 'web_search' }] } : {}),
         ...(input.reasoningEffort ? { reasoning: { effort: input.reasoningEffort } } : {}),
-        input: [{ role: 'user', content: [
-          { type: 'input_text', text: input.text },
-          ...(image ? [{ type: 'input_image', image_url: `data:image/png;base64,${image}` }] : [])
-        ] }]
+         input: [{ role: 'user', content: [
+           { type: 'input_text', text: input.text },
+           ...images.map((image) => ({ type: 'input_image', image_url: `data:image/png;base64,${image}` }))
+         ] }]
       }
     }
     const content = [
-      ...(image ? [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: image } }] : []),
+      ...images.map((image) => ({ type: 'image', source: { type: 'base64', media_type: 'image/png', data: image } })),
       { type: 'text', text: input.text }
     ]
     if (this.kind === 'anthropic') return { model: input.modelId, max_tokens: 4096, stream: true, system: instructions, ...(input.webSearchAllowed ? { tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 3 }] } : {}), messages: [{ role: 'user', content }] }
-    return { model: input.modelId, stream: true, ...(input.webSearchAllowed ? { tools: [{ type: 'openrouter:web_search' }] } : {}), messages: [{ role: 'system', content: instructions }, { role: 'user', content: [
-      { type: 'text', text: input.text },
-      ...(image ? [{ type: 'image_url', image_url: { url: `data:image/png;base64,${image}` } }] : [])
-    ] }] }
+     return { model: input.modelId, stream: true, ...(input.webSearchAllowed ? { tools: [{ type: 'openrouter:web_search' }] } : {}), messages: [{ role: 'system', content: instructions }, { role: 'user', content: [
+       { type: 'text', text: input.text },
+       ...images.map((image) => ({ type: 'image_url', image_url: { url: `data:image/png;base64,${image}` } }))
+     ] }] }
   }
 
   private extractDelta(payload: Record<string, unknown>, eventName?: string): string {

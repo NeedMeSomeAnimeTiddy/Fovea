@@ -144,7 +144,7 @@ export class CodexAppServerProvider extends EventEmitter implements VisionProvid
     const rpc = await this.requireRpc()
     const queue = new AsyncQueue<ProviderEvent>()
     const items: UserInput[] = [{ type: 'text', text: input.text, text_elements: [] }]
-    if (input.imagePath) items.push({ type: 'localImage', path: input.imagePath })
+    for (const imagePath of input.imagePaths ?? []) items.push({ type: 'localImage', path: imagePath })
 
     const models = await this.listModels()
     const modelId = input.modelId ?? this.options.getSelectedModel() ?? models.find((model) => model.isDefault)?.id ?? models[0]?.id

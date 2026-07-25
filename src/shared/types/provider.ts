@@ -25,7 +25,7 @@ export interface VisionModel {
 
 export interface VisionTurnInput {
   text: string
-  imagePath?: string
+  imagePaths?: string[]
   modelId: string
   reasoningEffort?: string | null
   history?: Array<{ role: 'user' | 'assistant'; text: string }>

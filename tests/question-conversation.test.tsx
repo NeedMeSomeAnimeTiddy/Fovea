@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ConversationExchange } from '../src/shared/types/app'
-import { ConversationTimeline, takeNextTypingCharacter } from '../src/renderer/question-window/main'
+import { AttachmentStrip, CaptureMenu, ConversationTimeline, takeNextTypingCharacter } from '../src/renderer/question-window/main'
 
 afterEach(cleanup)
 
@@ -59,5 +59,41 @@ describe('response conversation timeline', () => {
     expect(takeNextTypingCharacter('Hello')).toEqual({ character: 'H', remainder: 'ello' })
     expect(takeNextTypingCharacter('🙂 done')).toEqual({ character: '🙂', remainder: ' done' })
     expect(takeNextTypingCharacter('')).toEqual({ character: '', remainder: '' })
+  })
+
+  it('previews every screenshot and only offers removal for drafts', () => {
+    const preview = vi.fn()
+    const remove = vi.fn()
+    render(
+      <AttachmentStrip
+        attachments={[
+          { id: 'sent', thumbnailDataUrl: 'data:image/png;base64,c2VudA==', status: 'sent' },
+          { id: 'draft', thumbnailDataUrl: 'data:image/png;base64,ZHJhZnQ=', status: 'draft' }
+        ]}
+        disabled={false}
+        onPreview={preview}
+        onRemove={remove}
+      />
+    )
+
+    expect(screen.getByRole('region', { name: 'Conversation screenshots' })).toBeTruthy()
+    expect(screen.getAllByRole('button', { name: /Preview screenshot/ })).toHaveLength(2)
+    expect(screen.queryByRole('button', { name: 'Remove screenshot 1' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Preview screenshot 2, not sent yet' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Remove screenshot 2' }))
+    expect(preview).toHaveBeenCalledWith('draft')
+    expect(remove).toHaveBeenCalledWith('draft')
+  })
+
+  it('separates adding a screenshot from starting a new chat', () => {
+    const add = vi.fn()
+    const newChat = vi.fn()
+    render(<CaptureMenu addDisabled onAdd={add} onNewChat={newChat} />)
+
+    expect(screen.getByRole('menu', { name: 'Capture options' })).toBeTruthy()
+    expect(screen.getByRole('menuitem', { name: /Add a screenshot/ }).hasAttribute('disabled')).toBe(true)
+    fireEvent.click(screen.getByRole('menuitem', { name: /New chat/ }))
+    expect(add).not.toHaveBeenCalled()
+    expect(newChat).toHaveBeenCalledTimes(1)
   })
 })
