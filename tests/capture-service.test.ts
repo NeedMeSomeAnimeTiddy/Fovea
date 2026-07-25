@@ -131,4 +131,24 @@ describe('frozen region capture', () => {
     expect(mocks.window.show).toHaveBeenCalledTimes(1)
     service.dispose()
   })
+
+  it('routes one capture to its explicit destination and clears it on cancellation', async () => {
+    const defaultCompleted = vi.fn(async () => undefined)
+    const destinationCompleted = vi.fn(async () => undefined)
+    const destinationCancelled = vi.fn()
+    const save = vi.fn(async () => 'C:\\temp\\capture.png')
+    const { CaptureService } = await import('../src/main/capture/capture-service')
+    const service = new CaptureService({ save, delete: vi.fn() } as never, defaultCompleted, vi.fn())
+
+    await service.begin('region', { onCompleted: destinationCompleted, onCancelled: destinationCancelled })
+    service.cancel()
+    expect(destinationCancelled).toHaveBeenCalledTimes(1)
+    expect(destinationCompleted).not.toHaveBeenCalled()
+
+    await service.begin('region')
+    await service.select({ x: 10, y: 5, width: 24, height: 24 }, 42)
+    expect(defaultCompleted).toHaveBeenCalledTimes(1)
+    expect(destinationCompleted).not.toHaveBeenCalled()
+    service.dispose()
+  })
 })

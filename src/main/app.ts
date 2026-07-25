@@ -50,7 +50,7 @@ async function startApplication(): Promise<void> {
   const providers = new ProviderRegistry(profiles, codex)
   const services: { questions?: QuestionSessions } = {}
   const capture = new CaptureService(screenshots, (completed) => services.questions!.open(completed), (message) => showSafeError(message, 'capture-failed'))
-  const questions = new QuestionSessions(providers, screenshots, () => capture.begin('region'))
+  const questions = new QuestionSessions(providers, screenshots, (destination) => capture.begin('region', destination))
   services.questions = questions
 
   let tray: TrayController | null = null

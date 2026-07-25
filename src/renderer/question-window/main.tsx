@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client'
 import ReactMarkdown from 'react-markdown'
 import rehypeHighlight from 'rehype-highlight'
 import type { QuestionViewState } from '@shared/contracts/ipc'
-import type { ConversationExchange, ConversationSelection, ProviderModelCapability, ResponsePhase } from '@shared/types/app'
+import type { ConversationExchange, ConversationSelection, ProviderModelCapability, QuestionAttachment, ResponsePhase } from '@shared/types/app'
 import type { ProviderEvent } from '@shared/types/provider'
 import type { AppError, AppRecoveryKind } from '@shared/types/app-error'
 import { Button, IconButton, Spinner, StatusBanner, TextArea, Tooltip } from '../design-system'
@@ -35,9 +35,11 @@ export function QuestionApp(): React.JSX.Element {
   const [customOpen, setCustomOpen] = useState(false)
   const [preferWebSearch, setPreferWebSearch] = useState(false)
   const [modelOpen, setModelOpen] = useState(false)
+  const [captureMenuOpen, setCaptureMenuOpen] = useState(false)
   const [expandedModelId, setExpandedModelId] = useState<string | null>(null)
   const askRef = useRef<HTMLDivElement>(null)
   const modelRef = useRef<HTMLDivElement>(null)
+  const captureRef = useRef<HTMLDivElement>(null)
   const responseContentRef = useRef<HTMLDivElement>(null)
   const stickToBottom = useRef(true)
   const stateReady = useRef(false)
@@ -146,9 +148,16 @@ export function QuestionApp(): React.JSX.Element {
   useEffect(() => {
     void initialiseAppearance()
     void refresh().catch((reason) => setError(appErrorFromUnknown(reason)))
-    return window.fovea.question.onEvent((eventSessionId, event) => {
+    const unsubscribeEvents = window.fovea.question.onEvent((eventSessionId, event) => {
       if (eventSessionId === sessionId) consume(event)
     })
+    const unsubscribeChanges = window.fovea.question.onChanged((next) => {
+      if (next.sessionId === sessionId) setState(next)
+    })
+    return () => {
+      unsubscribeEvents()
+      unsubscribeChanges()
+    }
     // The subscription intentionally remains stable for the lifetime of this session.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId])
@@ -167,7 +176,7 @@ export function QuestionApp(): React.JSX.Element {
   }, [latestExchange?.id, latestVisibleLength])
 
   useEffect(() => {
-    if (!askOpen && !modelOpen) return
+    if (!askOpen && !modelOpen && !captureMenuOpen) return
     const closeOnPointer = (event: MouseEvent): void => {
       const target = event.target as Node
       if (askOpen && !askRef.current?.contains(target)) {
@@ -178,6 +187,7 @@ export function QuestionApp(): React.JSX.Element {
         setModelOpen(false)
         setExpandedModelId(null)
       }
+      if (captureMenuOpen && !captureRef.current?.contains(target)) setCaptureMenuOpen(false)
     }
     const closeOnEscape = (event: KeyboardEvent): void => {
       if (event.key !== 'Escape') return
@@ -185,6 +195,7 @@ export function QuestionApp(): React.JSX.Element {
       setCustomOpen(false)
       setModelOpen(false)
       setExpandedModelId(null)
+      setCaptureMenuOpen(false)
     }
     document.addEventListener('mousedown', closeOnPointer)
     document.addEventListener('keydown', closeOnEscape)
@@ -192,7 +203,7 @@ export function QuestionApp(): React.JSX.Element {
       document.removeEventListener('mousedown', closeOnPointer)
       document.removeEventListener('keydown', closeOnEscape)
     }
-  }, [askOpen, modelOpen])
+  }, [askOpen, captureMenuOpen, modelOpen])
 
   const send = async (override?: string): Promise<void> => {
     const question = (override ?? text).trim()
@@ -213,9 +224,10 @@ export function QuestionApp(): React.JSX.Element {
       answer: '',
       phase: 'connecting',
       segmentId: state.segments.at(-1)?.id ?? '',
+      attachmentIds: state.attachments.filter((attachment) => attachment.status === 'draft').map((attachment) => attachment.id),
       ...(searchPreferred ? { webSearch: { id: `preferred-${Date.now()}`, query: question, status: 'searching' as const } } : {})
     }
-    setState({ ...state, busy: true, phase: 'connecting', exchanges: [...state.exchanges, optimistic] })
+    setState({ ...state, attachments: state.attachments.map((attachment) => attachment.status === 'draft' ? { ...attachment, status: 'sent' } : attachment), busy: true, phase: 'connecting', exchanges: [...state.exchanges, optimistic] })
     void window.fovea.question.send(sessionId, question, searchPreferred).catch((reason) => {
       setError(appErrorFromUnknown(reason))
       setPhase('failed')
@@ -250,11 +262,39 @@ export function QuestionApp(): React.JSX.Element {
     setCopyStatus(label)
     setTimeout(() => setCopyStatus(''), 1500)
   }
-  const openPreview = async (): Promise<void> => {
+  const openPreview = async (attachmentId: string): Promise<void> => {
     try {
-      await window.fovea.question.setPreviewOpen(sessionId, true)
+      await window.fovea.question.setPreviewOpen(sessionId, attachmentId)
     } catch (reason) {
       setError(appErrorFromUnknown(reason))
+    }
+  }
+  const addSnip = async (): Promise<void> => {
+    setError(null)
+    setCaptureMenuOpen(false)
+    try {
+      await window.fovea.question.addSnip(sessionId)
+    } catch (reason) {
+      setError(appErrorFromUnknown(reason))
+      void refresh()
+    }
+  }
+  const newChat = async (): Promise<void> => {
+    setError(null)
+    setCaptureMenuOpen(false)
+    try {
+      await window.fovea.question.newChat(sessionId)
+    } catch (reason) {
+      setError(appErrorFromUnknown(reason))
+    }
+  }
+  const removeAttachment = async (attachmentId: string): Promise<void> => {
+    setError(null)
+    try {
+      setState(await window.fovea.question.removeAttachment(sessionId, attachmentId))
+    } catch (reason) {
+      setError(appErrorFromUnknown(reason))
+      void refresh()
     }
   }
   const changeModel = async (modelId: string, reasoningEffort: string | null): Promise<void> => {
@@ -305,7 +345,7 @@ export function QuestionApp(): React.JSX.Element {
     if (recovery === 'open-settings' || recovery === 'authenticate' || recovery === 'choose-provider') {
       void window.fovea.application.openSettings()
     } else if (recovery === 'recapture') {
-      void window.fovea.question.newSnip(sessionId)
+      void addSnip()
     } else if (recovery === 'retry') {
       setError(null)
       void refresh().catch((reason) => setError(appErrorFromUnknown(reason)))
@@ -418,23 +458,40 @@ export function QuestionApp(): React.JSX.Element {
                   {error && <AppStatusNotice error={error} onRecovery={error.recovery === 'retry' ? undefined : recover} />}
                 </div>
 
+                <AttachmentStrip
+                  attachments={state.attachments}
+                  disabled={state.busy}
+                  onPreview={(attachmentId) => void openPreview(attachmentId)}
+                  onRemove={(attachmentId) => void removeAttachment(attachmentId)}
+                />
+
                 <footer className="response-actions">
-                  <Tooltip content="Start a new capture">
-                    <IconButton
-                      icon={<Icon name="recapture" />}
-                      label="Start a new capture"
-                      size="compact"
-                      onClick={() => void window.fovea.question.newSnip(sessionId)}
-                    />
-                  </Tooltip>
-                  <Tooltip content="View the captured image">
-                    <IconButton
-                      icon={<Icon name="capture" />}
-                      label="View the captured image"
-                      size="compact"
-                      onClick={() => void openPreview()}
-                    />
-                  </Tooltip>
+                  <div className="capture-wrap" ref={captureRef}>
+                    <Tooltip content={state.capturePending ? 'Select a screen region' : 'Capture options'}>
+                      <IconButton
+                        aria-expanded={captureMenuOpen}
+                        aria-haspopup="menu"
+                        disabled={state.capturePending}
+                        icon={<Icon name="recapture" />}
+                        label={state.capturePending ? 'Screen region selection is open' : 'Capture options'}
+                        size="compact"
+                        onClick={() => {
+                          setAskOpen(false)
+                          setCustomOpen(false)
+                          setModelOpen(false)
+                          setExpandedModelId(null)
+                          setCaptureMenuOpen((open) => !open)
+                        }}
+                      />
+                    </Tooltip>
+                    {captureMenuOpen && (
+                      <CaptureMenu
+                        addDisabled={state.busy || hasPendingWebSearch}
+                        onAdd={() => void addSnip()}
+                        onNewChat={() => void newChat()}
+                      />
+                    )}
+                  </div>
                   {state.selection && (
                     <div className="model-wrap" ref={modelRef}>
                       <Tooltip content={modelLabel}>
@@ -507,6 +564,73 @@ export function QuestionApp(): React.JSX.Element {
         <div className="fui-sr-only" aria-live="polite">{copyStatus}</div>
       </main>
     </WindowFrame>
+  )
+}
+
+export function AttachmentStrip({
+  attachments,
+  disabled,
+  onPreview,
+  onRemove
+}: {
+  attachments: QuestionAttachment[]
+  disabled: boolean
+  onPreview(attachmentId: string): void
+  onRemove(attachmentId: string): void
+}): React.JSX.Element {
+  return (
+    <section className="attachment-strip" aria-label="Conversation screenshots">
+      <span className="attachment-strip__label">{attachments.length} {attachments.length === 1 ? 'screenshot' : 'screenshots'}</span>
+      <div className="attachment-strip__items">
+        {attachments.map((attachment, index) => (
+          <div className="attachment-thumbnail" data-status={attachment.status} key={attachment.id}>
+            <button
+              aria-label={`Preview screenshot ${index + 1}${attachment.status === 'draft' ? ', not sent yet' : ''}`}
+              className="attachment-thumbnail__preview"
+              onClick={() => onPreview(attachment.id)}
+              type="button"
+            >
+              <img alt="" draggable={false} src={attachment.thumbnailDataUrl} />
+              <span aria-hidden="true">{index + 1}</span>
+            </button>
+            {attachment.status === 'draft' && (
+              <button
+                aria-label={`Remove screenshot ${index + 1}`}
+                className="attachment-thumbnail__remove"
+                disabled={disabled}
+                onClick={() => onRemove(attachment.id)}
+                type="button"
+              >
+                ×
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+export function CaptureMenu({
+  addDisabled,
+  onAdd,
+  onNewChat
+}: {
+  addDisabled: boolean
+  onAdd(): void
+  onNewChat(): void
+}): React.JSX.Element {
+  return (
+    <div className="capture-menu" role="menu" aria-label="Capture options">
+      <button disabled={addDisabled} onClick={onAdd} role="menuitem" type="button">
+        <Icon name="capture" />
+        <span><strong>Add a screenshot</strong><small>Attach it to this chat</small></span>
+      </button>
+      <button onClick={onNewChat} role="menuitem" type="button">
+        <Icon name="new-chat" />
+        <span><strong>New chat</strong><small>Start with a new capture</small></span>
+      </button>
+    </div>
   )
 }
 
@@ -860,6 +984,7 @@ function Icon({ name }: { name: string }): React.JSX.Element {
     copy: <><rect x="8" y="8" width="11" height="11" rx="2" /><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" /></>,
     edit: <><path d="m4 20 4.5-1 10-10-3.5-3.5-10 10L4 20Z" /><path d="m13.5 7 3.5 3.5" /></>,
     globe: <><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3c2.2 2.5 3.3 5.5 3.3 9S14.2 18.5 12 21M12 3C9.8 5.5 8.7 8.5 8.7 12S9.8 18.5 12 21" /></>,
+    'new-chat': <><path d="M5 5h14v11H9l-4 3V5Z" /><path d="M12 8v5m-2.5-2.5h5" /></>,
     recapture: <path d="M20 7v5h-5M4 17v-5h5M6.2 8a7 7 0 0 1 11.2-2l2.6 6M17.8 16a7 7 0 0 1-11.2 2L4 12" />,
     regenerate: <><path d="m12 3 1.3 4.7L18 9l-4.7 1.3L12 15l-1.3-4.7L6 9l4.7-1.3L12 3Z" /><path d="m18 15 .7 2.3L21 18l-2.3.7L18 21l-.7-2.3L15 18l2.3-.7L18 15Z" /></>,
     send: <path d="m3 11 18-8-8 18-2-8-8-2Zm8 2 4-4" />,

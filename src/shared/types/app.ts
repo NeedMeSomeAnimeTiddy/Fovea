@@ -54,6 +54,12 @@ export interface ConversationSegment {
   disclosure: string | null
 }
 
+export interface QuestionAttachment {
+  id: string
+  thumbnailDataUrl: string
+  status: 'draft' | 'sent'
+}
+
 export type ResponsePhase =
   | 'idle'
   | 'connecting'
@@ -91,6 +97,7 @@ export interface ConversationExchange {
   answer: string
   phase: ResponsePhase
   segmentId: string
+  attachmentIds?: string[]
   automatic?: boolean
   metadata?: AssistantResponseMetadata
   retryOf?: string

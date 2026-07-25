@@ -7,23 +7,25 @@ import '../design-system/index.css'
 import './preview.css'
 
 function ImagePreview(): React.JSX.Element {
-  const sessionId = useMemo(() => new URLSearchParams(location.search).get('session') ?? '', [])
+  const parameters = useMemo(() => new URLSearchParams(location.search), [])
+  const sessionId = parameters.get('session') ?? ''
+  const attachmentId = parameters.get('attachment') ?? ''
   const [image, setImage] = useState<string | null>(null)
   const [error, setError] = useState<AppError | null>(null)
 
   useEffect(() => {
     void initialiseAppearance()
-    void window.fovea.question.getFullImage(sessionId).then(setImage).catch((reason) => setError(appErrorFromUnknown(reason)))
+    void window.fovea.question.getFullImage(sessionId, attachmentId).then(setImage).catch((reason) => setError(appErrorFromUnknown(reason)))
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key !== 'Escape') return
       event.preventDefault()
-      void window.fovea.question.setPreviewOpen(sessionId, false)
+      void window.fovea.question.setPreviewOpen(sessionId, null)
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [sessionId])
+  }, [attachmentId, sessionId])
 
-  const close = (): void => { void window.fovea.question.setPreviewOpen(sessionId, false) }
+  const close = (): void => { void window.fovea.question.setPreviewOpen(sessionId, null) }
 
   return (
     <main

@@ -22,9 +22,13 @@ interface PendingDisplay {
   readinessError: Error | null
 }
 interface CaptureDescriptor { mode: CaptureMode; displayId?: number; rectangle?: Rectangle; sourceId?: string }
-interface PendingCapture { candidates: Map<number, PendingDisplay>; topology: string }
+interface PendingCapture { candidates: Map<number, PendingDisplay>; topology: string; destination?: CaptureDestination }
 
 export interface CompletedCapture { imagePath: string; selectedBounds: Rectangle; display: Display }
+export interface CaptureDestination {
+  onCompleted(capture: CompletedCapture): Promise<void>
+  onCancelled?(): void
+}
 
 export class CaptureService {
   private pending: PendingCapture | null = null
@@ -37,15 +41,23 @@ export class CaptureService {
     screen.on('display-metrics-changed', this.cancelForTopologyChange)
   }
 
-  async begin(mode: CaptureMode = 'region'): Promise<void> {
-    if (this.pending) return
-    if (mode === 'repeat-last') {
-      if (!this.lastDescriptor) throw new Error('There is no previous capture to repeat.')
-      return this.dispatchDescriptor(this.lastDescriptor)
+  async begin(mode: CaptureMode = 'region', destination?: CaptureDestination): Promise<void> {
+    if (this.pending) {
+      if (destination) throw new Error('Another screen capture is already in progress.')
+      return
     }
-    if (mode === 'display') return this.captureDisplay()
-    if (mode === 'window') return this.captureFocusedWindow()
-    return this.beginRegion()
+    try {
+      if (mode === 'repeat-last') {
+        if (!this.lastDescriptor) throw new Error('There is no previous capture to repeat.')
+        return this.dispatchDescriptor(this.lastDescriptor, destination)
+      }
+      if (mode === 'display') return this.captureDisplay(undefined, destination)
+      if (mode === 'window') return this.captureFocusedWindow(undefined, destination)
+      return this.beginRegion(undefined, destination)
+    } catch (error) {
+      if (mode === 'display' || mode === 'window') destination?.onCancelled?.()
+      throw error
+    }
   }
 
   async getContext(senderWebContentsId?: number): Promise<CaptureContext> {
@@ -66,14 +78,7 @@ export class CaptureService {
   }
 
   cancel(): void {
-    const pending = this.pending
-    this.pending = null
-    this.clearCancellationTimer()
-    for (const candidate of pending?.candidates.values() ?? []) {
-      if (!candidate.image && !candidate.readinessError) candidate.readinessError = new Error('Screen capture was cancelled.')
-      candidate.resolveReady()
-      if (!candidate.window.isDestroyed()) candidate.window.close()
-    }
+    this.clearPending(true)
   }
 
   dispose(): void {
@@ -83,7 +88,7 @@ export class CaptureService {
     screen.off('display-metrics-changed', this.cancelForTopologyChange)
   }
 
-  private async beginRegion(descriptor?: CaptureDescriptor): Promise<void> {
+  private async beginRegion(descriptor?: CaptureDescriptor, destination?: CaptureDestination): Promise<void> {
     const displays = screen.getAllDisplays()
     const topology = displays.map((display) => `${display.id}:${display.bounds.x},${display.bounds.y},${display.bounds.width},${display.bounds.height}:${display.scaleFactor}`).sort().join('|')
     const maxWidth = Math.max(...displays.map((display) => Math.round(display.bounds.width * display.scaleFactor)))
@@ -96,7 +101,7 @@ export class CaptureService {
       candidates.set(overlay.webContents.id, { display, image: null, imageDataUrl: null, viewport: null, window: overlay, ready: deferred.promise, resolveReady: deferred.resolve, readinessError: null })
     }
     if (!candidates.size) throw new Error('Windows did not provide any screen images to capture.')
-    this.pending = { candidates, topology }
+    this.pending = { candidates, topology, destination }
     this.startCancellationTimer()
     try {
       const rendererLoads = Promise.all([...candidates.values()].map((candidate) => loadRenderer(candidate.window, 'overlay')))
@@ -126,16 +131,16 @@ export class CaptureService {
     } catch (error) { this.cancel(); throw error }
   }
 
-  private async captureDisplay(descriptor?: CaptureDescriptor): Promise<void> {
+  private async captureDisplay(descriptor?: CaptureDescriptor, destination?: CaptureDestination): Promise<void> {
     const display = descriptor?.displayId ? screen.getAllDisplays().find((item) => item.id === descriptor.displayId) : screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
     if (!display) throw new Error('The previous display is no longer connected.')
     const image = await this.captureScreenImage(display)
     const selectedBounds = { x: 0, y: 0, width: display.bounds.width, height: display.bounds.height }
     this.lastDescriptor = { mode: 'display', displayId: display.id }
-    await this.saveCompleted(display, image, selectedBounds)
+    await this.saveCompleted(display, image, selectedBounds, destination)
   }
 
-  private async captureFocusedWindow(descriptor?: CaptureDescriptor): Promise<void> {
+  private async captureFocusedWindow(descriptor?: CaptureDescriptor, destination?: CaptureDestination): Promise<void> {
     const target = descriptor?.sourceId ? { sourceId: descriptor.sourceId, processId: 0 } : await getForegroundTarget()
     if (target.processId === process.pid) throw new Error('Fovea cannot capture one of its own windows.')
     const ownHandles = new Set(BrowserWindow.getAllWindows().map((window) => window.getNativeWindowHandle().toString('hex').replace(/^0+/, '').toLowerCase()))
@@ -149,13 +154,13 @@ export class CaptureService {
     const size = source.thumbnail.getSize()
     const selectedBounds = { x: 0, y: 0, width: size.width, height: size.height }
     this.lastDescriptor = { mode: 'window', sourceId: source.id }
-    await this.saveCompleted(display, source.thumbnail, selectedBounds)
+    await this.saveCompleted(display, source.thumbnail, selectedBounds, destination)
   }
 
-  private async dispatchDescriptor(descriptor: CaptureDescriptor): Promise<void> {
-    if (descriptor.mode === 'region') return this.beginRegion(descriptor)
-    if (descriptor.mode === 'display') return this.captureDisplay(descriptor)
-    if (descriptor.mode === 'window') return this.captureFocusedWindow(descriptor)
+  private async dispatchDescriptor(descriptor: CaptureDescriptor, destination?: CaptureDestination): Promise<void> {
+    if (descriptor.mode === 'region') return this.beginRegion(descriptor, destination)
+    if (descriptor.mode === 'display') return this.captureDisplay(descriptor, destination)
+    if (descriptor.mode === 'window') return this.captureFocusedWindow(descriptor, destination)
   }
 
   private createOverlay(display: Display): BrowserWindow {
@@ -199,13 +204,31 @@ export class CaptureService {
     const physical = logicalToPhysical(bounded, imageSize.width / candidate.viewport.width, imageSize.height / candidate.viewport.height)
     const crop = clampCropRectangle(physical, imageSize)
     if (crop.width < 1 || crop.height < 1) throw new Error('The selected area was outside the captured image.')
-    this.cancel()
-    await this.saveCompleted(candidate.display, candidate.image.crop(crop), bounded)
+    const destination = this.pending?.destination
+    this.clearPending(false)
+    await this.saveCompleted(candidate.display, candidate.image.crop(crop), bounded, destination)
   }
 
-  private async saveCompleted(display: Display, image: NativeImage, selectedBounds: Rectangle): Promise<void> {
+  private async saveCompleted(display: Display, image: NativeImage, selectedBounds: Rectangle, destination?: CaptureDestination): Promise<void> {
     const imagePath = await this.screenshots.save(image.toPNG())
-    await this.onCompleted({ imagePath, selectedBounds, display })
+    try {
+      await (destination?.onCompleted ?? this.onCompleted)({ imagePath, selectedBounds, display })
+    } catch (error) {
+      await this.screenshots.delete(imagePath)
+      throw error
+    }
+  }
+
+  private clearPending(notifyCancelled: boolean): void {
+    const pending = this.pending
+    this.pending = null
+    this.clearCancellationTimer()
+    for (const candidate of pending?.candidates.values() ?? []) {
+      if (!candidate.image && !candidate.readinessError) candidate.readinessError = new Error('Screen capture was cancelled.')
+      candidate.resolveReady()
+      if (!candidate.window.isDestroyed()) candidate.window.close()
+    }
+    if (notifyCancelled) pending?.destination?.onCancelled?.()
   }
 
   private readonly cancelForTopologyChange = (): void => { if (this.pending && this.pending.topology !== this.currentTopology()) { this.cancel(); this.onError('Display configuration changed; capture was cancelled cleanly.') } }

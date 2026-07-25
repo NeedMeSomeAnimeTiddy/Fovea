@@ -1,4 +1,4 @@
-import { mkdtemp, readFile } from 'node:fs/promises'
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -7,6 +7,7 @@ import { SettingsStore } from '../src/main/storage/settings-store'
 import { ProfileManager } from '../src/main/providers/profile-manager'
 import { ShortcutManager, type ShortcutRegistrar } from '../src/main/shortcuts/shortcut-manager'
 import { DirectApiProvider } from '../src/main/providers/direct-api-provider'
+import { CodexAppServerProvider } from '../src/main/providers/codex-app-server/codex-app-server-provider'
 import { parseSse } from '../src/main/providers/sse'
 import { acceleratorFromKeyInput, isCompleteAccelerator } from '../src/shared/shortcut-accelerator'
 
@@ -85,6 +86,61 @@ describe('provider normalisation and SSE', () => {
     const preferredBody = JSON.parse(String(request.mock.calls[2]?.[1]?.body)) as Record<string, unknown>
     expect(preferredBody.tools).toEqual(approvedTools)
     expect(JSON.stringify(preferredBody)).toContain('explicitly prioritised web search')
+  })
+
+  it.each(['openai', 'anthropic', 'openrouter'] as const)('keeps multiple %s image inputs in capture order', async (kind) => {
+    const root = await mkdtemp(join(tmpdir(), 'fovea-images-'))
+    const first = join(root, 'first.png')
+    const second = join(root, 'second.png')
+    await Promise.all([writeFile(first, 'first-image'), writeFile(second, 'second-image')])
+    const request = vi.fn(async (input: string | URL | Request, init?: RequestInit) => { void input; void init; return new Response('', { status: 200 }) })
+    const provider = new DirectApiProvider(kind, request as typeof fetch)
+
+    for await (const event of provider.send('secret', {
+      text: 'Compare these',
+      imagePaths: [first, second],
+      modelId: 'vision-model',
+      reasoningEffort: null
+    })) { void event }
+
+    const payload = String(request.mock.calls[0]?.[1]?.body)
+    expect(payload.indexOf(Buffer.from('first-image').toString('base64'))).toBeGreaterThan(-1)
+    expect(payload.indexOf(Buffer.from('second-image').toString('base64'))).toBeGreaterThan(payload.indexOf(Buffer.from('first-image').toString('base64')))
+  })
+
+  it('emits one ordered local-image item per ChatGPT attachment', async () => {
+    const request = vi.fn(async (method: string) => {
+      if (method === 'turn/start') return { turn: { id: 'turn-1' } }
+      throw new Error(`Unexpected method: ${method}`)
+    })
+    const provider = new CodexAppServerProvider({
+      binaryPath: 'codex.exe',
+      codexHome: 'C:\\temp\\codex',
+      workingDirectory: 'C:\\temp',
+      openExternal: async () => undefined,
+      getSelectedModel: () => 'vision-model'
+    })
+    Object.assign(provider as unknown as Record<string, unknown>, {
+      rpc: { request },
+      ready: true,
+      modelCache: [{ id: 'vision-model', displayName: 'Vision', isDefault: true, supportedReasoningEfforts: [], inputModalities: ['text', 'image'] }],
+      modelsFetchedAt: Date.now()
+    })
+
+    const iterator = provider.sendMessage('conversation-1', {
+      text: 'Compare these',
+      imagePaths: ['C:\\temp\\first.png', 'C:\\temp\\second.png'],
+      modelId: 'vision-model'
+    })[Symbol.asyncIterator]()
+    await expect(iterator.next()).resolves.toMatchObject({ value: { type: 'started', turnId: 'turn-1' } })
+    expect(request).toHaveBeenCalledWith('turn/start', expect.objectContaining({
+      input: [
+        { type: 'text', text: 'Compare these', text_elements: [] },
+        { type: 'localImage', path: 'C:\\temp\\first.png' },
+        { type: 'localImage', path: 'C:\\temp\\second.png' }
+      ]
+    }))
+    await iterator.return?.()
   })
 })
 

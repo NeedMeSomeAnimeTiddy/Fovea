@@ -2,10 +2,10 @@ import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { app, BrowserWindow, nativeImage, screen } from 'electron'
 import { IPC, type QuestionViewState, type WindowMaterial } from '../../shared/contracts/ipc'
-import type { ConversationExchange, ConversationSegment, ConversationSelection, ProviderModelCapability, ResponsePhase } from '@shared/types/app'
+import type { ConversationExchange, ConversationSegment, ConversationSelection, ProviderModelCapability, QuestionAttachment, ResponsePhase } from '@shared/types/app'
 import type { AssistantResponseMetadata, ProviderEvent } from '@shared/types/provider'
 import { toAppError } from '../errors/app-error'
-import type { CompletedCapture } from '../capture/capture-service'
+import type { CaptureDestination, CompletedCapture } from '../capture/capture-service'
 import type { ProviderRegistry } from '../providers/provider-registry'
 import type { TempScreenshotStore } from '../storage/temp-screenshot-store'
 import { getWindowAppearanceOptions, selectWindowMaterial, type WindowSurfaceSizes } from './window-appearance'
@@ -35,21 +35,23 @@ Never narrate or announce searching, browsing, tool use, analysis, or a plan. Ev
 const INITIAL_ANALYSIS_INSTRUCTION = `Inspect the capture carefully and infer the user's most likely goal from its content. Give the useful result immediately: solve a visible problem, explain an error, summarise a document, interpret a chart, identify an interface, or otherwise perform the clearest likely task. If the likely goal is genuinely ambiguous, briefly explain what is visible and make the suggested questions resolve the ambiguity.`
 const PREFERRED_WEB_SEARCH_INSTRUCTION = `The user explicitly chose Search web for this question. Search before answering whenever current sources could improve identification, accuracy, context, or verification. Do not answer "I don't know" without first attempting a focused search using the visible clues and conversation context.`
 
-interface ProviderSegmentState { segment: ConversationSegment; conversationId: string | null; screenshotAttached: boolean }
+interface ProviderSegmentState { segment: ConversationSegment; conversationId: string | null }
 interface ResponseControlOptions { detectMetadata: boolean; detectWebSearch: boolean }
+interface SessionAttachment extends QuestionAttachment { imagePath: string }
 interface QuestionSession {
-  id: string; imagePath: string; thumbnailDataUrl: string; window: BrowserWindow | null; previewWindow: BrowserWindow | null; busy: boolean; cleaningUp: boolean
+  id: string; attachments: SessionAttachment[]; window: BrowserWindow | null; previewWindow: BrowserWindow | null; previewAttachmentId: string | null; busy: boolean; cleaningUp: boolean; capturePending: boolean
   phase: ResponsePhase; selection: ConversationSelection | null; exchanges: ConversationExchange[]; segments: ProviderSegmentState[]; disclosure: string | null
   models: ProviderModelCapability[]; initialization: Promise<void>; pinned: boolean
 }
 
 export class QuestionSessions {
   private readonly sessions = new Map<string, QuestionSession>()
-  constructor(private readonly providers: ProviderRegistry, private readonly screenshots: TempScreenshotStore, private readonly startNewCapture: () => Promise<void>, private readonly readImage: (path: string) => Promise<Buffer> = readFile) {}
+  constructor(private readonly providers: ProviderRegistry, private readonly screenshots: TempScreenshotStore, private readonly startCapture: (destination?: CaptureDestination) => Promise<void>, private readonly readImage: (path: string) => Promise<Buffer> = readFile) {}
 
   async open(capture: CompletedCapture): Promise<void> {
-    const id = randomUUID(); const image = nativeImage.createFromPath(capture.imagePath)
-    const session: QuestionSession = { id, imagePath: capture.imagePath, thumbnailDataUrl: image.resize({ width: Math.min(380, image.getSize().width), quality: 'good' }).toDataURL(), window: null, previewWindow: null, busy: false, cleaningUp: false, phase: 'idle', selection: null, exchanges: [], segments: [], disclosure: null, models: [], initialization: Promise.resolve(), pinned: false }
+    const id = randomUUID()
+    const attachment = this.createAttachment(capture.imagePath, 'sent')
+    const session: QuestionSession = { id, attachments: [attachment], window: null, previewWindow: null, previewAttachmentId: null, busy: false, cleaningUp: false, capturePending: false, phase: 'idle', selection: null, exchanges: [], segments: [], disclosure: null, models: [], initialization: Promise.resolve(), pinned: false }
     this.sessions.set(id, session)
     session.initialization = this.selectInitial(session)
     const material = selectWindowMaterial({ disableTransparentWindows: app.commandLine.hasSwitch('disable-transparent-windows') })
@@ -63,9 +65,10 @@ export class QuestionSessions {
     return this.snapshot(await this.requireInitializedSession(id))
   }
 
-  async getFullImage(id: string): Promise<string> {
+  async getFullImage(id: string, attachmentId: string): Promise<string> {
     const session = await this.requireInitializedSession(id)
-    const png = await this.readImage(session.imagePath)
+    const attachment = this.requireAttachment(session, attachmentId)
+    const png = await this.readImage(attachment.imagePath)
     return `data:image/png;base64,${png.toString('base64')}`
   }
 
@@ -94,15 +97,19 @@ export class QuestionSessions {
     if (session.window && !session.window.isDestroyed()) session.window.setAlwaysOnTop(pinned)
   }
 
-  async setPreviewOpen(id: string, open: boolean): Promise<void> {
+  async setPreviewOpen(id: string, attachmentId: string | null): Promise<void> {
     const session = await this.requireInitializedSession(id)
-    if (!open) {
+    if (!attachmentId) {
       this.closePreview(session)
       return
     }
+    this.requireAttachment(session, attachmentId)
     if (session.previewWindow && !session.previewWindow.isDestroyed()) {
-      session.previewWindow.focus()
-      return
+      if (session.previewAttachmentId === attachmentId) {
+        session.previewWindow.focus()
+        return
+      }
+      this.closePreview(session)
     }
     const responseWindow = session.window
     if (!responseWindow || responseWindow.isDestroyed()) throw new Error('The response window is no longer available.')
@@ -130,6 +137,7 @@ export class QuestionSessions {
       title: 'Fovea image preview'
     })
     session.previewWindow = preview
+    session.previewAttachmentId = attachmentId
     preview.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
     preview.webContents.on('before-input-event', (event, input) => {
       if (input.type !== 'keyDown' || input.key !== 'Escape') return
@@ -142,15 +150,36 @@ export class QuestionSessions {
       preview.focus()
     })
     preview.once('closed', () => {
-      if (session.previewWindow === preview) session.previewWindow = null
+      if (session.previewWindow === preview) {
+        session.previewWindow = null
+        session.previewAttachmentId = null
+      }
     })
     try {
-      await loadRenderer(preview, 'preview', { session: id })
+      await loadRenderer(preview, 'preview', { session: id, attachment: attachmentId })
     } catch (error) {
       if (!preview.isDestroyed()) preview.destroy()
-      if (session.previewWindow === preview) session.previewWindow = null
+      if (session.previewWindow === preview) {
+        session.previewWindow = null
+        session.previewAttachmentId = null
+      }
       throw error
     }
+  }
+
+  async removeAttachment(id: string, attachmentId: string): Promise<QuestionViewState> {
+    const session = await this.requireInitializedSession(id)
+    if (session.busy) throw new Error('Wait for the current answer or press Stop before removing an attachment.')
+    const attachmentIndex = session.attachments.findIndex((attachment) => attachment.id === attachmentId)
+    if (attachmentIndex < 0) throw new Error('That screenshot is no longer attached.')
+    const attachment = session.attachments[attachmentIndex]!
+    if (attachment.status !== 'draft') throw new Error('A screenshot that has already been sent cannot be removed.')
+    if (session.previewAttachmentId === attachmentId) this.closePreview(session)
+    session.attachments.splice(attachmentIndex, 1)
+    await this.screenshots.delete(attachment.imagePath)
+    const state = this.snapshot(session)
+    this.emitChanged(session, state)
+    return state
   }
 
   async send(id: string, text: string, preferWebSearch = false): Promise<void> {
@@ -159,25 +188,30 @@ export class QuestionSessions {
     if (this.pendingWebSearch(session)) throw new Error('Approve or decline the pending web search before sending another message.')
     await this.providers.validateSelection(session.selection)
     let providerSegment = session.segments.at(-1); if (!providerSegment) { this.startSegment(session, false); providerSegment = session.segments.at(-1)! }
-    if (!providerSegment.conversationId) providerSegment.conversationId = await this.providers.createConversation(session.selection)
+    const freshProviderContext = !providerSegment.conversationId
+    if (freshProviderContext) providerSegment.conversationId = await this.providers.createConversation(session.selection)
+    const draftAttachments = session.attachments.filter((attachment) => attachment.status === 'draft')
+    for (const attachment of draftAttachments) attachment.status = 'sent'
+    const exchangeAttachmentIds = draftAttachments.map((attachment) => attachment.id)
+    const imagePaths = this.imagePathsForTurn(session, providerSegment, freshProviderContext, exchangeAttachmentIds)
     const exchange: ConversationExchange = {
       id: randomUUID(),
       question,
       answer: '',
       phase: 'connecting',
       segmentId: providerSegment.segment.id,
+      ...(exchangeAttachmentIds.length ? { attachmentIds: exchangeAttachmentIds } : {}),
       ...(preferWebSearch ? { webSearch: { id: randomUUID(), query: question, status: 'searching' as const } } : {})
     }
     session.exchanges.push(exchange); session.busy = true; this.setPhase(session, exchange, 'connecting')
-    const attachScreenshot = session.selection.provider !== 'chatgpt' || !providerSegment.screenshotAttached
-    providerSegment.screenshotAttached = true
+    this.emitChanged(session)
     await this.runTurn(
       session,
       exchange,
       providerSegment,
       {
         text: responsePrompt(question, false, preferWebSearch, preferWebSearch),
-        imagePath: attachScreenshot ? session.imagePath : undefined,
+        ...(imagePaths.length ? { imagePaths } : {}),
         webSearchAllowed: preferWebSearch,
         webSearchPreferred: preferWebSearch
       },
@@ -197,8 +231,8 @@ export class QuestionSessions {
     const providerSegment = this.startSegment(session, false, 'Response regenerated in a fresh provider context using the current profile and model. Earlier transcript remains visible locally.')
     if (!providerSegment) throw new Error('The regeneration provider context could not be created.')
     providerSegment.conversationId = conversationId
-    providerSegment.screenshotAttached = true
-    const exchange: ConversationExchange = { id: randomUUID(), question: target.question, answer: '', phase: 'connecting', segmentId: providerSegment.segment.id, automatic: target.automatic, retryOf: target.id }
+    const attachmentIds = session.attachments.filter((attachment) => attachment.status === 'sent').map((attachment) => attachment.id)
+    const exchange: ConversationExchange = { id: randomUUID(), question: target.question, answer: '', phase: 'connecting', segmentId: providerSegment.segment.id, attachmentIds, automatic: target.automatic, retryOf: target.id }
     const previousExchanges = [...session.exchanges]
     session.exchanges.push(exchange)
     session.busy = true
@@ -207,7 +241,7 @@ export class QuestionSessions {
       session,
       exchange,
       providerSegment,
-      { text: responsePrompt(regenerationPrompt(previousExchanges, target), target.automatic), imagePath: session.imagePath },
+      { text: responsePrompt(regenerationPrompt(previousExchanges, target), target.automatic), imagePaths: this.pathsForAttachmentIds(session, attachmentIds) },
       { detectMetadata: true, detectWebSearch: true }
     )
   }
@@ -241,7 +275,7 @@ export class QuestionSessions {
       session,
       exchange,
       segment,
-      { text: responsePrompt(exchange.question, exchange.automatic, true), imagePath: session.imagePath, webSearchAllowed: true },
+      { text: responsePrompt(exchange.question, exchange.automatic, true), imagePaths: this.imagePathsForTurn(session, segment, false, []), webSearchAllowed: true },
       { detectMetadata: true, detectWebSearch: false }
     )
     return this.snapshot(session)
@@ -257,7 +291,26 @@ export class QuestionSessions {
     if (session.selection && segment?.conversationId) await this.providers.cancel(segment.conversationId, session.selection.provider)
   }
   async close(id: string): Promise<void> { const session = this.requireSession(id); if (session.window && !session.window.isDestroyed()) session.window.close(); await this.cleanup(id) }
-  async newSnip(id: string): Promise<void> { await this.close(id); await this.startNewCapture() }
+  async addSnip(id: string): Promise<void> {
+    const session = await this.requireInitializedSession(id)
+    if (session.busy) throw new Error('Wait for the current answer or press Stop before adding another screenshot.')
+    if (session.capturePending) return
+    session.capturePending = true
+    this.emitChanged(session)
+    try {
+      await this.startCapture({
+        onCompleted: (capture) => this.attachCapture(id, capture),
+        onCancelled: () => { void this.finishCapture(id) }
+      })
+    } catch (error) {
+      await this.finishCapture(id)
+      throw error
+    }
+  }
+  async newChat(id: string): Promise<void> {
+    await this.close(id)
+    await this.startCapture()
+  }
   async dispose(): Promise<void> { await Promise.all([...this.sessions.keys()].map((id) => this.cleanup(id))) }
 
   private async selectInitial(session: QuestionSession): Promise<void> {
@@ -268,7 +321,8 @@ export class QuestionSessions {
     if (segment) this.startInitialAnalysis(session, segment)
   }
   private startInitialAnalysis(session: QuestionSession, providerSegment: ProviderSegmentState): void {
-    const exchange: ConversationExchange = { id: randomUUID(), question: INITIAL_QUESTION, answer: '', phase: 'connecting', segmentId: providerSegment.segment.id, automatic: true }
+    const attachmentIds = session.attachments.map((attachment) => attachment.id)
+    const exchange: ConversationExchange = { id: randomUUID(), question: INITIAL_QUESTION, answer: '', phase: 'connecting', segmentId: providerSegment.segment.id, attachmentIds, automatic: true }
     session.exchanges.push(exchange)
     session.busy = true
     this.setPhase(session, exchange, 'connecting')
@@ -282,12 +336,11 @@ export class QuestionSessions {
           return
         }
         providerSegment.conversationId = conversationId
-        providerSegment.screenshotAttached = true
         await this.runTurn(
           session,
           exchange,
           providerSegment,
-          { text: responsePrompt(INITIAL_QUESTION, true), imagePath: session.imagePath },
+          { text: responsePrompt(INITIAL_QUESTION, true), imagePaths: this.pathsForAttachmentIds(session, attachmentIds) },
           { detectMetadata: true, detectWebSearch: true }
         )
       } catch (error) {
@@ -301,15 +354,15 @@ export class QuestionSessions {
   }
   private startSegment(session: QuestionSession, switchedProvider: boolean, disclosureOverride?: string): ProviderSegmentState | undefined {
     if (!session.selection) return undefined
-    const disclosure = disclosureOverride ?? (switchedProvider ? 'Provider changed. The new provider receives the screenshot once and only messages sent from this point; earlier transcript remains local.' : null)
+    const disclosure = disclosureOverride ?? (switchedProvider ? 'Provider changed. The new provider receives the conversation screenshots required for this turn and only messages sent from this point; earlier transcript remains local.' : null)
     const segment: ConversationSegment = { id: randomUUID(), selection: structuredClone(session.selection), startedAt: new Date().toISOString(), disclosure }
-    const state: ProviderSegmentState = { segment, conversationId: null, screenshotAttached: false }
+    const state: ProviderSegmentState = { segment, conversationId: null }
     session.segments.push(state); session.disclosure = disclosure
     return state
   }
   private setPhase(session: QuestionSession, exchange: ConversationExchange, phase: ResponsePhase): void { session.phase = phase; exchange.phase = phase }
   private pendingWebSearch(session: QuestionSession): ConversationExchange | undefined { return session.exchanges.find((exchange) => exchange.webSearch?.status === 'requested') }
-  private async runTurn(session: QuestionSession, exchange: ConversationExchange, providerSegment: ProviderSegmentState, input: { text: string; imagePath?: string; webSearchAllowed?: boolean; webSearchPreferred?: boolean }, controls: ResponseControlOptions): Promise<void> {
+  private async runTurn(session: QuestionSession, exchange: ConversationExchange, providerSegment: ProviderSegmentState, input: { text: string; imagePaths?: string[]; webSearchAllowed?: boolean; webSearchPreferred?: boolean }, controls: ResponseControlOptions): Promise<void> {
     let probe = ''
     let probing = controls.detectMetadata || controls.detectWebSearch
     const appendAnswer = (text: string): void => {
@@ -410,6 +463,46 @@ export class QuestionSessions {
   }
   private async safeModels(profileId: string): Promise<ProviderModelCapability[]> { try { return await this.providers.listModels(profileId) } catch { return [] } }
   private emit(session: QuestionSession, event: ProviderEvent): void { if (session.window && !session.window.isDestroyed()) session.window.webContents.send(IPC.questionEvent, session.id, event) }
+  private emitChanged(session: QuestionSession, state = this.snapshot(session)): void { if (session.window && !session.window.isDestroyed()) session.window.webContents.send(IPC.questionStateChanged, state) }
+  private createAttachment(imagePath: string, status: QuestionAttachment['status']): SessionAttachment {
+    const image = nativeImage.createFromPath(imagePath)
+    return { id: randomUUID(), imagePath, thumbnailDataUrl: image.resize({ width: Math.min(380, image.getSize().width), quality: 'good' }).toDataURL(), status }
+  }
+  private requireAttachment(session: QuestionSession, attachmentId: string): SessionAttachment {
+    const attachment = session.attachments.find((candidate) => candidate.id === attachmentId)
+    if (!attachment) throw new Error('That screenshot is no longer attached.')
+    return attachment
+  }
+  private pathsForAttachmentIds(session: QuestionSession, attachmentIds: string[]): string[] {
+    return attachmentIds.map((attachmentId) => this.requireAttachment(session, attachmentId).imagePath)
+  }
+  private imagePathsForTurn(session: QuestionSession, providerSegment: ProviderSegmentState, freshProviderContext: boolean, draftAttachmentIds: string[]): string[] {
+    if (providerSegment.segment.selection.provider !== 'chatgpt' || freshProviderContext) {
+      return session.attachments.filter((attachment) => attachment.status === 'sent').map((attachment) => attachment.imagePath)
+    }
+    return this.pathsForAttachmentIds(session, draftAttachmentIds)
+  }
+  private async attachCapture(id: string, capture: CompletedCapture): Promise<void> {
+    const session = this.sessions.get(id)
+    if (!session || session.cleaningUp) {
+      await this.screenshots.delete(capture.imagePath)
+      return
+    }
+    session.attachments.push(this.createAttachment(capture.imagePath, 'draft'))
+    session.capturePending = false
+    this.emitChanged(session)
+    if (session.window && !session.window.isDestroyed()) {
+      session.window.show()
+      session.window.focus()
+    }
+  }
+  private async finishCapture(id: string): Promise<void> {
+    const session = this.sessions.get(id)
+    if (!session || !session.capturePending) return
+    session.capturePending = false
+    this.emitChanged(session)
+    if (session.window && !session.window.isDestroyed()) session.window.focus()
+  }
   private createQuestionWindow(capture: CompletedCapture, session: QuestionSession, material: WindowMaterial): BrowserWindow {
     const appearance = getWindowAppearanceOptions(QUESTION_WINDOW_SIZES, material, capture.display.workArea)
     const selection = { x: capture.display.bounds.x + capture.selectedBounds.x, y: capture.display.bounds.y + capture.selectedBounds.y, width: capture.selectedBounds.width, height: capture.selectedBounds.height }
@@ -417,11 +510,11 @@ export class QuestionSessions {
     const window = secureWindow({ x: placement.x, y: placement.y, width: placement.width, height: placement.height, minWidth: appearance.minimumSize.width, minHeight: appearance.minimumSize.height, frame: appearance.frame, transparent: appearance.transparent, backgroundColor: appearance.backgroundColor, show: appearance.show, useContentSize: appearance.useContentSize, hasShadow: appearance.hasShadow, resizable: false, maximizable: false, minimizable: appearance.minimizable, closable: appearance.closable, movable: appearance.movable, fullscreenable: appearance.fullscreenable, thickFrame: false, roundedCorners: appearance.roundedCorners, alwaysOnTop: session.pinned, skipTaskbar: false, title: 'Fovea', autoHideMenuBar: true })
     session.window = window; window.webContents.setWindowOpenHandler(() => ({ action: 'deny' })); window.once('closed', () => { if (session.window === window) void this.cleanup(session.id) }); return window
   }
-  private snapshot(session: QuestionSession): QuestionViewState { return { sessionId: session.id, thumbnailDataUrl: session.thumbnailDataUrl, phase: session.phase, exchanges: structuredClone(session.exchanges), segments: session.segments.map((item) => structuredClone(item.segment)), selection: session.selection ? structuredClone(session.selection) : null, profiles: this.providers.listProfiles(), models: structuredClone(session.models), disclosure: session.disclosure, busy: session.busy, pinned: session.pinned } }
+  private snapshot(session: QuestionSession): QuestionViewState { return { sessionId: session.id, attachments: session.attachments.map(({ id, thumbnailDataUrl, status }) => ({ id, thumbnailDataUrl, status })), capturePending: session.capturePending, phase: session.phase, exchanges: structuredClone(session.exchanges), segments: session.segments.map((item) => structuredClone(item.segment)), selection: session.selection ? structuredClone(session.selection) : null, profiles: this.providers.listProfiles(), models: structuredClone(session.models), disclosure: session.disclosure, busy: session.busy, pinned: session.pinned } }
   private async requireInitializedSession(id: string): Promise<QuestionSession> { const session = this.requireSession(id); await session.initialization; if (this.sessions.get(id) !== session) throw new Error('This capture session has already closed.'); return session }
   private requireSession(id: string): QuestionSession { const session = this.sessions.get(id); if (!session) throw new Error('This capture session has already closed.'); return session }
-  private closePreview(session: QuestionSession): void { const preview = session.previewWindow; session.previewWindow = null; if (preview && !preview.isDestroyed()) preview.close() }
-  private async cleanup(id: string): Promise<void> { const session = this.sessions.get(id); if (!session || session.cleaningUp) return; session.cleaningUp = true; this.sessions.delete(id); this.closePreview(session); await this.screenshots.delete(session.imagePath); await Promise.all(session.segments.flatMap((item) => item.conversationId ? [this.providers.deleteConversation(item.conversationId, item.segment.selection.provider).catch(() => undefined)] : [])) }
+  private closePreview(session: QuestionSession): void { const preview = session.previewWindow; session.previewWindow = null; session.previewAttachmentId = null; if (preview && !preview.isDestroyed()) preview.close() }
+  private async cleanup(id: string): Promise<void> { const session = this.sessions.get(id); if (!session || session.cleaningUp) return; session.cleaningUp = true; this.sessions.delete(id); this.closePreview(session); await Promise.all(session.attachments.map((attachment) => this.screenshots.delete(attachment.imagePath))); await Promise.all(session.segments.flatMap((item) => item.conversationId ? [this.providers.deleteConversation(item.conversationId, item.segment.selection.provider).catch(() => undefined)] : [])) }
 }
 
 function parseWebSearchRequest(value: string): string | null {

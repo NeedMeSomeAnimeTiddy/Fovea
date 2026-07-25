@@ -56,16 +56,17 @@ export function registerIpc(dependencies: IpcDependencies): void {
   handle(IPC.captureCancel, () => dependencies.capture.cancel())
 
   handle(IPC.questionGet, (_event, id) => dependencies.questions.get(requireId(id)))
-  handle(IPC.questionGetFullImage, (_event, id) => dependencies.questions.getFullImage(requireId(id)), 'capture-failed')
+  handle(IPC.questionGetFullImage, (_event, id, attachmentId) => dependencies.questions.getFullImage(requireId(id), requireId(attachmentId)), 'capture-failed')
   handle(IPC.questionSetSelection, (_event, id, selection) => dependencies.questions.setSelection(requireId(id), requireSelection(selection)), 'validation')
   handle(IPC.questionSetPinned, (_event, id, pinned) => {
     if (typeof pinned !== 'boolean') throw new Error('Invalid pin state.')
     return dependencies.questions.setPinned(requireId(id), pinned)
   }, 'validation')
-  handle(IPC.questionSetPreviewOpen, (_event, id, open) => {
-    if (typeof open !== 'boolean') throw new Error('Invalid preview state.')
-    return dependencies.questions.setPreviewOpen(requireId(id), open)
+  handle(IPC.questionSetPreviewOpen, (_event, id, attachmentId) => {
+    if (attachmentId !== null && typeof attachmentId !== 'string') throw new Error('Invalid preview attachment.')
+    return dependencies.questions.setPreviewOpen(requireId(id), attachmentId === null ? null : requireId(attachmentId))
   }, 'validation')
+  handle(IPC.questionRemoveAttachment, (_event, id, attachmentId) => dependencies.questions.removeAttachment(requireId(id), requireId(attachmentId)), 'validation')
   handle(IPC.questionSend, (_event, id, text, preferWebSearch = false) => {
     if (typeof preferWebSearch !== 'boolean') throw new Error('Invalid web-search preference.')
     return dependencies.questions.send(requireId(id), requireString(text, 10_000), preferWebSearch)
@@ -74,7 +75,8 @@ export function registerIpc(dependencies: IpcDependencies): void {
   handle(IPC.questionResolveWebSearch, (_event, id, requestId, approved) => { if (typeof approved !== 'boolean') throw new Error('Invalid web-search approval.'); return dependencies.questions.resolveWebSearch(requireId(id), requireId(requestId), approved) }, 'provider-unavailable')
   handle(IPC.questionStop, (_event, id) => dependencies.questions.stop(requireId(id)))
   handle(IPC.questionClose, (_event, id) => dependencies.questions.close(requireId(id)))
-  handle(IPC.questionNewSnip, (_event, id) => dependencies.questions.newSnip(requireId(id)), 'capture-failed')
+  handle(IPC.questionAddSnip, (_event, id) => dependencies.questions.addSnip(requireId(id)), 'capture-failed')
+  handle(IPC.questionNewChat, (_event, id) => dependencies.questions.newChat(requireId(id)), 'capture-failed')
   handle(IPC.applicationOpenSettings, () => showSettingsWindow())
 
   ipcMain.handle(IPC.windowChromeGetState, (event) => requireWindowChromeController(event).getState())
