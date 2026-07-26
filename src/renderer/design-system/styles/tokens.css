@@ -1,78 +1,75 @@
 /*
- * Tier 1: private reference values. Only this file and theme files may use
- * --fovea-ref-* names. Renderer and component CSS consume semantic tokens.
- *
- * This file also owns theme-invariant public scales: typography, spacing,
- * sizing, radii, border widths, motion, and layer order.
+ * Tier 1 reference values and theme-invariant scales.
+ * Renderer and component CSS consume only public --fovea-* semantic tokens.
  */
 
 :root {
   /* Reference palette: neutral */
   --fovea-ref-neutral-0: #ffffff;
-  --fovea-ref-neutral-50: #f5f5f5;
-  --fovea-ref-neutral-200: #d4d4d4;
-  --fovea-ref-neutral-300: #a3a3a3;
-  --fovea-ref-neutral-400: #8a8a8a;
-  --fovea-ref-neutral-600: #525252;
-  --fovea-ref-neutral-700: #303030;
-  --fovea-ref-neutral-800: #202020;
-  --fovea-ref-neutral-900: #171717;
-  --fovea-ref-neutral-950: #101010;
-  --fovea-ref-neutral-1000: #0a0a0a;
+  --fovea-ref-neutral-50: #f5f5f7;
+  --fovea-ref-neutral-200: #d1d1d6;
+  --fovea-ref-neutral-300: #aeaeb2;
+  --fovea-ref-neutral-400: #8e8e93;
+  --fovea-ref-neutral-600: #636366;
+  --fovea-ref-neutral-700: #3a3a3c;
+  --fovea-ref-neutral-800: #2c2c2e;
+  --fovea-ref-neutral-900: #1c1c1e;
+  --fovea-ref-neutral-950: #111216;
+  --fovea-ref-neutral-1000: #08090c;
 
-  /* Reference palette: restrained accents */
-  --fovea-ref-cyan-200: #a9edfb;
-  --fovea-ref-cyan-300: #67d9f5;
-  --fovea-ref-cyan-400: #43c5e7;
-  --fovea-ref-cyan-600: #217c95;
-  --fovea-ref-cyan-800: #123e4c;
+  /* Reference palette: primary blue and secondary violet */
+  --fovea-ref-cyan-200: #b8e0ff;
+  --fovea-ref-cyan-300: #64b5ff;
+  --fovea-ref-cyan-400: #0a84ff;
+  --fovea-ref-cyan-600: #0066cc;
+  --fovea-ref-cyan-800: #163f68;
 
-  --fovea-ref-violet-200: #d5ceff;
-  --fovea-ref-violet-300: #aa9cff;
-  --fovea-ref-violet-500: #7c6ee6;
-  --fovea-ref-violet-800: #312867;
+  --fovea-ref-violet-200: #e0c7ff;
+  --fovea-ref-violet-300: #bf8cff;
+  --fovea-ref-violet-500: #8e5bd9;
+  --fovea-ref-violet-800: #40245f;
 
   /* Reference palette: semantic states */
-  --fovea-ref-green-300: #7edca3;
-  --fovea-ref-green-700: #236a45;
-  --fovea-ref-green-900: #102a1f;
+  --fovea-ref-green-300: #6ee7a2;
+  --fovea-ref-green-700: #248a4d;
+  --fovea-ref-green-900: #11291b;
 
-  --fovea-ref-amber-300: #f3c677;
-  --fovea-ref-amber-700: #775113;
-  --fovea-ref-amber-900: #2a1d09;
+  --fovea-ref-amber-300: #ffd37a;
+  --fovea-ref-amber-700: #9a6410;
+  --fovea-ref-amber-900: #302109;
 
-  --fovea-ref-red-300: #ff8f9b;
-  --fovea-ref-red-600: #c94d61;
-  --fovea-ref-red-800: #6f2635;
-  --fovea-ref-red-900: #35141c;
+  --fovea-ref-red-300: #ff8a82;
+  --fovea-ref-red-600: #ff453a;
+  --fovea-ref-red-800: #8b2b2a;
+  --fovea-ref-red-900: #351515;
 
-  --fovea-ref-blue-300: #77c8ff;
-  --fovea-ref-blue-700: #276d9f;
-  --fovea-ref-blue-900: #0b2236;
+  --fovea-ref-blue-300: #74b9ff;
+  --fovea-ref-blue-700: #1b6fb8;
+  --fovea-ref-blue-900: #0d2438;
 
   /* Typography */
-  --fovea-font-ui: 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
-  --fovea-font-mono: 'Cascadia Mono', Consolas, monospace;
+  --fovea-font-ui: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
+  --fovea-font-mono: 'SFMono-Regular', 'Cascadia Mono', Consolas, monospace;
 
   --fovea-type-caption: 0.6875rem;
   --fovea-type-label: 0.75rem;
   --fovea-type-body-sm: 0.8125rem;
   --fovea-type-body: 0.875rem;
   --fovea-type-title-sm: 1rem;
-  --fovea-type-title: 1.25rem;
-  --fovea-type-display: 1.75rem;
+  --fovea-type-title: 1.5rem;
+  --fovea-type-display: 2rem;
 
-  --fovea-leading-tight: 1.2;
+  --fovea-leading-tight: 1.18;
   --fovea-leading-ui: 1.35;
-  --fovea-leading-body: 1.55;
+  --fovea-leading-body: 1.52;
 
   --fovea-weight-regular: 400;
   --fovea-weight-medium: 500;
   --fovea-weight-semibold: 600;
   --fovea-weight-bold: 700;
 
-  --fovea-tracking-label: 0.02em;
-  --fovea-tracking-eyebrow: 0.12em;
+  --fovea-tracking-label: 0.01em;
+  --fovea-tracking-eyebrow: 0.08em;
 
   /* Spacing */
   --fovea-space-0: 0;
@@ -86,19 +83,21 @@
   --fovea-space-12: 1.5rem;
   --fovea-space-16: 2rem;
   --fovea-space-20: 2.5rem;
+  --fovea-space-24: 3rem;
 
   /* Interactive target sizes */
-  --fovea-control-target-minimum: 1.5rem;
-  --fovea-control-target-compact: 2rem;
-  --fovea-control-target-default: 2.25rem;
+  --fovea-control-target-minimum: 1.75rem;
+  --fovea-control-target-compact: 2.125rem;
+  --fovea-control-target-default: 2.5rem;
   --fovea-control-target-icon: 2.25rem;
 
-  /* Radii */
-  --fovea-radius-xs: 0.375rem;
-  --fovea-radius-sm: 0.5rem;
-  --fovea-radius-md: 0.75rem;
-  --fovea-radius-lg: 1rem;
-  --fovea-radius-xl: 1.25rem;
+  /* One shared, continuous corner scale */
+  --fovea-radius-xs: 0.5rem;
+  --fovea-radius-sm: 0.75rem;
+  --fovea-radius-md: 1rem;
+  --fovea-radius-lg: 1.375rem;
+  --fovea-radius-xl: 1.75rem;
+  --fovea-radius-2xl: 2.25rem;
   --fovea-radius-round: 999px;
 
   /* Border dimensions */
@@ -107,15 +106,15 @@
   --fovea-border-style: solid;
 
   /* Motion */
-  --fovea-motion-instant: 120ms;
+  --fovea-motion-instant: 110ms;
   --fovea-motion-fast: 160ms;
-  --fovea-motion-standard: 200ms;
-  --fovea-motion-deliberate: 240ms;
-  --fovea-spectral-cycle-gentle: 8s;
+  --fovea-motion-standard: 220ms;
+  --fovea-motion-deliberate: 280ms;
+  --fovea-spectral-cycle-gentle: 12s;
   --fovea-spectral-cycle-thinking: 5s;
-  --fovea-spectral-cycle-streaming: 6s;
+  --fovea-spectral-cycle-streaming: 7s;
 
-  --fovea-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --fovea-ease-standard: cubic-bezier(0.25, 0.1, 0.25, 1);
   --fovea-ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
   --fovea-ease-exit: cubic-bezier(0.4, 0, 1, 1);
 
@@ -128,7 +127,7 @@
   --fovea-loading-opacity: 0.72;
   --fovea-cursor-disabled: not-allowed;
 
-  /* Layer order. Elevation shadows are theme-owned. */
+  /* Layer order */
   --fovea-z-content: 0;
   --fovea-z-chrome: 100;
   --fovea-z-overlay: 1000;

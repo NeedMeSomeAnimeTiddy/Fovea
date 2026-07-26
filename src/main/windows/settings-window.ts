@@ -12,8 +12,8 @@ import {
 import { loadRenderer, secureWindow } from './window-factory'
 
 const SETTINGS_WINDOW_SIZES: WindowSurfaceSizes = {
-  surfaceSize: { width: 600, height: 640 },
-  minimumSurfaceSize: { width: 600, height: 640 }
+  surfaceSize: { width: 720, height: 680 },
+  minimumSurfaceSize: { width: 720, height: 680 }
 }
 
 export const SETTINGS_WINDOW_READY_TIMEOUT_MS = WINDOW_CHROME_READY_TIMEOUT_MS

@@ -8,6 +8,7 @@ body,
 .response-shell {
   height: 100%;
   min-height: 0;
+  background: transparent;
 }
 
 .response-loading {
@@ -20,6 +21,16 @@ body,
   color: var(--fovea-color-text-secondary);
   text-align: center;
   -webkit-app-region: drag;
+}
+
+.response-loading::before {
+  width: var(--fovea-space-24);
+  height: var(--fovea-space-24);
+  border-radius: var(--fovea-radius-round);
+  background: var(--fovea-color-selection-fill);
+  box-shadow: var(--fovea-glow-accent);
+  content: '';
+  filter: blur(var(--fovea-space-8));
 }
 
 .response-loading strong {
@@ -73,11 +84,23 @@ body,
   justify-content: space-between;
   gap: var(--fovea-space-6);
   padding:
-    var(--fovea-space-4)
-    calc((var(--fovea-control-target-compact) * 3) + var(--fovea-space-8))
-    var(--fovea-space-4)
-    var(--fovea-space-8);
+    var(--fovea-space-2)
+    calc((var(--fovea-control-target-compact) * 3) + var(--fovea-space-16))
+    var(--fovea-space-2)
+    var(--fovea-space-4);
+  margin: var(--fovea-space-4) var(--fovea-space-6) 0;
+  background: var(--fovea-glass-fill-default);
+  border: var(--fovea-border-glass);
+  border-radius: var(--fovea-radius-lg);
+  box-shadow: var(--fovea-shadow-surface);
   -webkit-app-region: drag;
+  backdrop-filter: blur(var(--fovea-material-blur-strong)) saturate(var(--fovea-material-saturation));
+  -webkit-backdrop-filter: blur(var(--fovea-material-blur-strong)) saturate(var(--fovea-material-saturation));
+}
+
+.question-toasts {
+  top: calc(var(--fovea-control-target-default) + var(--fovea-space-8));
+  width: min(20rem, calc(100vw - var(--fovea-space-12)));
 }
 
 .friendly-status {
@@ -85,7 +108,12 @@ body,
   min-width: 0;
   align-items: center;
   gap: var(--fovea-space-3);
+  min-height: var(--fovea-control-target-minimum);
+  padding: var(--fovea-space-1) var(--fovea-space-4);
   color: var(--fovea-color-text-tertiary);
+  background: var(--fovea-glass-fill-subtle);
+  border: var(--fovea-border-width) var(--fovea-border-style) transparent;
+  border-radius: var(--fovea-radius-round);
   font-size: var(--fovea-type-caption);
   font-weight: var(--fovea-weight-medium);
 }
@@ -108,7 +136,9 @@ body,
   min-width: auto;
   border-radius: var(--fovea-radius-round);
   color: var(--fovea-color-text-primary);
-  background: var(--fovea-glass-fill-subtle);
+  background: var(--fovea-glass-fill-default);
+  border-color: var(--fovea-glass-edge-light);
+  box-shadow: var(--fovea-shadow-inset-highlight);
 }
 
 .ask-trigger:not(:disabled):hover,
@@ -131,17 +161,26 @@ body,
 .capture-menu {
   position: absolute;
   z-index: var(--fovea-z-overlay);
-  border-radius: var(--fovea-radius-md);
-  background: var(--fovea-glass-fill-strong);
+  overflow: hidden;
+  background-image: var(--fovea-glass-highlight);
+  border: var(--fovea-border-glass);
+  border-radius: var(--fovea-radius-lg);
+  background-color: var(--fovea-glass-fill-strong);
   box-shadow: var(--fovea-elevation-overlay);
   animation: menu-in var(--fovea-motion-fast) var(--fovea-ease-enter);
+  backdrop-filter: blur(var(--fovea-material-blur-strong)) saturate(var(--fovea-material-saturation));
+  -webkit-backdrop-filter: blur(var(--fovea-material-blur-strong)) saturate(var(--fovea-material-saturation));
 }
 
 .ask-menu {
-  top: calc(100% + var(--fovea-space-3));
-  right: 0;
-  width: min(22rem, calc(100vw - var(--fovea-space-20)));
-  overflow: hidden;
+  position: fixed;
+  top: calc(var(--fovea-control-target-default) + var(--fovea-space-16));
+  right: var(--fovea-space-10);
+  left: var(--fovea-space-10);
+  width: auto;
+  max-height: calc(100vh - var(--fovea-space-24) - var(--fovea-control-target-default));
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .ask-menu__heading,
@@ -330,6 +369,7 @@ body,
 .ask-menu__custom {
   padding: var(--fovea-space-3);
   background: var(--fovea-glass-fill-subtle);
+  border-top: var(--fovea-border-surface);
 }
 
 .custom-trigger {
@@ -365,7 +405,7 @@ body,
   min-height: 0;
   flex: 1;
   overflow-y: auto;
-  padding: var(--fovea-space-8);
+  padding: var(--fovea-space-10);
   scrollbar-gutter: stable;
   scroll-behavior: smooth;
 }
@@ -375,7 +415,7 @@ body,
   min-height: 100%;
   flex-direction: column;
   justify-content: flex-end;
-  gap: var(--fovea-space-8);
+  gap: var(--fovea-space-10);
 }
 
 .conversation-turn {
@@ -388,7 +428,9 @@ body,
   max-width: 92%;
   padding: var(--fovea-space-6) var(--fovea-space-8);
   overflow-wrap: anywhere;
-  border-radius: var(--fovea-radius-md);
+  border: var(--fovea-border-glass);
+  border-radius: var(--fovea-radius-lg);
+  box-shadow: var(--fovea-shadow-surface);
   animation: message-in var(--fovea-motion-fast) var(--fovea-ease-enter);
 }
 
@@ -396,8 +438,10 @@ body,
   align-self: flex-end;
   max-width: 82%;
   border-bottom-right-radius: var(--fovea-radius-xs);
-  color: var(--fovea-color-text-primary);
-  background: var(--fovea-glass-fill-default);
+  color: var(--fovea-color-text-on-accent);
+  background: var(--fovea-color-accent);
+  border-color: transparent;
+  box-shadow: var(--fovea-glow-accent);
   font-size: var(--fovea-type-body-sm);
   line-height: var(--fovea-leading-body);
 }
@@ -405,7 +449,9 @@ body,
 .conversation-message--assistant {
   align-self: flex-start;
   border-bottom-left-radius: var(--fovea-radius-xs);
-  background: var(--fovea-glass-fill-subtle);
+  background: var(--fovea-glass-fill-default);
+  backdrop-filter: blur(var(--fovea-material-blur)) saturate(var(--fovea-material-saturation));
+  -webkit-backdrop-filter: blur(var(--fovea-material-blur)) saturate(var(--fovea-material-saturation));
 }
 
 .conversation-message--opening {
@@ -447,6 +493,7 @@ body,
 .answer-details {
   margin-top: var(--fovea-space-10);
   padding-top: var(--fovea-space-6);
+  border-top: var(--fovea-border-surface);
 }
 
 .answer-details > summary {
@@ -547,7 +594,7 @@ body,
   top: var(--fovea-space-3);
   right: var(--fovea-space-3);
   border: var(--fovea-border-control);
-  border-radius: var(--fovea-radius-xs);
+  border-radius: var(--fovea-radius-sm);
   padding: var(--fovea-space-2) var(--fovea-space-3);
   color: var(--fovea-color-text-secondary);
   background: var(--fovea-surface-raised);
@@ -557,7 +604,7 @@ body,
 .answer-summary pre {
   overflow-x: auto;
   border: var(--fovea-border-surface);
-  border-radius: var(--fovea-radius-sm);
+  border-radius: var(--fovea-radius-md);
   padding: var(--fovea-space-6);
   background: var(--fovea-surface-sunken);
 }
@@ -613,7 +660,8 @@ body,
   padding: var(--fovea-space-8);
   border: var(--fovea-border-width) var(--fovea-border-style) var(--fovea-color-accent);
   border-radius: var(--fovea-radius-md);
-  background: var(--fovea-surface-raised);
+  background: var(--fovea-glass-fill-default);
+  box-shadow: var(--fovea-shadow-surface);
 }
 
 .web-approval p {
@@ -647,9 +695,13 @@ body,
   align-items: center;
   gap: var(--fovea-space-4);
   padding: var(--fovea-space-3) var(--fovea-space-6);
-  border-top: var(--fovea-border-surface);
-  border-bottom: var(--fovea-border-surface);
-  background: var(--fovea-glass-fill-subtle);
+  margin: 0 var(--fovea-space-6) var(--fovea-space-3);
+  background: var(--fovea-glass-fill-default);
+  border: var(--fovea-border-glass);
+  border-radius: var(--fovea-radius-md);
+  box-shadow: var(--fovea-shadow-inset-highlight);
+  backdrop-filter: blur(var(--fovea-material-blur)) saturate(var(--fovea-material-saturation));
+  -webkit-backdrop-filter: blur(var(--fovea-material-blur)) saturate(var(--fovea-material-saturation));
 }
 
 .attachment-strip__label {
@@ -756,7 +808,15 @@ body,
   flex: none;
   align-items: center;
   gap: var(--fovea-space-2);
-  padding: var(--fovea-space-4);
+  gap: var(--fovea-space-3);
+  padding: var(--fovea-space-3);
+  margin: 0 var(--fovea-space-6) var(--fovea-space-6);
+  background: var(--fovea-glass-fill-default);
+  border: var(--fovea-border-glass);
+  border-radius: var(--fovea-radius-round);
+  box-shadow: var(--fovea-shadow-floating);
+  backdrop-filter: blur(var(--fovea-material-blur-strong)) saturate(var(--fovea-material-saturation));
+  -webkit-backdrop-filter: blur(var(--fovea-material-blur-strong)) saturate(var(--fovea-material-saturation));
 }
 
 .response-actions__spacer {

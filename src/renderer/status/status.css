@@ -2,6 +2,10 @@
   margin: 0 0 var(--fovea-space-3);
 }
 
+.app-status__message:last-child {
+  margin-bottom: 0;
+}
+
 .app-status__details {
   margin-top: var(--fovea-space-3);
 }

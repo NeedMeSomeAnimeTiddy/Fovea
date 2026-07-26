@@ -1,18 +1,34 @@
 import type { AppError, AppRecoveryKind } from '@shared/types/app-error'
 import { isAppError } from '../../shared/types/app-error'
 import type { ResponsePhase, SpectralEdgeState } from '@shared/types/app'
-import { Badge, Button, Spinner, StatusBanner, type BadgeTone } from '../design-system'
+import { Badge, Button, Spinner, Toast, type BadgeTone } from '../design-system'
 import './status.css'
 
 export interface AppStatusNoticeProps {
+  duration?: number
   error: AppError
+  onDismiss?: () => void
   onRecovery?: (recovery: AppRecoveryKind) => void
+  resetKey?: string | number
 }
 
-export function AppStatusNotice({ error, onRecovery }: AppStatusNoticeProps): React.JSX.Element {
+export function AppStatusNotice({
+  duration = 9000,
+  error,
+  onDismiss,
+  onRecovery,
+  resetKey
+}: AppStatusNoticeProps): React.JSX.Element {
   const label = recoveryLabel(error.recovery)
   return (
-    <StatusBanner role="alert" tone="error" title={error.title}>
+    <Toast
+      duration={duration}
+      onDismiss={onDismiss}
+      resetKey={resetKey ?? `${error.code}:${error.title}:${error.message}`}
+      role="alert"
+      tone="error"
+      title={error.title}
+    >
       <p className="app-status__message">{error.message}</p>
       {label && onRecovery ? (
         <Button size="compact" variant="secondary" onClick={() => onRecovery(error.recovery)}>{label}</Button>
@@ -23,7 +39,7 @@ export function AppStatusNotice({ error, onRecovery }: AppStatusNoticeProps): Re
           <code>{error.technicalDetails}</code>
         </details>
       ) : null}
-    </StatusBanner>
+    </Toast>
   )
 }
 

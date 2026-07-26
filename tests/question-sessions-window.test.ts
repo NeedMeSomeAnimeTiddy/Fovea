@@ -486,7 +486,7 @@ describe('question-session window migration', () => {
       minWidth: 400,
       minHeight: 320,
       transparent: false,
-      backgroundColor: '#f3f6fa',
+      backgroundColor: '#edf1f7',
       hasShadow: true,
       resizable: false,
       maximizable: false,

@@ -1,164 +1,125 @@
-/*
- * Tier 2: public semantic theme contract.
- *
- * This is the only Phase 2 stylesheet that selects a theme attribute. A future
- * appearance coordinator resolves data-appearance to data-theme before paint.
- * Components and renderer styles consume these names without selecting a theme.
- */
+/* Tier 2: dark semantic material contract. */
 
 :root,
 :root[data-theme='dark'] {
   color-scheme: dark;
 
-  /* Canvas and capture selection */
-  --fovea-color-canvas: var(--fovea-ref-neutral-950);
+  /* Canvas and ambient depth */
+  --fovea-color-canvas: #0b0c10;
   --fovea-color-canvas-deep: var(--fovea-ref-neutral-1000);
-  --fovea-color-scrim: rgba(7, 7, 7, 0.72);
-  --fovea-color-selection-fill: rgba(103, 217, 245, 0.14);
-  --fovea-color-selection-border: var(--fovea-ref-cyan-300);
-  --fovea-capture-scrim: rgba(5, 5, 5, 0.38);
-  --fovea-capture-hud-fill: rgba(20, 20, 20, 0.82);
-  --fovea-capture-hud-border: rgba(255, 255, 255, 0.16);
-  --fovea-capture-control-fill: rgba(255, 255, 255, 0.08);
-  --fovea-capture-control-fill-hover: rgba(255, 255, 255, 0.14);
-  --fovea-capture-text: rgba(255, 255, 255, 0.96);
-  --fovea-capture-text-muted: rgba(255, 255, 255, 0.64);
-  --fovea-capture-selection-stroke: rgba(255, 255, 255, 0.94);
-  --fovea-capture-selection-fill: rgba(255, 255, 255, 0.035);
-  --fovea-capture-guide: rgba(255, 255, 255, 0.26);
-  --fovea-capture-error: rgba(255, 146, 157, 0.96);
-  --fovea-capture-error-border: rgba(255, 146, 157, 0.54);
-  --fovea-capture-selection-glow: 0 0 0 1px rgba(0, 0, 0, 0.34), 0 0 18px rgba(255, 255, 255, 0.12);
-  --fovea-capture-hud-shadow: 0 18px 46px rgba(0, 0, 0, 0.36), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  --fovea-background-ambient:
+    radial-gradient(circle at 12% -8%, rgba(10, 132, 255, 0.18), transparent 36%),
+    radial-gradient(circle at 92% 108%, rgba(142, 91, 217, 0.13), transparent 40%);
+  --fovea-color-scrim: rgba(2, 3, 6, 0.76);
+  --fovea-color-selection-fill: rgba(10, 132, 255, 0.18);
+  --fovea-color-selection-border: var(--fovea-ref-cyan-400);
+
+  /* Capture overlay stays legible over arbitrary desktop content */
+  --fovea-capture-scrim: rgba(2, 3, 6, 0.46);
+  --fovea-capture-hud-fill: rgba(24, 25, 31, 0.76);
+  --fovea-capture-hud-border: rgba(255, 255, 255, 0.2);
+  --fovea-capture-control-fill: rgba(255, 255, 255, 0.1);
+  --fovea-capture-control-fill-hover: rgba(255, 255, 255, 0.17);
+  --fovea-capture-text: rgba(255, 255, 255, 0.98);
+  --fovea-capture-text-muted: rgba(255, 255, 255, 0.66);
+  --fovea-capture-selection-stroke: #73baff;
+  --fovea-capture-selection-fill: rgba(10, 132, 255, 0.06);
+  --fovea-capture-guide: rgba(115, 186, 255, 0.38);
+  --fovea-capture-error: rgba(255, 138, 130, 0.98);
+  --fovea-capture-error-border: rgba(255, 138, 130, 0.58);
+  --fovea-capture-selection-glow: 0 0 0 1px rgba(0, 0, 0, 0.42), 0 0 24px rgba(10, 132, 255, 0.25);
+  --fovea-capture-hud-shadow: 0 20px 52px rgba(0, 0, 0, 0.44), inset 0 1px 0 rgba(255, 255, 255, 0.1);
 
   /* Text */
   --fovea-color-text-primary: var(--fovea-ref-neutral-50);
   --fovea-color-text-secondary: var(--fovea-ref-neutral-200);
-  --fovea-color-text-tertiary: var(--fovea-ref-neutral-300);
+  --fovea-color-text-tertiary: var(--fovea-ref-neutral-400);
   --fovea-color-text-inverse: var(--fovea-ref-neutral-950);
-  --fovea-color-text-on-accent: var(--fovea-ref-neutral-1000);
-  --fovea-color-text-disabled: rgba(212, 212, 212, 0.48);
+  --fovea-color-text-on-accent: var(--fovea-ref-neutral-0);
+  --fovea-color-text-disabled: rgba(209, 209, 214, 0.42);
 
-  /* Interactive colour */
-  --fovea-color-accent: var(--fovea-ref-cyan-300);
-  --fovea-color-accent-hover: var(--fovea-ref-cyan-200);
-  --fovea-color-accent-pressed: var(--fovea-ref-cyan-400);
+  /* Interaction */
+  --fovea-color-accent: var(--fovea-ref-cyan-400);
+  --fovea-color-accent-hover: #409cff;
+  --fovea-color-accent-pressed: var(--fovea-ref-cyan-600);
   --fovea-color-accent-secondary: var(--fovea-ref-violet-300);
   --fovea-color-link: var(--fovea-ref-cyan-300);
   --fovea-color-link-hover: var(--fovea-ref-cyan-200);
 
   /* Destructive action */
-  --fovea-color-danger: var(--fovea-ref-red-300);
-  --fovea-color-danger-hover: var(--fovea-ref-red-600);
+  --fovea-color-danger: var(--fovea-ref-red-600);
+  --fovea-color-danger-hover: #ff6961;
   --fovea-color-danger-surface: var(--fovea-ref-red-900);
-  --fovea-color-on-danger: var(--fovea-ref-neutral-1000);
+  --fovea-color-on-danger: var(--fovea-ref-neutral-0);
 
-  /* Opaque and simulated-glass surfaces */
-  --fovea-surface-base: var(--fovea-ref-neutral-900);
-  --fovea-surface-sunken: var(--fovea-ref-neutral-1000);
-  --fovea-surface-raised: var(--fovea-ref-neutral-800);
-  --fovea-surface-overlay: var(--fovea-ref-neutral-700);
+  /* Layered surfaces */
+  --fovea-surface-base: rgba(24, 25, 30, 0.92);
+  --fovea-surface-sunken: rgba(0, 0, 0, 0.3);
+  --fovea-surface-raised: rgba(255, 255, 255, 0.075);
+  --fovea-surface-overlay: rgba(42, 43, 49, 0.96);
 
-  --fovea-glass-fill-subtle: rgba(18, 18, 18, 0.72);
-  --fovea-glass-fill-default: rgba(28, 28, 28, 0.82);
-  --fovea-glass-fill-strong: rgba(28, 28, 28, 0.92);
-  --fovea-glass-fill-solid-fallback: var(--fovea-surface-raised);
-  --fovea-glass-highlight: linear-gradient(180deg, rgba(243, 246, 251, 0.055), rgba(243, 246, 251, 0) 44%);
-  --fovea-glass-edge-light: rgba(243, 246, 251, 0.12);
-  --fovea-edge-glow-ambient: linear-gradient(105deg, rgba(66, 235, 255, 0.92), rgba(72, 136, 255, 0.82) 17%, rgba(145, 102, 255, 0.9) 34%, rgba(245, 104, 226, 0.86) 51%, rgba(255, 112, 137, 0.84) 67%, rgba(255, 190, 81, 0.82) 82%, rgba(89, 231, 180, 0.8) 94%, rgba(66, 235, 255, 0.92));
+  --fovea-glass-fill-subtle: rgba(20, 21, 27, 0.5);
+  --fovea-glass-fill-default: rgba(28, 29, 36, 0.67);
+  --fovea-glass-fill-strong: rgba(29, 30, 37, 0.84);
+  --fovea-glass-fill-solid-fallback: #1b1c21;
+  --fovea-glass-highlight:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0) 38%),
+    radial-gradient(circle at 15% 0%, rgba(100, 181, 255, 0.07), transparent 42%);
+  --fovea-glass-edge-light: rgba(255, 255, 255, 0.14);
+  --fovea-edge-glow-ambient: linear-gradient(120deg, rgba(10, 132, 255, 0.92), rgba(94, 92, 230, 0.68) 52%, rgba(191, 90, 242, 0.76));
+  --fovea-material-blur: 28px;
+  --fovea-material-blur-strong: 40px;
+  --fovea-material-saturation: 1.32;
 
   /* Borders */
-  --fovea-border-subtle: rgba(243, 246, 251, 0.08);
-  --fovea-border-default: rgba(243, 246, 251, 0.14);
-  --fovea-border-strong: rgba(243, 246, 251, 0.22);
-  --fovea-border-interactive: rgba(103, 217, 245, 0.62);
-  --fovea-border-disabled: rgba(243, 246, 251, 0.08);
+  --fovea-border-subtle: rgba(255, 255, 255, 0.075);
+  --fovea-border-default: rgba(255, 255, 255, 0.13);
+  --fovea-border-strong: rgba(255, 255, 255, 0.22);
+  --fovea-border-interactive: rgba(100, 181, 255, 0.72);
+  --fovea-border-disabled: rgba(255, 255, 255, 0.07);
   --fovea-border-control: var(--fovea-border-width) var(--fovea-border-style) var(--fovea-border-default);
   --fovea-border-surface: var(--fovea-border-width) var(--fovea-border-style) var(--fovea-border-subtle);
   --fovea-border-glass: var(--fovea-border-width) var(--fovea-border-style) var(--fovea-glass-edge-light);
 
-  /* Shadows, elevation, and restrained glow */
-  --fovea-shadow-surface: 0 10px 28px rgba(0, 0, 0, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.035);
-  --fovea-shadow-floating: 0 18px 46px rgba(0, 0, 0, 0.34), inset 0 1px 0 rgba(255, 255, 255, 0.045);
-  --fovea-shadow-overlay: 0 24px 64px rgba(0, 0, 0, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.05);
-  --fovea-shadow-inset-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.055);
-  --fovea-shadow-window: 0 4px 8px -5px rgba(0, 0, 0, 0.78),
-    0 1px 3px -1px rgba(0, 0, 0, 0.48);
-
+  /* Shadows and elevation */
+  --fovea-shadow-surface: 0 1px 1px rgba(0, 0, 0, 0.22), 0 10px 30px rgba(0, 0, 0, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  --fovea-shadow-floating: 0 2px 4px rgba(0, 0, 0, 0.22), 0 20px 54px rgba(0, 0, 0, 0.34), inset 0 1px 0 rgba(255, 255, 255, 0.055);
+  --fovea-shadow-overlay: 0 4px 10px rgba(0, 0, 0, 0.26), 0 28px 72px rgba(0, 0, 0, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.065);
+  --fovea-shadow-inset-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.09);
+  --fovea-shadow-window: 0 2px 5px rgba(0, 0, 0, 0.52), 0 18px 42px rgba(0, 0, 0, 0.46);
   --fovea-elevation-flat: none;
   --fovea-elevation-surface: var(--fovea-shadow-surface);
   --fovea-elevation-floating: var(--fovea-shadow-floating);
   --fovea-elevation-overlay: var(--fovea-shadow-overlay);
+  --fovea-glow-accent: 0 0 0 1px rgba(10, 132, 255, 0.16), 0 8px 24px rgba(10, 132, 255, 0.14);
+  --fovea-glow-focus: 0 0 0 1px rgba(10, 132, 255, 0.18), 0 0 22px rgba(10, 132, 255, 0.18);
+  --fovea-glow-status-error: 0 0 20px rgba(255, 69, 58, 0.17);
 
-  --fovea-glow-accent: 0 0 18px rgba(103, 217, 245, 0.12);
-  --fovea-glow-focus: 0 0 16px rgba(103, 217, 245, 0.16);
-  --fovea-glow-status-error: 0 0 16px rgba(255, 143, 155, 0.12);
-
-  /* Focus. The dark inner keyline plus coloured outer keyline remains visible
-   * against both bright controls and dark surfaces. */
+  /* Focus */
   --fovea-focus-color: var(--fovea-ref-cyan-300);
-  --fovea-focus-inner-color: var(--fovea-ref-neutral-950);
+  --fovea-focus-inner-color: var(--fovea-ref-neutral-1000);
   --fovea-focus-ring: 0 0 0 var(--fovea-focus-width) var(--fovea-focus-inner-color),
     0 0 0 calc(var(--fovea-focus-width) + var(--fovea-focus-offset)) var(--fovea-focus-color);
   --fovea-focus-ring-danger: 0 0 0 var(--fovea-focus-width) var(--fovea-focus-inner-color),
     0 0 0 calc(var(--fovea-focus-width) + var(--fovea-focus-offset)) var(--fovea-status-error-foreground);
 
-  /* Disabled and loading */
-  --fovea-surface-disabled: rgba(82, 82, 82, 0.32);
+  /* Disabled, loading, and status */
+  --fovea-surface-disabled: rgba(99, 99, 102, 0.22);
   --fovea-color-loading-indicator: var(--fovea-color-accent);
-
-  /* Information */
-  --fovea-status-info-foreground: var(--fovea-ref-blue-300);
-  --fovea-status-info-surface: var(--fovea-ref-blue-900);
-  --fovea-status-info-border: var(--fovea-ref-blue-300);
-  --fovea-status-info-icon: var(--fovea-ref-blue-300);
-
-  /* Success */
+  --fovea-status-info-foreground: #8bc7ff;
+  --fovea-status-info-surface: rgba(10, 132, 255, 0.13);
+  --fovea-status-info-border: rgba(100, 181, 255, 0.34);
+  --fovea-status-info-icon: #8bc7ff;
   --fovea-status-success-foreground: var(--fovea-ref-green-300);
-  --fovea-status-success-surface: var(--fovea-ref-green-900);
-  --fovea-status-success-border: var(--fovea-ref-green-300);
+  --fovea-status-success-surface: rgba(52, 199, 89, 0.12);
+  --fovea-status-success-border: rgba(110, 231, 162, 0.32);
   --fovea-status-success-icon: var(--fovea-ref-green-300);
-
-  /* Warning */
   --fovea-status-warning-foreground: var(--fovea-ref-amber-300);
-  --fovea-status-warning-surface: var(--fovea-ref-amber-900);
-  --fovea-status-warning-border: var(--fovea-ref-amber-300);
+  --fovea-status-warning-surface: rgba(255, 159, 10, 0.13);
+  --fovea-status-warning-border: rgba(255, 211, 122, 0.34);
   --fovea-status-warning-icon: var(--fovea-ref-amber-300);
-
-  /* Error */
   --fovea-status-error-foreground: var(--fovea-ref-red-300);
-  --fovea-status-error-surface: var(--fovea-ref-red-900);
-  --fovea-status-error-border: var(--fovea-ref-red-300);
+  --fovea-status-error-surface: rgba(255, 69, 58, 0.13);
+  --fovea-status-error-border: rgba(255, 138, 130, 0.34);
   --fovea-status-error-icon: var(--fovea-ref-red-300);
-}
-
-/* Explicit transparency fallback. This is independent of theme selection and
- * can later be set from an application preference or platform integration. */
-:root[data-transparency='off'] {
-  --fovea-glass-fill-subtle: var(--fovea-glass-fill-solid-fallback);
-  --fovea-glass-fill-default: var(--fovea-glass-fill-solid-fallback);
-  --fovea-glass-fill-strong: var(--fovea-glass-fill-solid-fallback);
-  --fovea-glass-highlight: none;
-  --fovea-glass-edge-light: var(--fovea-border-default);
-  --fovea-glow-accent: none;
-  --fovea-glow-focus: none;
-  --fovea-glow-status-error: none;
-}
-
-@media (prefers-contrast: more) {
-  :root,
-  :root[data-theme='dark'] {
-    --fovea-glass-fill-subtle: var(--fovea-glass-fill-solid-fallback);
-    --fovea-glass-fill-default: var(--fovea-glass-fill-solid-fallback);
-    --fovea-glass-fill-strong: var(--fovea-surface-overlay);
-    --fovea-glass-highlight: none;
-    --fovea-glass-edge-light: var(--fovea-border-strong);
-    --fovea-border-subtle: rgba(243, 246, 251, 0.2);
-    --fovea-border-default: rgba(243, 246, 251, 0.32);
-    --fovea-border-strong: rgba(243, 246, 251, 0.48);
-    --fovea-border-interactive: var(--fovea-color-accent);
-    --fovea-glow-accent: none;
-    --fovea-glow-focus: none;
-    --fovea-glow-status-error: none;
-  }
 }

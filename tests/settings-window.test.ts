@@ -236,10 +236,10 @@ describe('Settings window startup lifecycle', () => {
     const window = mocks.windows[0]!
     const { windowChromeRegistry } = await import('../src/main/windows/window-chrome')
     expect(window.options).toMatchObject({
-      width: 624,
-      height: 664,
-      minWidth: 624,
-      minHeight: 664,
+      width: 744,
+      height: 704,
+      minWidth: 744,
+      minHeight: 704,
       resizable: false,
       maximizable: false,
       minimizable: false,

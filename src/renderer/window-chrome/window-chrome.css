@@ -41,15 +41,19 @@ html:has(.window-shell) #root {
   border: var(--fovea-border-glass);
   border-radius: var(--fovea-radius-xl);
   background-color: var(--fovea-glass-fill-strong);
-  background-image: var(--fovea-glass-highlight);
+  background-image: var(--fovea-glass-highlight), var(--fovea-background-ambient);
+  background-position: center;
+  background-size: auto, cover;
   box-shadow: var(--fovea-shadow-window);
+  backdrop-filter: blur(var(--fovea-material-blur-strong)) saturate(var(--fovea-material-saturation));
+  -webkit-backdrop-filter: blur(var(--fovea-material-blur-strong)) saturate(var(--fovea-material-saturation));
 }
 
 .window-edge-glow {
   --window-edge-radius: var(--fovea-radius-xl);
-  --window-edge-opacity: 0.82;
+  --window-edge-opacity: 0.28;
   --window-edge-ambient: var(--fovea-edge-glow-ambient);
-  --window-edge-ambient-opacity: 0.56;
+  --window-edge-ambient-opacity: 0.22;
 
   position: absolute;
   inset: var(--window-frame-inset);
@@ -72,10 +76,9 @@ html:has(.window-shell) #root {
   background-position: 0% 50%;
   background-size: 260% 260%;
   content: '';
-  filter: blur(2px) saturate(1.42) brightness(1.18);
+  filter: blur(1px) saturate(1.08);
   opacity: var(--window-edge-ambient-opacity);
-  animation: fovea-edge-spectrum var(--fovea-spectral-cycle-gentle) linear infinite;
-  will-change: background-position;
+  animation: none;
   -webkit-mask: linear-gradient(currentColor 0 0) content-box, linear-gradient(currentColor 0 0);
   -webkit-mask-composite: xor;
   mask: linear-gradient(currentColor 0 0) content-box, linear-gradient(currentColor 0 0);
@@ -85,31 +88,36 @@ html:has(.window-shell) #root {
 .window-edge-glow[data-edge-state='connecting'],
 .window-edge-glow[data-edge-state='authenticating'],
 .window-edge-glow[data-edge-state='recovering'] {
-  --window-edge-opacity: 1;
-  --window-edge-ambient-opacity: 0.8;
+  --window-edge-opacity: 0.7;
+  --window-edge-ambient-opacity: 0.58;
 }
 
 .window-edge-glow[data-edge-state='thinking'] {
-  --window-edge-opacity: 1;
-  --window-edge-ambient-opacity: 0.88;
+  --window-edge-opacity: 0.78;
+  --window-edge-ambient-opacity: 0.66;
 }
 
+.window-edge-glow[data-edge-state='connecting']::before,
+.window-edge-glow[data-edge-state='authenticating']::before,
+.window-edge-glow[data-edge-state='recovering']::before,
 .window-edge-glow[data-edge-state='thinking']::before {
-  animation-duration: var(--fovea-spectral-cycle-thinking);
+  animation: fovea-edge-spectrum var(--fovea-spectral-cycle-thinking) linear infinite;
+  will-change: background-position;
 }
 
 .window-edge-glow[data-edge-state='streaming'] {
-  --window-edge-opacity: 1;
-  --window-edge-ambient-opacity: 0.84;
+  --window-edge-opacity: 0.74;
+  --window-edge-ambient-opacity: 0.62;
 }
 
 .window-edge-glow[data-edge-state='streaming']::before {
-  animation-duration: var(--fovea-spectral-cycle-streaming);
+  animation: fovea-edge-spectrum var(--fovea-spectral-cycle-streaming) linear infinite;
+  will-change: background-position;
 }
 
 .window-edge-glow[data-edge-state='completed'] {
-  --window-edge-opacity: 0.9;
-  --window-edge-ambient-opacity: 0.66;
+  --window-edge-opacity: 0.58;
+  --window-edge-ambient-opacity: 0.48;
 }
 
 .window-edge-glow[data-edge-state='stopped'] {
@@ -131,7 +139,7 @@ html:has(.window-shell) #root {
 }
 
 .window-shell[data-focused='false'] .window-edge-glow {
-  opacity: calc(var(--window-edge-opacity) * 0.76);
+  opacity: calc(var(--window-edge-opacity) * 0.58);
 }
 
 .window-shell[data-visible='false'] .window-edge-glow::before {
@@ -149,7 +157,7 @@ html:has(.window-shell) #root {
 .window-shell[data-focused='false'] .window-surface {
   color: var(--fovea-color-text-secondary);
   background-color: var(--fovea-glass-fill-default);
-  background-image: none;
+  background-image: var(--fovea-glass-highlight), var(--fovea-background-ambient);
   border: var(--fovea-border-surface);
 }
 
@@ -180,6 +188,8 @@ html:has(.window-shell) #root {
   gap: var(--fovea-space-8);
   padding: var(--fovea-space-3) var(--fovea-space-4) var(--fovea-space-3) var(--fovea-space-8);
   color: var(--fovea-color-text-primary);
+  background: var(--fovea-glass-fill-subtle);
+  border-bottom: var(--fovea-border-surface);
   -webkit-app-region: drag;
   user-select: none;
 }
@@ -217,9 +227,26 @@ html:has(.window-shell) #root {
   display: inline-flex;
   align-items: center;
   gap: var(--fovea-space-1);
+  padding: var(--fovea-space-1);
+  background: var(--fovea-glass-fill-default);
+  border: var(--fovea-border-glass);
+  border-radius: var(--fovea-radius-round);
+  box-shadow: var(--fovea-shadow-surface);
   isolation: isolate;
   pointer-events: auto;
   -webkit-app-region: no-drag;
+  backdrop-filter: blur(var(--fovea-material-blur)) saturate(var(--fovea-material-saturation));
+  -webkit-backdrop-filter: blur(var(--fovea-material-blur)) saturate(var(--fovea-material-saturation));
+}
+
+.window-compact-controls[data-integrated='true'] {
+  top: var(--fovea-space-6);
+  right: var(--fovea-space-8);
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .window-compact-controls,
@@ -233,6 +260,10 @@ html:has(.window-shell) #root {
   width: var(--fovea-control-target-compact);
   min-width: var(--fovea-control-target-compact);
   height: var(--fovea-control-target-compact);
+  min-height: var(--fovea-control-target-compact);
+  padding: var(--fovea-space-2);
+  border-radius: var(--fovea-radius-round);
+  aspect-ratio: 1;
 }
 
 .window-compact-controls .fui-window-controls__button .fui-icon-button__icon,
@@ -331,6 +362,11 @@ html:has(.window-shell) #root {
     animation: none !important;
     filter: none;
     will-change: auto;
+  }
+
+  .window-surface,
+  .window-compact-controls {
+    backdrop-filter: none;
   }
 
 }

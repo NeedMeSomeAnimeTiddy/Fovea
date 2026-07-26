@@ -3,8 +3,8 @@ import type { Rectangle, Size } from '@shared/types/geometry'
 import { deriveOuterSize, fitWindowSizesToWorkArea, type FittedWindowSizes } from './window-geometry'
 
 // Keep paired with --fovea-color-canvas in the renderer design system.
-export const WINDOW_BACKGROUND_COLOR = '#101010'
-export const WINDOW_LIGHT_BACKGROUND_COLOR = '#f3f6fa'
+export const WINDOW_BACKGROUND_COLOR = '#0b0c10'
+export const WINDOW_LIGHT_BACKGROUND_COLOR = '#edf1f7'
 export const WINDOW_TRANSPARENT_BACKGROUND_COLOR = '#00000000'
 let resolvedBackgroundColor = WINDOW_LIGHT_BACKGROUND_COLOR
 

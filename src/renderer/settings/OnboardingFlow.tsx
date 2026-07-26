@@ -3,7 +3,17 @@ import type { OnboardingTestCaptureResult, SettingsViewState } from '@shared/con
 import type { AppRecoveryKind } from '@shared/types/app-error'
 import type { OnboardingStatus, ProviderKind } from '@shared/types/app'
 import { acceleratorFromKeyInput } from '../../shared/shortcut-accelerator'
-import { Badge, Button, Card, Spinner, StatusBanner, TextInput } from '../design-system'
+import {
+  Badge,
+  BrandMark,
+  Button,
+  Card,
+  Spinner,
+  StatusBanner,
+  TextInput,
+  Toast,
+  ToastViewport
+} from '../design-system'
 import { AppStatusNotice, appErrorFromUnknown } from '../status/status-presentation'
 
 const STEPS = [
@@ -147,9 +157,29 @@ export function OnboardingFlow({
 
   return (
     <main className="onboarding-shell">
+      <ToastViewport className="onboarding-toasts">
+        {error && (
+          <AppStatusNotice
+            error={error}
+            onDismiss={() => setError(null)}
+            onRecovery={recover}
+          />
+        )}
+        {announcement && (
+          <Toast
+            icon={activity ? <Spinner /> : undefined}
+            onDismiss={() => setAnnouncement('')}
+            resetKey={announcement}
+            tone={activity ? 'info' : 'success'}
+          >
+            {announcement}
+          </Toast>
+        )}
+      </ToastViewport>
+
       <header className="onboarding-header">
         <div className="onboarding-brand">
-          <span aria-hidden="true" className="brand-mark">◉</span>
+          <BrandMark className="brand-mark" />
           <div><strong>Fovea</strong><span>Welcome tour</span></div>
         </div>
         <Badge tone="info">Step {step + 1} of {STEPS.length}</Badge>
@@ -192,9 +222,6 @@ export function OnboardingFlow({
             onTestCapture={() => void testCapture()}
           />
         )}
-
-        {error && <AppStatusNotice error={error} onRecovery={recover} />}
-        <p aria-live="polite" className="onboarding-announcement" role="status">{announcement}</p>
       </section>
 
       <footer className="onboarding-footer">

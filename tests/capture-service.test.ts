@@ -85,7 +85,7 @@ describe('frozen region capture', () => {
       height: 50,
       useContentSize: true,
       transparent: false,
-      backgroundColor: '#101010'
+      backgroundColor: '#0b0c10'
     }))
     expect(mocks.window.setContentBounds).toHaveBeenCalledWith(mocks.display.bounds, false)
     await expect(service.getContext(42)).resolves.toEqual({

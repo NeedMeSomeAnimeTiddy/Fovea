@@ -236,12 +236,13 @@ describe('Fovea design-system components', () => {
 
   it('can replace the full title bar with overlaid compact controls', () => {
     const markup = renderToStaticMarkup(
-      <WindowFrame showCompactControls showTitlebar={false} title="Fovea" titlebarActions={<span>Pin action</span>}>
+      <WindowFrame compactControlsIntegrated showCompactControls showTitlebar={false} title="Fovea" titlebarActions={<span>Pin action</span>}>
         Question content
       </WindowFrame>
     )
 
     expect(markup).toContain('class="window-compact-controls"')
+    expect(markup).toContain('data-integrated="true"')
     expect(markup).toContain('Pin action')
     expect(markup).toContain('aria-label="Minimize window"')
     expect(markup).toContain('aria-label="Close window"')

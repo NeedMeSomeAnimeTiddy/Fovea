@@ -17,7 +17,7 @@ interface StatusIconProps extends SVGProps<SVGSVGElement> {
   tone: StatusBannerTone
 }
 
-function StatusIcon({ tone, ...svgProps }: StatusIconProps): React.JSX.Element {
+export function StatusIcon({ tone, ...svgProps }: StatusIconProps): React.JSX.Element {
   const sharedProps = {
     ...svgProps,
     'aria-hidden': true,
