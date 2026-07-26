@@ -1,4 +1,4 @@
-/* Shared renderer foundations. Screen layout remains renderer-owned. */
+/* Shared renderer foundations. Screen geometry remains renderer-owned. */
 
 :root {
   font-family: var(--fovea-font-ui);
@@ -6,6 +6,8 @@
   background: var(--fovea-color-canvas);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 *,
@@ -22,9 +24,15 @@ body,
   margin: 0;
 }
 
+html {
+  background: var(--fovea-color-canvas);
+}
+
 body {
   color: var(--fovea-color-text-primary);
-  background: var(--fovea-color-canvas);
+  background-color: var(--fovea-color-canvas);
+  background-image: var(--fovea-background-ambient);
+  background-attachment: fixed;
   font-size: var(--fovea-type-body);
   line-height: var(--fovea-leading-ui);
 }
@@ -33,7 +41,12 @@ button,
 input,
 textarea,
 select {
+  color: inherit;
   font: inherit;
+}
+
+button {
+  user-select: none;
 }
 
 button:not(:disabled),
@@ -47,14 +60,58 @@ select:not(:disabled) {
   cursor: var(--fovea-cursor-disabled);
 }
 
+a {
+  color: var(--fovea-color-link);
+  text-decoration-color: color-mix(in srgb, currentColor 42%, transparent);
+  text-underline-offset: 0.16em;
+}
+
+a:hover {
+  color: var(--fovea-color-link-hover);
+}
+
 ::selection {
   color: var(--fovea-color-text-on-accent);
   background: var(--fovea-color-selection-border);
 }
 
-:where(button, [role='button'], a, input, textarea, select, [tabindex]:not([tabindex='-1'])):focus-visible {
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--fovea-border-strong) transparent;
+}
+
+::-webkit-scrollbar {
+  width: var(--fovea-space-3);
+  height: var(--fovea-space-3);
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--fovea-border-strong);
+  border-radius: var(--fovea-radius-round);
+}
+
+:where(button, [role='button'], a, input, textarea, select, summary, [tabindex]:not([tabindex='-1'])):focus-visible {
   outline: none;
   box-shadow: var(--fovea-focus-ring);
+}
+
+/* Material opt-out remains available for accessibility and platform fallback. */
+:root[data-transparency='off'] {
+  --fovea-glass-fill-subtle: var(--fovea-glass-fill-solid-fallback);
+  --fovea-glass-fill-default: var(--fovea-glass-fill-solid-fallback);
+  --fovea-glass-fill-strong: var(--fovea-glass-fill-solid-fallback);
+  --fovea-glass-highlight: none;
+  --fovea-glass-edge-light: var(--fovea-border-default);
+  --fovea-material-blur: 0px;
+  --fovea-material-blur-strong: 0px;
+  --fovea-material-saturation: 1;
+  --fovea-glow-accent: none;
+  --fovea-glow-focus: none;
+  --fovea-glow-status-error: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -77,6 +134,22 @@ select:not(:disabled) {
   }
 }
 
+@media (prefers-contrast: more) {
+  :root {
+    --fovea-glass-fill-subtle: var(--fovea-glass-fill-solid-fallback);
+    --fovea-glass-fill-default: var(--fovea-glass-fill-solid-fallback);
+    --fovea-glass-fill-strong: var(--fovea-surface-overlay);
+    --fovea-glass-highlight: none;
+    --fovea-glass-edge-light: var(--fovea-border-strong);
+    --fovea-material-blur: 0px;
+    --fovea-material-blur-strong: 0px;
+    --fovea-material-saturation: 1;
+    --fovea-glow-accent: none;
+    --fovea-glow-focus: none;
+    --fovea-glow-status-error: none;
+  }
+}
+
 @media (forced-colors: active) {
   :root {
     forced-color-adjust: auto;
@@ -92,7 +165,7 @@ select:not(:disabled) {
     background: Highlight;
   }
 
-  :where(button, [role='button'], a, input, textarea, select, [tabindex]:not([tabindex='-1'])):focus-visible {
+  :where(button, [role='button'], a, input, textarea, select, summary, [tabindex]:not([tabindex='-1'])):focus-visible {
     outline: var(--fovea-focus-width) solid Highlight;
     outline-offset: var(--fovea-focus-offset);
     box-shadow: none;

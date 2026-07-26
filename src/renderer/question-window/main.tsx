@@ -6,7 +6,16 @@ import type { QuestionViewState } from '@shared/contracts/ipc'
 import type { ConversationExchange, ConversationSelection, CustomPrompt, ProviderModelCapability, QuestionAttachment, ResponsePhase } from '@shared/types/app'
 import type { ProviderEvent } from '@shared/types/provider'
 import type { AppError, AppRecoveryKind } from '@shared/types/app-error'
-import { Button, IconButton, Spinner, StatusBanner, TextArea, Tooltip } from '../design-system'
+import {
+  Button,
+  IconButton,
+  Spinner,
+  StatusBanner,
+  TextArea,
+  Toast,
+  ToastViewport,
+  Tooltip
+} from '../design-system'
 import { initialiseAppearance } from '../appearance'
 import { AppStatusNotice, appErrorFromUnknown, spectralStateForPhase } from '../status/status-presentation'
 import { WindowFrame } from '../window-chrome/WindowFrame'
@@ -359,12 +368,14 @@ export function QuestionApp(): React.JSX.Element {
 
   if (!state) {
     return (
-      <WindowFrame title="Fovea" edgeState={error ? 'error' : 'thinking'} showCompactControls showResizeRegions={false} showTitlebar={false}>
+      <WindowFrame compactControlsIntegrated title="Fovea" edgeState={error ? 'error' : 'thinking'} showCompactControls showResizeRegions={false} showTitlebar={false}>
+        <ToastViewport className="question-toasts" placement="top">
+          {error && <AppStatusNotice error={error} onDismiss={() => setError(null)} onRecovery={recover} />}
+        </ToastViewport>
         <main className="response-loading">
           <Spinner label="Looking at your capture" size="large" />
           <strong>Looking at your capture…</strong>
           <span>Finding the most useful answer.</span>
-          {error && <AppStatusNotice error={error} onRecovery={recover} />}
         </main>
       </WindowFrame>
     )
@@ -383,6 +394,7 @@ export function QuestionApp(): React.JSX.Element {
 
   return (
     <WindowFrame
+      compactControlsIntegrated
       title="Fovea"
       edgeState={error || missingModels ? 'error' : spectralStateForPhase(state.phase)}
       showCompactControls
@@ -391,6 +403,57 @@ export function QuestionApp(): React.JSX.Element {
       titlebarActions={<QuestionTitlebarActions pinned={state.pinned} onTogglePinned={() => void togglePinned()} />}
     >
       <main className="response-shell">
+        <ToastViewport className="question-toasts" placement="top">
+          {state.disclosure && (
+            <Toast duration={8000} resetKey={state.disclosure} title="Provider changed">
+              {state.disclosure}
+            </Toast>
+          )}
+          {latestExchange?.webSearch?.status === 'searching' && (
+            <Toast
+              duration={7000}
+              icon={<Spinner />}
+              resetKey={`searching:${latestExchange.webSearch.id}`}
+              title="Searching the web"
+            >
+              Checking reliable sources…
+            </Toast>
+          )}
+          {latestExchange?.webSearch?.status === 'declined' && (
+            <Toast
+              duration={4500}
+              resetKey={`declined:${latestExchange.webSearch.id}`}
+              title="Web search skipped"
+            >
+              Continuing with the capture only.
+            </Toast>
+          )}
+          {latestExchange?.phase === 'stopped' && !latestExchange.metadata?.summary && !latestExchange.answer.trim() && (
+            <Toast
+              duration={4500}
+              resetKey={`stopped:${latestExchange.id}`}
+              title="Answer stopped"
+              tone="warning"
+            >
+              You can ask again whenever you’re ready.
+            </Toast>
+          )}
+          {latestExchange?.error && (
+            <AppStatusNotice
+              error={latestExchange.error}
+              resetKey={`${latestExchange.id}:${latestExchange.error.code}:${latestExchange.error.message}`}
+              onRecovery={(recovery) => recovery === 'retry' ? retryExchange(latestExchange) : recover(recovery)}
+            />
+          )}
+          {error && !latestExchange?.error && (
+            <AppStatusNotice
+              error={error}
+              onDismiss={() => setError(null)}
+              onRecovery={error.recovery === 'retry' ? undefined : recover}
+            />
+          )}
+        </ToastViewport>
+
         {!state.selection
           ? (
               <section className="setup-card">
@@ -441,8 +504,6 @@ export function QuestionApp(): React.JSX.Element {
                   </div>
                 </header>
 
-                {state.disclosure && <StatusBanner tone="info">{state.disclosure}</StatusBanner>}
-
                 <div
                   className="response-content"
                   ref={responseContentRef}
@@ -456,12 +517,10 @@ export function QuestionApp(): React.JSX.Element {
                         <ConversationTimeline
                           exchanges={state.exchanges}
                           onCopy={copy}
-                          onRecover={(exchange, recovery) => recovery === 'retry' ? retryExchange(exchange) : recover(recovery)}
                           onResolveWebSearch={resolveWebSearch}
                         />
                       )
                     : <AnswerSkeleton />}
-                  {error && <AppStatusNotice error={error} onRecovery={error.recovery === 'retry' ? undefined : recover} />}
                 </div>
 
                 <AttachmentStrip
@@ -820,12 +879,10 @@ export function ModelMenu({
 export function ConversationTimeline({
   exchanges,
   onCopy,
-  onRecover,
   onResolveWebSearch
 }: {
   exchanges: ConversationExchange[]
   onCopy(value: string, label?: string): Promise<void>
-  onRecover(exchange: ConversationExchange, recovery: AppRecoveryKind): void
   onResolveWebSearch(requestId: string, approved: boolean): void
 }): React.JSX.Element {
   return (
@@ -844,7 +901,6 @@ export function ConversationTimeline({
             <ResponseBody
               exchange={exchange}
               onCopy={onCopy}
-              onRecover={(recovery) => onRecover(exchange, recovery)}
               onResolveWebSearch={onResolveWebSearch}
             />
           </div>
@@ -867,12 +923,10 @@ function FriendlyStatus({ phase }: { phase: ResponsePhase }): React.JSX.Element 
 function ResponseBody({
   exchange,
   onCopy,
-  onRecover,
   onResolveWebSearch
 }: {
   exchange: ConversationExchange
   onCopy(value: string, label?: string): Promise<void>
-  onRecover(recovery: AppRecoveryKind): void
   onResolveWebSearch(requestId: string, approved: boolean): void
 }): React.JSX.Element {
   const summary = exchange.metadata?.summary
@@ -900,10 +954,6 @@ function ResponseBody({
           </div>
         </div>
       )}
-      {exchange.webSearch?.status === 'searching' && <StatusBanner tone="info">Checking reliable sources…</StatusBanner>}
-      {exchange.webSearch?.status === 'declined' && <StatusBanner tone="info">Continuing without a web search.</StatusBanner>}
-      {exchange.phase === 'stopped' && !summary && !detail && <StatusBanner tone="warning">Answer stopped.</StatusBanner>}
-      {exchange.error && <AppStatusNotice error={exchange.error} onRecovery={onRecover} />}
     </article>
   )
 }

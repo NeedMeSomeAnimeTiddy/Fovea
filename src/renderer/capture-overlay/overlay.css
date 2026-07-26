@@ -40,7 +40,7 @@ body,
 .frozen-frame {
   z-index: 0;
   max-width: none;
-  filter: brightness(0.7) saturate(0.72);
+  filter: brightness(0.68) saturate(0.78);
 }
 
 .capture-scrim {
@@ -53,7 +53,7 @@ body,
   z-index: 2;
   pointer-events: none;
   background: var(--fovea-capture-guide);
-  opacity: 0.72;
+  opacity: 0.58;
 }
 
 .capture-guide.horizontal {
@@ -79,7 +79,7 @@ body,
 .selection-outline {
   position: absolute;
   inset: 0;
-  border-radius: var(--fovea-radius-md);
+  border-radius: var(--fovea-radius-sm);
 }
 
 .selection-viewport {
@@ -155,7 +155,8 @@ body,
   font-size: var(--fovea-type-caption);
   line-height: var(--fovea-leading-ui);
   white-space: nowrap;
-  backdrop-filter: blur(18px) saturate(1.1);
+  backdrop-filter: blur(var(--fovea-material-blur)) saturate(var(--fovea-material-saturation));
+  -webkit-backdrop-filter: blur(var(--fovea-material-blur)) saturate(var(--fovea-material-saturation));
 }
 
 .dimensions.above {
@@ -182,7 +183,7 @@ body,
 .capture-status {
   position: fixed;
   z-index: 5;
-  bottom: 26px;
+  bottom: var(--fovea-space-16);
   left: 50%;
   border: var(--fovea-border-width) var(--fovea-border-style) var(--fovea-capture-hud-border);
   border-radius: var(--fovea-radius-round);
@@ -190,24 +191,25 @@ body,
   background: var(--fovea-capture-hud-fill);
   box-shadow: var(--fovea-capture-hud-shadow);
   transform: translateX(-50%);
-  backdrop-filter: blur(22px) saturate(1.16);
+  backdrop-filter: blur(var(--fovea-material-blur-strong)) saturate(var(--fovea-material-saturation));
+  -webkit-backdrop-filter: blur(var(--fovea-material-blur-strong)) saturate(var(--fovea-material-saturation));
 }
 
 .capture-hud {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 10px;
-  width: min(390px, calc(100vw - 32px));
-  padding: 7px 8px 7px 10px;
+  gap: var(--fovea-space-4);
+  width: min(440px, calc(100vw - var(--fovea-space-16)));
+  padding: var(--fovea-space-4) var(--fovea-space-4) var(--fovea-space-4) var(--fovea-space-6);
   animation: hud-in var(--fovea-motion-standard) var(--fovea-ease-standard);
 }
 
 .hud-symbol {
   display: grid;
   place-items: center;
-  width: 30px;
-  height: 30px;
+  width: var(--fovea-control-target-compact);
+  height: var(--fovea-control-target-compact);
   border: var(--fovea-border-width) var(--fovea-border-style) var(--fovea-capture-hud-border);
   border-radius: var(--fovea-radius-round);
   background: var(--fovea-capture-control-fill);
@@ -251,9 +253,9 @@ body,
 .hud-cancel {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  min-height: 32px;
-  padding: 0 9px;
+  gap: var(--fovea-space-3);
+  min-height: var(--fovea-control-target-compact);
+  padding: 0 var(--fovea-space-6);
   border: var(--fovea-border-width) var(--fovea-border-style) var(--fovea-capture-hud-border);
   border-radius: var(--fovea-radius-round);
   color: var(--fovea-capture-text);
@@ -286,8 +288,8 @@ body,
 .capture-status {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 9px 13px;
+  gap: var(--fovea-space-4);
+  padding: var(--fovea-space-4) var(--fovea-space-8);
   font-size: var(--fovea-type-label);
   animation: hud-in var(--fovea-motion-fast) var(--fovea-ease-standard);
 }

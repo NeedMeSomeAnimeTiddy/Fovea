@@ -118,7 +118,7 @@ describe('window appearance geometry', () => {
       minimumSize: { width: 560, height: 640 },
       frame: false,
       transparent: false,
-      backgroundColor: '#f3f6fa',
+      backgroundColor: '#edf1f7',
       hasShadow: true,
       resizable: true,
       maximizable: true,
@@ -129,8 +129,8 @@ describe('window appearance geometry', () => {
   it('keeps transparent native windows transparent across appearance changes', () => {
     expect(resolveWindowBackgroundColor('transparent', 'light')).toBe('#00000000')
     expect(resolveWindowBackgroundColor('transparent', 'dark')).toBe('#00000000')
-    expect(resolveWindowBackgroundColor('solid', 'light')).toBe('#f3f6fa')
-    expect(resolveWindowBackgroundColor('solid', 'dark')).toBe('#101010')
+    expect(resolveWindowBackgroundColor('solid', 'light')).toBe('#edf1f7')
+    expect(resolveWindowBackgroundColor('solid', 'dark')).toBe('#0b0c10')
   })
 
   it('selects the support switch and development-only environment fallback', () => {

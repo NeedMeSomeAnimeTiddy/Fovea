@@ -41,7 +41,6 @@ describe('response conversation timeline', () => {
       <ConversationTimeline
         exchanges={exchanges}
         onCopy={vi.fn(async () => undefined)}
-        onRecover={vi.fn()}
         onResolveWebSearch={vi.fn()}
       />
     )
