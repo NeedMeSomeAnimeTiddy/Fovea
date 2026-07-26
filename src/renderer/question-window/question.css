@@ -183,6 +183,24 @@ body,
   line-height: var(--fovea-leading-ui);
 }
 
+.ask-menu__saved-copy {
+  display: grid;
+  min-width: 0;
+  gap: var(--fovea-space-1);
+}
+
+.ask-menu__saved-copy strong {
+  font-weight: var(--fovea-weight-semibold);
+}
+
+.ask-menu__saved-copy small {
+  overflow: hidden;
+  color: var(--fovea-color-text-tertiary);
+  font-size: var(--fovea-type-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .ask-menu__suggestions button .mono-icon {
   width: var(--fovea-type-body);
   height: var(--fovea-type-body);

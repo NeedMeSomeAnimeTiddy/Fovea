@@ -303,6 +303,14 @@ Documented now but deferred beyond Issue #13:
 - Use native buttons, inputs, textarea, select, and checkbox semantics. Switch is a styled native checkbox, not a recreated ARIA switch.
 - Validate keyboard operation, 100/125/150% Windows scaling, text zoom, Windows High Contrast, reduced motion, and transparency-off during renderer proof.
 
+### Onboarding accessibility contract
+
+First-run onboarding replaces the Settings navigation with one focused three-step region inside the existing window. Its ordered progress list exposes `aria-current="step"`, and each Back or Next transition programmatically focuses the new `h1` so keyboard and screen-reader users hear the change without traversing the window again. Skip remains available on every first-run step; a manually reopened tour uses Close tour and does not change its saved outcome.
+
+All actions are native buttons in document order: Skip or Close, Back when available, then Next or Finish. The connection step exposes ChatGPT browser sign-in plus the supported OpenAI, Anthropic, and OpenRouter API-key routes without asking users to configure provider-owned endpoints. The final step uses the shared shortcut parser so its click-to-record field has the same keyboard, Escape, deletion, validation, and conflict behaviour as Settings. Provider, capture, cancellation, deletion, and error results use status or alert live regions. The capture overlay retains Escape as its cancellation command; returning from either selection or cancellation restores Settings focus. The test thumbnail has a concise alt description, never exposes a local path, is never sent to a provider, and is removed from renderer state when retaken or when the tour exits.
+
+The workflow cards use decorative, hidden SVGs and retain text labels. Step changes and card entry use only the standard short motion tokens; `prefers-reduced-motion: reduce` removes those animations and delays. The shared solid material fallback, focus rings, forced-colours behaviour, text contrast, and minimum control targets apply unchanged on Windows 10.
+
 ### Phase 1 contrast record
 
 | Pair | Ratio | Target |

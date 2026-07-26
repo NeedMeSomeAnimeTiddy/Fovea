@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client'
 import ReactMarkdown from 'react-markdown'
 import rehypeHighlight from 'rehype-highlight'
 import type { QuestionViewState } from '@shared/contracts/ipc'
-import type { ConversationExchange, ConversationSelection, ProviderModelCapability, QuestionAttachment, ResponsePhase } from '@shared/types/app'
+import type { ConversationExchange, ConversationSelection, CustomPrompt, ProviderModelCapability, QuestionAttachment, ResponsePhase } from '@shared/types/app'
 import type { ProviderEvent } from '@shared/types/provider'
 import type { AppError, AppRecoveryKind } from '@shared/types/app-error'
 import { Button, IconButton, Spinner, StatusBanner, TextArea, Tooltip } from '../design-system'
@@ -28,6 +28,7 @@ type TerminalPhase = Extract<ResponsePhase, 'completed' | 'stopped' | 'failed'>
 export function QuestionApp(): React.JSX.Element {
   const sessionId = useMemo(() => new URLSearchParams(location.search).get('session') ?? '', [])
   const [state, setState] = useState<QuestionViewState | null>(null)
+  const [customPrompts, setCustomPrompts] = useState<CustomPrompt[]>([])
   const [text, setText] = useState('')
   const [error, setError] = useState<AppError | null>(null)
   const [copyStatus, setCopyStatus] = useState('')
@@ -161,6 +162,10 @@ export function QuestionApp(): React.JSX.Element {
     // The subscription intentionally remains stable for the lifetime of this session.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId])
+  useEffect(() => {
+    void window.fovea.settings.get().then((settings) => setCustomPrompts(settings.customPrompts)).catch(() => undefined)
+    return window.fovea.settings.onChanged((settings) => setCustomPrompts(settings.customPrompts))
+  }, [])
   useEffect(() => () => clearTypingQueue(), [])
 
   const latestExchange = state?.exchanges.at(-1)
@@ -422,6 +427,7 @@ export function QuestionApp(): React.JSX.Element {
                     {askOpen && (
                       <AskMenu
                         busy={state.busy}
+                        customPrompts={customPrompts}
                         customOpen={customOpen}
                         preferWebSearch={preferWebSearch}
                         suggestions={suggestions}
@@ -636,6 +642,7 @@ export function CaptureMenu({
 
 export function AskMenu({
   busy,
+  customPrompts = [],
   customOpen,
   preferWebSearch,
   suggestions,
@@ -646,6 +653,7 @@ export function AskMenu({
   onToggleWebSearch
 }: {
   busy: boolean
+  customPrompts?: CustomPrompt[]
   customOpen: boolean
   preferWebSearch: boolean
   suggestions: string[]
@@ -657,6 +665,22 @@ export function AskMenu({
 }): React.JSX.Element {
   return (
     <div className="ask-menu" id="ask-menu" role="menu" aria-label="Questions about this capture">
+      {customPrompts.length > 0 && <>
+        <div className="ask-menu__heading">Saved prompts</div>
+        <div className="ask-menu__suggestions ask-menu__saved">
+          {customPrompts.map((item) => (
+            <button
+              disabled={busy}
+              key={item.id}
+              role="menuitem"
+              onClick={() => void onSend(item.prompt)}
+            >
+              <span className="ask-menu__saved-copy"><strong>{item.label}</strong><small>{item.prompt}</small></span>
+              <Icon name="arrow" />
+            </button>
+          ))}
+        </div>
+      </>}
       <div className="ask-menu__heading">You could ask…</div>
       <div className="ask-menu__suggestions">
         {suggestions.map((suggestion) => (

@@ -8,6 +8,29 @@ import { AskMenu, ModelMenu } from '../src/renderer/question-window/main'
 afterEach(cleanup)
 
 describe('response Ask menu', () => {
+  it('shows saved prompts and sends their stored prompt text', async () => {
+    const user = userEvent.setup()
+    const onSend = vi.fn(async () => undefined)
+    render(
+      <AskMenu
+        busy={false}
+        customOpen={false}
+        customPrompts={[{ id: 'slack-summary', label: 'Summarise for Slack', prompt: 'Summarise this in three Slack-ready bullets.' }]}
+        preferWebSearch={false}
+        suggestions={['Show every step']}
+        text=""
+        onCustom={vi.fn()}
+        onSend={onSend}
+        onTextChange={vi.fn()}
+        onToggleWebSearch={vi.fn()}
+      />
+    )
+
+    await user.click(screen.getByRole('menuitem', { name: /Summarise for Slack/ }))
+    expect(onSend).toHaveBeenCalledWith('Summarise this in three Slack-ready bullets.')
+    expect(screen.getByText('You could ask…')).toBeTruthy()
+  })
+
   it('offers contextual prompts and sends the selected prompt', async () => {
     const user = userEvent.setup()
     const onSend = vi.fn(async () => undefined)
