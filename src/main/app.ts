@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { AppearanceController } from './appearance/appearance-controller'
 import { CaptureService } from './capture/capture-service'
 import { registerIpc } from './ipc/register-ipc'
+import { OnboardingController, shouldShowOnboardingAtStartup } from './onboarding/onboarding-controller'
 import { CodexAppServerProvider } from './providers/codex-app-server/codex-app-server-provider'
 import { ProfileManager } from './providers/profile-manager'
 import { ProviderRegistry } from './providers/provider-registry'
@@ -54,6 +55,9 @@ async function startApplication(): Promise<void> {
   services.questions = questions
 
   let tray: TrayController | null = null
+  const onboarding = new OnboardingController(capture, screenshots, async () => {
+    await showSettingsWindow(tray?.getBounds())
+  })
   const openSettingsSafely = (): void => {
     void showSettingsWindow(tray?.getBounds()).catch((error) => {
       const appError = toAppError(error)
@@ -69,12 +73,12 @@ async function startApplication(): Promise<void> {
   tray = new TrayController(async (mode) => capture.begin(mode), shortcuts, providers, settings)
   tray.initialise()
   providers.on('status', () => tray?.refreshStatus())
-  registerIpc({ providers, settings, screenshots, capture, questions, shortcuts, appearance })
+  registerIpc({ providers, settings, screenshots, capture, onboarding, questions, shortcuts, appearance })
   app.setLoginItemSettings({ openAtLogin: settings.get().launchAtLogin, path: process.execPath })
 
   try { await providers.initialise() }
   catch (error) { console.warn(`[provider] ChatGPT adapter unavailable: ${redact(error instanceof Error ? error.message : String(error))}`) }
-  if (!settings.get().onboardingCompleted) openSettingsSafely()
+  if (shouldShowOnboardingAtStartup(settings.get().onboardingStatus)) openSettingsSafely()
 
   app.on('second-instance', openSettingsSafely)
   app.on('activate', openSettingsSafely)

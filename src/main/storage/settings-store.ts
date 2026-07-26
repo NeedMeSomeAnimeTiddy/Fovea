@@ -2,6 +2,8 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import type {
   AppearancePreference,
+  CustomPrompt,
+  OnboardingStatus,
   ProviderKind,
   ProfileAuthentication,
   ShortcutAction
@@ -25,11 +27,12 @@ export type ShortcutSettings = Record<ShortcutAction, string | null>
 export interface AppSettings {
   version: 2
   appearance: AppearancePreference
-  onboardingCompleted: boolean
+  onboardingStatus: OnboardingStatus
   launchAtLogin: boolean
   shortcuts: ShortcutSettings
   profiles: StoredProviderProfile[]
   defaultProfileId: string | null
+  customPrompts: CustomPrompt[]
 }
 
 export const DEFAULT_SHORTCUTS: ShortcutSettings = {
@@ -43,15 +46,19 @@ export const DEFAULT_SHORTCUTS: ShortcutSettings = {
 const DEFAULTS: AppSettings = {
   version: 2,
   appearance: 'light',
-  onboardingCompleted: false,
+  onboardingStatus: 'pending',
   launchAtLogin: false,
   shortcuts: { ...DEFAULT_SHORTCUTS },
   profiles: [],
-  defaultProfileId: null
+  defaultProfileId: null,
+  customPrompts: []
 }
 
 const APPEARANCES = new Set<AppearancePreference>(['system', 'dark', 'light'])
+const ONBOARDING_STATUSES = new Set<OnboardingStatus>(['pending', 'skipped', 'completed'])
 const SHORTCUT_ACTIONS: ShortcutAction[] = ['region', 'display', 'window', 'repeat-last', 'settings']
+
+type StoredSettingsInput = Partial<AppSettings> & { onboardingCompleted?: unknown }
 
 export class SettingsStore {
   private value: AppSettings = clone(DEFAULTS)
@@ -60,7 +67,7 @@ export class SettingsStore {
 
   async load(): Promise<void> {
     try {
-      const parsed = JSON.parse(await readFile(this.path, 'utf8')) as Partial<AppSettings>
+      const parsed = JSON.parse(await readFile(this.path, 'utf8')) as StoredSettingsInput
       this.value = sanitize(parsed)
     } catch {
       this.value = clone(DEFAULTS)
@@ -91,7 +98,7 @@ export class SettingsStore {
   }
 }
 
-function sanitize(value: Partial<AppSettings>): AppSettings {
+function sanitize(value: StoredSettingsInput): AppSettings {
   const shortcuts = { ...DEFAULT_SHORTCUTS }
   if (value.shortcuts && typeof value.shortcuts === 'object') {
     for (const action of SHORTCUT_ACTIONS) {
@@ -106,17 +113,49 @@ function sanitize(value: Partial<AppSettings>): AppSettings {
     typeof value.defaultProfileId === 'string' && profiles.some((profile) => profile.id === value.defaultProfileId)
       ? value.defaultProfileId
       : profiles[0]?.id ?? null
+  const customPrompts = Array.isArray(value.customPrompts)
+    ? value.customPrompts
+        .filter(isStoredCustomPrompt)
+        .filter((prompt, index, prompts) => prompts.findIndex((item) => item.id === prompt.id) === index)
+        .slice(0, 20)
+        .map((prompt) => ({
+          id: prompt.id,
+          label: prompt.label.trim(),
+          prompt: prompt.prompt.trim()
+        }))
+    : []
   return {
     version: 2,
     appearance: APPEARANCES.has(value.appearance as AppearancePreference)
       ? (value.appearance as AppearancePreference)
       : 'light',
-    onboardingCompleted: value.onboardingCompleted === true,
+    onboardingStatus: ONBOARDING_STATUSES.has(value.onboardingStatus as OnboardingStatus)
+      ? (value.onboardingStatus as OnboardingStatus)
+      : value.onboardingCompleted === true
+        ? 'completed'
+        : 'pending',
     launchAtLogin: value.launchAtLogin === true,
     shortcuts,
     profiles,
-    defaultProfileId
+    defaultProfileId,
+    customPrompts
   }
+}
+
+function isStoredCustomPrompt(value: unknown): value is CustomPrompt {
+  if (!value || typeof value !== 'object') return false
+  const prompt = value as Partial<CustomPrompt>
+  return Boolean(
+    typeof prompt.id === 'string' &&
+    prompt.id.length > 0 &&
+    prompt.id.length <= 100 &&
+    typeof prompt.label === 'string' &&
+    prompt.label.trim().length > 0 &&
+    prompt.label.length <= 80 &&
+    typeof prompt.prompt === 'string' &&
+    prompt.prompt.trim().length > 0 &&
+    prompt.prompt.length <= 2_000
+  )
 }
 
 function isStoredProfile(value: unknown): value is StoredProviderProfile {

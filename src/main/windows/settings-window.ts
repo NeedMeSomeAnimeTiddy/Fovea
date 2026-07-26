@@ -64,6 +64,11 @@ export function getSettingsWindow(): BrowserWindow | null {
   return settingsWindow && !settingsWindow.isDestroyed() ? settingsWindow : null
 }
 
+export function ownsSettingsWebContents(webContentsId: number): boolean {
+  const window = getSettingsWindow()
+  return Boolean(window && !window.webContents.isDestroyed() && window.webContents.id === webContentsId)
+}
+
 function createSettingsBrowserWindow(material: WindowMaterial, trayBounds?: Rectangle): BrowserWindow {
   const appearance = getWindowAppearanceOptions(
     SETTINGS_WINDOW_SIZES,

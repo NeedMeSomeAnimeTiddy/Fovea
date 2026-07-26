@@ -3,6 +3,13 @@ import type { AppError } from './app-error'
 
 export type AppearancePreference = 'system' | 'dark' | 'light'
 export type ResolvedAppearance = 'dark' | 'light'
+export type OnboardingStatus = 'pending' | 'skipped' | 'completed'
+
+export interface CustomPrompt {
+  id: string
+  label: string
+  prompt: string
+}
 
 export interface AppearanceState {
   preference: AppearancePreference

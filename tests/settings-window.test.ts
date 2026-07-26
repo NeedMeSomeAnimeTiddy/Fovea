@@ -231,7 +231,7 @@ describe('Settings window startup lifecycle', () => {
 
   it('uses compact fixed geometry and hides to the tray when focus moves away', async () => {
     vi.spyOn(console, 'info').mockImplementation(() => undefined)
-    const { showSettingsWindow } = await import('../src/main/windows/settings-window')
+    const { ownsSettingsWebContents, showSettingsWindow } = await import('../src/main/windows/settings-window')
     const opening = showSettingsWindow()
     const window = mocks.windows[0]!
     const { windowChromeRegistry } = await import('../src/main/windows/window-chrome')
@@ -251,6 +251,8 @@ describe('Settings window startup lifecycle', () => {
     controller.markRendererReady()
     await opening
     expect(controller.getState()).toMatchObject({ canMinimize: false, canMaximize: false, canResize: false })
+    expect(ownsSettingsWebContents(window.webContents.id)).toBe(true)
+    expect(ownsSettingsWebContents(window.webContents.id + 1)).toBe(false)
 
     window.emit('blur')
     expect(window.hideCalls).toBe(1)
