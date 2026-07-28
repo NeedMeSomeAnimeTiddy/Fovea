@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom'
 import ReactMarkdown from 'react-markdown'
 import rehypeHighlight from 'rehype-highlight'
 import type { QuestionViewState } from '@shared/contracts/ipc'
-import type { ConversationExchange, ConversationSelection, CustomPrompt, ProviderModelCapability, QuestionAttachment, ResponsePhase } from '@shared/types/app'
+import type { ConversationExchange, ConversationSelection, CustomPrompt, OcrEntity, OcrExternalActionKind, ProviderModelCapability, QuestionAttachment, ResponsePhase } from '@shared/types/app'
 import type { ProviderEvent } from '@shared/types/provider'
 import type { AppError, AppRecoveryKind } from '@shared/types/app-error'
 import {
@@ -276,9 +276,13 @@ export function QuestionApp(): React.JSX.Element {
     })
   }
   const copy = async (value: string, label = 'Answer copied'): Promise<void> => {
-    await navigator.clipboard.writeText(value)
-    setCopyStatus(label)
-    setTimeout(() => setCopyStatus(''), 1500)
+    try {
+      await window.fovea.clipboard.writeText(value)
+      setCopyStatus(label)
+      setTimeout(() => setCopyStatus(''), 1500)
+    } catch (reason) {
+      setError(appErrorFromUnknown(reason))
+    }
   }
   const openPreview = async (attachmentId: string): Promise<void> => {
     try {
@@ -323,6 +327,14 @@ export function QuestionApp(): React.JSX.Element {
     } catch (reason) {
       setError(appErrorFromUnknown(reason))
     }
+  }
+  const openOcrEntity = (entity: OcrEntity): void => {
+    const action = ocrEntityExternalAction(entity)
+    if (!action) return
+    if (!window.confirm(`${action.confirmation} This will leave Fovea.`)) return
+    void window.fovea.openOcrEntity(action.kind, entity.value).catch((reason) => {
+      setError(appErrorFromUnknown(reason))
+    })
   }
   const changeModel = async (modelId: string, reasoningEffort: string | null): Promise<void> => {
     if (!state?.selection || state.busy || state.exchanges.some((exchange) => exchange.webSearch?.status === 'requested')) return
@@ -395,7 +407,8 @@ export function QuestionApp(): React.JSX.Element {
   }
 
   const hasPendingWebSearch = state.exchanges.some((exchange) => exchange.webSearch?.status === 'requested')
-  const missingModels = state.profiles.length > 0 && !state.selection
+  const showingLocalOcr = latestExchange?.source === 'ocr'
+  const missingModels = state.profiles.length > 0 && !state.selection && !showingLocalOcr
   const suggestions = latestExchange?.metadata?.suggestedQuestions.length
     ? latestExchange.metadata.suggestedQuestions
     : FALLBACK_SUGGESTIONS
@@ -467,7 +480,7 @@ export function QuestionApp(): React.JSX.Element {
           )}
         </ToastViewport>
 
-        {!state.selection
+        {!state.selection && !showingLocalOcr
           ? (
               <section className="setup-card">
                 <StatusBanner title={state.profiles.length ? 'No compatible AI model' : 'Connect an AI provider'} tone="warning">
@@ -479,10 +492,10 @@ export function QuestionApp(): React.JSX.Element {
               </section>
             )
           : (
-              <section className="response-card" aria-label="AI response">
+              <section className="response-card" aria-label={showingLocalOcr ? 'Extracted text' : 'AI response'}>
                 <header className="response-card__header">
-                  <FriendlyStatus phase={state.phase} />
-                  <div className="ask-wrap" ref={askRef}>
+                  <FriendlyStatus phase={state.phase} source={latestExchange?.source} />
+                  {state.selection && <div className="ask-wrap" ref={askRef}>
                     <Button
                       aria-controls="ask-menu"
                       aria-expanded={askOpen}
@@ -514,7 +527,7 @@ export function QuestionApp(): React.JSX.Element {
                         onToggleWebSearch={() => setPreferWebSearch((preferred) => !preferred)}
                       />
                     )}
-                  </div>
+                  </div>}
                 </header>
 
                 <div
@@ -530,6 +543,8 @@ export function QuestionApp(): React.JSX.Element {
                         <ConversationTimeline
                           exchanges={state.exchanges}
                           onCopy={copy}
+                          onOpenOcrEntity={openOcrEntity}
+                          onManageOcrLanguages={() => void window.fovea.settings.openOcrLanguages()}
                           onResolveWebSearch={resolveWebSearch}
                         />
                       )
@@ -605,29 +620,28 @@ export function QuestionApp(): React.JSX.Element {
                     </div>
                   )}
                   <span className="response-actions__spacer" />
-                  {state.busy
-                    ? (
-                        <Tooltip content="Stop answering">
-                          <IconButton
-                            icon={<Icon name="stop" />}
-                            label="Stop answering"
-                            size="compact"
-                            variant="danger"
-                            onClick={() => void window.fovea.question.stop(sessionId)}
-                          />
-                        </Tooltip>
-                      )
-                    : (
-                        <Tooltip content="Generate a fresh answer">
-                          <IconButton
-                            disabled={!latestExchange || hasPendingWebSearch}
-                            icon={<Icon name="regenerate" />}
-                            label="Generate a fresh answer"
-                            size="compact"
-                            onClick={() => latestExchange && retryExchange(latestExchange)}
-                          />
-                        </Tooltip>
-                      )}
+                  {state.busy && (
+                    <Tooltip content={latestExchange?.source === 'ocr' ? 'Stop extracting text' : 'Stop answering'}>
+                      <IconButton
+                        icon={<Icon name="stop" />}
+                        label={latestExchange?.source === 'ocr' ? 'Stop extracting text' : 'Stop answering'}
+                        size="compact"
+                        variant="danger"
+                        onClick={() => void window.fovea.question.stop(sessionId)}
+                      />
+                    </Tooltip>
+                  )}
+                  {!state.busy && latestExchange?.source !== 'ocr' && (
+                    <Tooltip content="Generate a fresh answer">
+                      <IconButton
+                        disabled={!latestExchange || hasPendingWebSearch}
+                        icon={<Icon name="regenerate" />}
+                        label="Generate a fresh answer"
+                        size="compact"
+                        onClick={() => latestExchange && retryExchange(latestExchange)}
+                      />
+                    </Tooltip>
+                  )}
                   <Tooltip content={copyStatus || 'Copy answer'}>
                     <IconButton
                       disabled={!latestExchange || !exchangeText(latestExchange)}
@@ -694,7 +708,7 @@ export function AttachmentStrip({
   const openMenu = (event: React.MouseEvent<HTMLButtonElement>, attachmentId: string, index: number): void => {
     const bounds = event.currentTarget.getBoundingClientRect()
     const menuWidth = 172
-    const menuHeight = 136
+    const menuHeight = 132
     const left = Math.max(12, Math.min(innerWidth - menuWidth - 12, bounds.left))
     const above = bounds.top - menuHeight - 8
     const top = above >= 12 ? above : Math.min(innerHeight - menuHeight - 12, bounds.bottom + 8)
@@ -944,10 +958,14 @@ export function ModelMenu({
 export function ConversationTimeline({
   exchanges,
   onCopy,
+  onOpenOcrEntity,
+  onManageOcrLanguages,
   onResolveWebSearch
 }: {
   exchanges: ConversationExchange[]
   onCopy(value: string, label?: string): Promise<void>
+  onOpenOcrEntity?(entity: OcrEntity): void
+  onManageOcrLanguages?(): void
   onResolveWebSearch(requestId: string, approved: boolean): void
 }): React.JSX.Element {
   return (
@@ -962,10 +980,12 @@ export function ConversationTimeline({
           )}
           {exchange.retryOf && <small className="conversation-retry-label">Regenerated reply</small>}
           <div className={`conversation-message conversation-message--assistant${exchange.automatic ? ' conversation-message--opening' : ''}`}>
-            <span className="fui-sr-only">AI response: </span>
+            <span className="fui-sr-only">{exchange.source === 'ocr' ? 'Extracted text: ' : 'AI response: '}</span>
             <ResponseBody
               exchange={exchange}
               onCopy={onCopy}
+              onOpenOcrEntity={onOpenOcrEntity}
+              onManageOcrLanguages={onManageOcrLanguages}
               onResolveWebSearch={onResolveWebSearch}
             />
           </div>
@@ -975,12 +995,15 @@ export function ConversationTimeline({
   )
 }
 
-function FriendlyStatus({ phase }: { phase: ResponsePhase }): React.JSX.Element {
+function FriendlyStatus({ phase, source }: { phase: ResponsePhase; source?: ConversationExchange['source'] }): React.JSX.Element {
   const busy = ['connecting', 'thinking', 'streaming'].includes(phase)
+  const label = source === 'ocr'
+    ? phase === 'completed' ? 'Text extracted' : phase === 'failed' ? 'Extraction failed' : 'Extracting text…'
+    : friendlyPhaseLabel(phase)
   return (
     <div className="friendly-status" role="status">
       {busy && <Spinner />}
-      <span>{friendlyPhaseLabel(phase)}</span>
+      <span>{label}</span>
     </div>
   )
 }
@@ -988,15 +1011,75 @@ function FriendlyStatus({ phase }: { phase: ResponsePhase }): React.JSX.Element 
 function ResponseBody({
   exchange,
   onCopy,
+  onOpenOcrEntity,
+  onManageOcrLanguages,
   onResolveWebSearch
 }: {
   exchange: ConversationExchange
   onCopy(value: string, label?: string): Promise<void>
+  onOpenOcrEntity?(entity: OcrEntity): void
+  onManageOcrLanguages?(): void
   onResolveWebSearch(requestId: string, approved: boolean): void
 }): React.JSX.Element {
   const summary = exchange.metadata?.summary
   const detail = exchange.answer.trim()
   const waiting = ['connecting', 'thinking'].includes(exchange.phase) && !summary && !detail
+  if (exchange.source === 'ocr') {
+    const ocr = exchange.ocr
+    return (
+      <article className="answer-card answer-card--ocr">
+        {waiting && <TypingIndicator label="Recognising text" />}
+        {ocr && (
+          <div className="ocr-response-meta">
+            <span>{ocr.language.label}</span>
+            <span>{ocr.engine === 'windows' ? 'Windows OCR' : 'Tesseract OCR'}</span>
+            {ocr.engine !== 'windows' && <span>{ocr.confidence}% confidence</span>}
+            {ocr.durationMs > 0 && <span>{formatOcrDuration(ocr.durationMs)}</span>}
+            {ocr.preprocessing === 'upscaled-contrast' && <span>Enhanced</span>}
+            {ocr.preprocessing === 'high-contrast' && <span>High contrast</span>}
+            {ocr.geometryCorrection === 'deskewed' && <span>Deskewed</span>}
+            {ocr.geometryCorrection === 'perspective-corrected' && <span>Perspective corrected</span>}
+            {ocr.cached && <span>Cached</span>}
+            {onManageOcrLanguages && (
+              <button type="button" onClick={onManageOcrLanguages}>Manage languages</button>
+            )}
+          </div>
+        )}
+        {detail && <pre className="ocr-response-text">{detail}</pre>}
+        {ocr?.entities.length ? (
+          <div className="ocr-response-entities" aria-label="Detected text actions">
+            {ocr.entities.map((entity) => {
+              const action = ocrEntityExternalAction(entity)
+              return (
+                <div className="ocr-response-entity" key={entity.id}>
+                  <button
+                    aria-label={`Copy ${ocrEntityLabel(entity.kind)}: ${entity.value}`}
+                    className="ocr-response-entity__value"
+                    title={`Copy ${entity.kind}`}
+                    type="button"
+                    onClick={() => void onCopy(entity.value, `${ocrEntityLabel(entity.kind)} copied`)}
+                  >
+                    <span>{ocrEntityLabel(entity.kind)}</span>
+                    <strong>{entity.value}</strong>
+                  </button>
+                  {onOpenOcrEntity && action && (
+                    <button
+                      aria-label={`${action.label} ${entity.value}`}
+                      className="ocr-response-entity__action"
+                      type="button"
+                      onClick={() => onOpenOcrEntity(entity)}
+                    >
+                      {action.label}
+                    </button>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        ) : null}
+      </article>
+    )
+  }
   return (
     <article className="answer-card">
       {waiting && <TypingIndicator />}
@@ -1023,9 +1106,9 @@ function ResponseBody({
   )
 }
 
-function TypingIndicator(): React.JSX.Element {
+function TypingIndicator({ label = 'AI is writing' }: { label?: string }): React.JSX.Element {
   return (
-    <div className="typing-indicator" aria-label="AI is writing" role="status">
+    <div className="typing-indicator" aria-label={label} role="status">
       <span />
       <span />
       <span />
@@ -1079,6 +1162,35 @@ function exchangeText(exchange: ConversationExchange): string {
   return [exchange.metadata?.summary, exchange.answer].filter(Boolean).join('\n\n').trim()
 }
 
+function ocrEntityLabel(kind: 'url' | 'email' | 'phone' | 'qr' | 'barcode'): string {
+  if (kind === 'url') return 'URL'
+  if (kind === 'email') return 'Email'
+  if (kind === 'phone') return 'Phone'
+  return kind === 'qr' ? 'QR code' : 'Barcode'
+}
+
+export function ocrEntityExternalAction(entity: OcrEntity): {
+  kind: OcrExternalActionKind
+  label: 'Open' | 'Email' | 'Call'
+  confirmation: string
+} | null {
+  if (entity.kind === 'url' || (entity.kind === 'qr' && /^(?:https?:\/\/|www\.)/i.test(entity.value.trim()))) {
+    return { kind: 'url', label: 'Open', confirmation: 'Open this link in your default browser?' }
+  }
+  if (entity.kind === 'email') {
+    return { kind: 'email', label: 'Email', confirmation: 'Open this address in your email app?' }
+  }
+  if (entity.kind === 'phone') {
+    return { kind: 'phone', label: 'Call', confirmation: 'Open this number in your calling app?' }
+  }
+  return null
+}
+
+function formatOcrDuration(durationMs: number): string {
+  if (durationMs < 1_000) return `${Math.max(1, Math.round(durationMs))}ms`
+  return `${(durationMs / 1_000).toFixed(durationMs < 10_000 ? 1 : 0)}s`
+}
+
 export function takeNextTypingCharacter(value: string): { character: string; remainder: string } {
   if (!value) return { character: '', remainder: '' }
   const codePoint = value.codePointAt(0)
@@ -1120,6 +1232,7 @@ function Icon({ name }: { name: string }): React.JSX.Element {
     check: <path d="m5 12 4 4L19 6" />,
     chevron: <path d="m8 10 4 4 4-4" />,
     chip: <><rect x="6" y="6" width="12" height="12" rx="2" /><rect x="9" y="9" width="6" height="6" rx="1" /><path d="M9 1v5m6-5v5M9 18v5m6-5v5M1 9h5m-5 6h5m12-6h5m-5 6h5" /></>,
+    close: <path d="m6 6 12 12M18 6 6 18" />,
     copy: <><rect x="8" y="8" width="11" height="11" rx="2" /><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" /></>,
     edit: <><path d="m4 20 4.5-1 10-10-3.5-3.5-10 10L4 20Z" /><path d="m13.5 7 3.5 3.5" /></>,
     globe: <><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3c2.2 2.5 3.3 5.5 3.3 9S14.2 18.5 12 21M12 3C9.8 5.5 8.7 8.5 8.7 12S9.8 18.5 12 21" /></>,
@@ -1129,6 +1242,7 @@ function Icon({ name }: { name: string }): React.JSX.Element {
     remove: <><path d="M5 7h14M9 7V4h6v3m-8 0 1 13h8l1-13" /><path d="M10 11v5m4-5v5" /></>,
     send: <path d="m3 11 18-8-8 18-2-8-8-2Zm8 2 4-4" />,
     stop: <rect x="7" y="7" width="10" height="10" rx="1" />,
+    text: <><path d="M5 6h14M9 6v12m6-12v12M7 18h4m2 0h4" /></>,
     view: <><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" /><circle cx="12" cy="12" r="2.5" /></>
   }
   return <svg className="mono-icon" viewBox="0 0 24 24" aria-hidden="true">{paths[name] ?? paths.arrow}</svg>

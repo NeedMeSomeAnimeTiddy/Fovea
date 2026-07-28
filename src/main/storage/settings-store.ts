@@ -35,6 +35,7 @@ export interface AppSettings {
   defaultProfileId: string | null
   customPrompts: CustomPrompt[]
   history: HistorySettings
+  ocrLanguageCode: string
 }
 
 export const DEFAULT_SHORTCUTS: ShortcutSettings = {
@@ -54,6 +55,7 @@ const DEFAULTS: AppSettings = {
   profiles: [],
   defaultProfileId: null,
   customPrompts: [],
+  ocrLanguageCode: '',
   history: {
     privateMode: false,
     retentionDays: 30,
@@ -146,7 +148,10 @@ function sanitize(value: StoredSettingsInput): AppSettings {
     profiles,
     defaultProfileId,
     customPrompts,
-    history: sanitizeHistorySettings(value.history)
+    history: sanitizeHistorySettings(value.history),
+    ocrLanguageCode: typeof value.ocrLanguageCode === 'string' && /^(?:|[A-Za-z0-9-]{2,35})$/.test(value.ocrLanguageCode)
+      ? value.ocrLanguageCode
+      : ''
   }
 }
 

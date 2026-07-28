@@ -60,6 +60,9 @@ export function toAppError(error: unknown, fallbackCode: AppErrorCode = 'unexpec
     'no-compatible-models': { title: 'No compatible models', message: 'Choose another provider profile or test the connection.', recovery: 'choose-provider' },
     'sidecar-terminated': { title: 'Local service unavailable', message: 'The local ChatGPT service stopped unexpectedly.', recovery: 'retry' },
     'capture-failed': { title: 'Capture failed', message: 'Fovea could not capture that content.', recovery: 'recapture' },
+    'ocr-unavailable': { title: 'Text extraction unavailable', message: 'The local text-recognition engine is unavailable.', recovery: 'retry' },
+    'ocr-language-unavailable': { title: 'OCR language unavailable', message: 'The bundled OCR language could not be loaded.', recovery: 'none' },
+    'ocr-failed': { title: 'Text extraction failed', message: 'Fovea could not recognise text in this screenshot.', recovery: 'retry' },
     validation: { title: 'Check this value', message: safeValidationMessage(detail), recovery: 'none' },
     unexpected: { title: 'Something went wrong', message: 'Fovea could not complete the operation.', recovery: 'retry' }
   }

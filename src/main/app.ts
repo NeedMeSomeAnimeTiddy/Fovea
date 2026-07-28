@@ -5,6 +5,8 @@ import { CaptureService } from './capture/capture-service'
 import { ImageEditorService } from './capture/image-editor-service'
 import { registerIpc } from './ipc/register-ipc'
 import { OnboardingController, shouldShowOnboardingAtStartup } from './onboarding/onboarding-controller'
+import { TesseractOcrService } from './ocr/ocr-service'
+import { NativeFirstOcrService, WindowsOcrService } from './ocr/windows-ocr-service'
 import { CodexAppServerProvider } from './providers/codex-app-server/codex-app-server-provider'
 import { ProfileManager } from './providers/profile-manager'
 import { ProviderRegistry } from './providers/provider-registry'
@@ -54,8 +56,19 @@ async function startApplication(): Promise<void> {
   const providers = new ProviderRegistry(profiles, codex)
   const services: { questions?: QuestionSessions } = {}
   const imageEditor = new ImageEditorService(screenshots)
+  const tesseractOcr = new TesseractOcrService(
+    app.isPackaged
+      ? join(process.resourcesPath, 'ocr', 'lang')
+      : join(app.getAppPath(), 'node_modules', '@tesseract.js-data', 'eng', '4.0.0_best_int')
+  )
+  const windowsOcr = new WindowsOcrService(
+    app.isPackaged
+      ? join(process.resourcesPath, 'ocr', 'windows-ocr.ps1')
+      : join(app.getAppPath(), 'resources', 'ocr', 'windows-ocr.ps1')
+  )
+  const ocr = new NativeFirstOcrService(windowsOcr, tesseractOcr)
   const capture = new CaptureService(screenshots, (completed) => services.questions!.open(completed), (message) => showSafeError(message, 'capture-failed'), imageEditor)
-  const questions = new QuestionSessions(providers, screenshots, (destination) => capture.begin('region', destination), undefined, history, settings, imageEditor)
+  const questions = new QuestionSessions(providers, screenshots, (destination) => capture.begin('region', destination), undefined, history, settings, imageEditor, ocr)
   services.questions = questions
 
   let tray: TrayController | null = null

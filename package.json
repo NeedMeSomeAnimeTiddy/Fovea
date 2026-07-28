@@ -16,19 +16,24 @@
     "lint:design": "node scripts/validate-design-tokens.mjs",
     "assets:generate": "node scripts/generate-assets.mjs",
     "assets:validate": "node scripts/generate-assets.mjs --check",
+    "ocr:benchmark": "node scripts/benchmark-ocr.mjs",
     "test": "vitest run",
     "build": "electron-vite build",
     "package:win": "npm run build && electron-builder --win nsis"
   },
   "dependencies": {
+    "@zxing/library": "^0.21.3",
     "eventsource-parser": "^3.1.0",
     "react": "19.1.1",
     "react-dom": "19.1.1",
     "react-markdown": "10.1.0",
-    "rehype-highlight": "^7.0.2"
+    "rehype-highlight": "^7.0.2",
+    "sharp": "^0.35.3",
+    "tesseract.js": "7.0.0"
   },
   "devDependencies": {
     "@eslint/js": "9.35.0",
+    "@tesseract.js-data/eng": "1.0.0",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
     "@types/node": "22.18.3",
@@ -42,7 +47,6 @@
     "eslint-plugin-react-hooks": "5.2.0",
     "jsdom": "^29.1.1",
     "png-to-ico": "^3.0.2",
-    "sharp": "^0.35.3",
     "typescript": "5.9.2",
     "typescript-eslint": "8.43.0",
     "vite": "7.3.6",
@@ -52,6 +56,10 @@
     "appId": "com.fovea.desktop",
     "productName": "Fovea",
     "asar": true,
+    "asarUnpack": [
+      "node_modules/tesseract.js/**/*",
+      "node_modules/tesseract.js-core/**/*"
+    ],
     "files": [
       "out/**/*",
       "package.json"
@@ -71,6 +79,14 @@
       {
         "from": "resources/assets/generated",
         "to": "assets"
+      },
+      {
+        "from": "node_modules/@tesseract.js-data/eng/4.0.0_best_int/eng.traineddata.gz",
+        "to": "ocr/lang/eng.traineddata.gz"
+      },
+      {
+        "from": "resources/ocr/windows-ocr.ps1",
+        "to": "ocr/windows-ocr.ps1"
       }
     ],
     "win": {

@@ -111,7 +111,25 @@ describe('frozen region capture', () => {
       selectedBounds: { x: 10, y: 5, width: 24, height: 24 },
       display: mocks.display,
       edited: true,
-      preferWebSearch: true
+      preferWebSearch: true,
+      extractText: false
+    }))
+    service.dispose()
+  })
+
+  it('marks a selected region for local text extraction', async () => {
+    const completed = vi.fn(async () => undefined)
+    const save = vi.fn(async () => 'C:\\temp\\capture.png')
+    const { CaptureService } = await import('../src/main/capture/capture-service')
+    const service = new CaptureService({ save } as never, completed, vi.fn())
+
+    await service.begin('region')
+    await service.select({ x: 10, y: 5, width: 24, height: 24 }, 42, [], false, true, 'en-GB')
+
+    expect(completed).toHaveBeenCalledWith(expect.objectContaining({
+      preferWebSearch: false,
+      extractText: true,
+      ocrLanguageCode: 'en-GB'
     }))
     service.dispose()
   })

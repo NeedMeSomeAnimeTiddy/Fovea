@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
 import { createRoot } from 'react-dom/client'
 import type { CaptureContext } from '@shared/contracts/ipc'
-import type { ImageEditOperation } from '@shared/types/app'
+import type { ImageEditOperation, OcrLanguage } from '@shared/types/app'
 import type { AppError } from '@shared/types/app-error'
 import type { Point, Rectangle } from '@shared/types/geometry'
 import { initialiseAppearance } from '../appearance'
@@ -24,6 +24,9 @@ function Overlay(): React.JSX.Element {
   const [captureError, setCaptureError] = useState<AppError | null>(null)
   const [editBeforeSending, setEditBeforeSending] = useState(false)
   const [preferWebSearch, setPreferWebSearch] = useState(false)
+  const [extractText, setExtractText] = useState(false)
+  const [ocrLanguageCode, setOcrLanguageCode] = useState('')
+  const [ocrLanguages, setOcrLanguages] = useState<OcrLanguage[]>([])
   const [resizing, setResizing] = useState<{ corner: ResizeCorner; original: Rectangle } | null>(null)
   const root = useRef<HTMLDivElement>(null)
   const rectangle = start ? normalize(start, current) : null
@@ -43,6 +46,16 @@ function Overlay(): React.JSX.Element {
   useEffect(() => {
     void initialiseAppearance()
     loadContext()
+    void Promise.all([
+      window.fovea.capture.getOcrLanguages(),
+      window.fovea.settings.get()
+    ]).then(([languages, settings]) => {
+      setOcrLanguages(languages)
+      const remembered = settings.ocrLanguageCode ?? ''
+      const available = remembered && languages.some(({ code }) => code === remembered) ? remembered : ''
+      setOcrLanguageCode(available)
+      if (remembered && !available) void window.fovea.capture.setOcrLanguage('').catch(() => undefined)
+    }).catch(() => setOcrLanguages([]))
     const onKey = (event: KeyboardEvent): void => { if (event.key === 'Escape') void window.fovea.capture.cancel() }
     addEventListener('keydown', onKey)
     root.current?.focus()
@@ -51,7 +64,7 @@ function Overlay(): React.JSX.Element {
 
   const submit = async (next: Rectangle, operations: ImageEditOperation[]): Promise<void> => {
     setPhase('submitting')
-    try { await window.fovea.capture.select(next, operations, preferWebSearch) }
+    try { await window.fovea.capture.select(next, operations, preferWebSearch, extractText, extractText && ocrLanguageCode ? ocrLanguageCode : undefined) }
     catch (reason) {
       const error = appErrorFromUnknown(reason)
       setPhase(editBeforeSending ? 'editing' : 'invalid')
@@ -173,24 +186,45 @@ function Overlay(): React.JSX.Element {
       title={captureError?.title}
       canEditBeforeSending={context?.canEditBeforeSending ?? false}
       editBeforeSending={editBeforeSending}
+      extractText={extractText}
+      ocrLanguageCode={ocrLanguageCode}
+      ocrLanguages={ocrLanguages}
       preferWebSearch={preferWebSearch}
+      onOcrLanguageChange={(code) => {
+        setOcrLanguageCode(code)
+        void window.fovea.capture.setOcrLanguage(code).catch(() => undefined)
+      }}
       onToggleEdit={() => setEditBeforeSending((enabled) => !enabled)}
-      onToggleWebSearch={() => setPreferWebSearch((enabled) => !enabled)}
+      onToggleExtractText={() => setExtractText((enabled) => {
+        const next = !enabled
+        if (next) setPreferWebSearch(false)
+        return next
+      })}
+      onToggleWebSearch={() => setPreferWebSearch((enabled) => {
+        const next = !enabled
+        if (next) setExtractText(false)
+        return next
+      })}
       onCancel={() => void window.fovea.capture.cancel()}
       onRetry={captureError ? loadContext : undefined}
     />}
-    {phase === 'submitting' && <div className="capture-status" role="status"><span className="status-dot" />{editBeforeSending ? 'Applying edits…' : 'Opening Fovea…'}</div>}
+    {phase === 'submitting' && <div className="capture-status" role="status"><span className="status-dot" />{editBeforeSending ? 'Applying edits…' : extractText ? 'Opening text extraction…' : 'Opening Fovea…'}</div>}
   </div>
 }
 
-function CaptureHud({
+export function CaptureHud({
   error,
   detail,
   title,
   canEditBeforeSending,
   editBeforeSending,
+  extractText,
+  ocrLanguageCode,
+  ocrLanguages,
   preferWebSearch,
+  onOcrLanguageChange,
   onToggleEdit,
+  onToggleExtractText,
   onToggleWebSearch,
   onCancel,
   onRetry
@@ -200,8 +234,13 @@ function CaptureHud({
   title?: string
   canEditBeforeSending: boolean
   editBeforeSending: boolean
+  extractText: boolean
+  ocrLanguageCode: string
+  ocrLanguages: OcrLanguage[]
   preferWebSearch: boolean
+  onOcrLanguageChange(value: string): void
   onToggleEdit(): void
+  onToggleExtractText(): void
   onToggleWebSearch(): void
   onCancel(): void
   onRetry?: () => void
@@ -228,6 +267,36 @@ function CaptureHud({
             <path d="m13.8 6.7 3.5 3.5" />
           </svg>
         </button>
+        <span className="hud-ocr-control">
+          <button
+            aria-label={extractText ? 'Extract text instead of AI analysis enabled' : 'Extract text instead of AI analysis'}
+            aria-pressed={extractText}
+            className="hud-icon-button hud-text-control"
+            data-active={extractText}
+            title={extractText ? 'Local text extraction is on' : 'Extract text locally instead of using AI'}
+            type="button"
+            onClick={onToggleExtractText}
+          >
+            <svg aria-hidden="true" viewBox="0 0 24 24">
+              <path d="M5 6h14M5 12h14M5 18h10" />
+            </svg>
+          </button>
+          {extractText && (
+            <label className="hud-ocr-language">
+              <span>OCR language</span>
+              <select
+                aria-label="OCR language"
+                value={ocrLanguageCode}
+                onChange={(event) => onOcrLanguageChange(event.currentTarget.value)}
+              >
+                <option value="">Automatic</option>
+                {ocrLanguages.map((language) => (
+                  <option key={language.code} value={language.code}>{language.label}</option>
+                ))}
+              </select>
+            </label>
+          )}
+        </span>
         <button
           aria-label={preferWebSearch ? 'Search web for first answer enabled' : 'Search web for first answer'}
           aria-pressed={preferWebSearch}
@@ -266,4 +335,5 @@ function dimensionPosition(rectangle: Rectangle): string {
   const horizontal = innerWidth - rectangle.x < 112 ? 'edge-right' : 'edge-left'
   return `${vertical} ${horizontal}`
 }
-createRoot(document.getElementById('root')!).render(<Overlay />)
+const applicationRoot = document.getElementById('root')
+if (applicationRoot) createRoot(applicationRoot).render(<Overlay />)
