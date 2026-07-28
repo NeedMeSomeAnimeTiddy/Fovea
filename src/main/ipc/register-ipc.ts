@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, shell, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { IPC, isWindowResizeEdge, type SettingsViewState } from '@shared/contracts/ipc'
-import type { AppearancePreference, CaptureMode, ConversationSelection, OnboardingStatus, ProviderKind, ShortcutAction } from '@shared/types/app'
+import type { AppearancePreference, CaptureMode, ConversationSelection, ImageEditOperation, OnboardingStatus, ProviderKind, ShortcutAction } from '@shared/types/app'
 import type { Rectangle } from '@shared/types/geometry'
 import type { AppErrorCode } from '@shared/types/app-error'
 import { toIpcResult } from '../errors/app-error'
@@ -12,15 +12,16 @@ import type { ProviderRegistry } from '../providers/provider-registry'
 import type { ShortcutManager } from '../shortcuts/shortcut-manager'
 import type { SettingsStore } from '../storage/settings-store'
 import type { TempScreenshotStore } from '../storage/temp-screenshot-store'
+import type { ConversationHistoryStore } from '../storage/conversation-history-store'
 import type { QuestionSessions } from '../windows/question-sessions'
 import { ownsSettingsWebContents, showSettingsWindow } from '../windows/settings-window'
 import { resolveWindowChromeController, type WindowChromeController, type WindowChromeIpcEvent } from '../windows/window-chrome'
 
-export interface IpcDependencies { providers: ProviderRegistry; settings: SettingsStore; screenshots: TempScreenshotStore; capture: CaptureService; onboarding: OnboardingController; questions: QuestionSessions; shortcuts: ShortcutManager; appearance: AppearanceController }
+export interface IpcDependencies { providers: ProviderRegistry; settings: SettingsStore; screenshots: TempScreenshotStore; history: ConversationHistoryStore; capture: CaptureService; onboarding: OnboardingController; questions: QuestionSessions; shortcuts: ShortcutManager; appearance: AppearanceController }
 
 export function registerIpc(dependencies: IpcDependencies): void {
   ipcMain.on(IPC.appearanceGet, (event) => { event.returnValue = dependencies.appearance.getState() })
-  const buildSettingsState = (): SettingsViewState => ({ appearance: dependencies.appearance.getState(), profiles: dependencies.providers.listProfiles(), shortcuts: dependencies.shortcuts.getState(), customPrompts: dependencies.settings.get().customPrompts, launchAtLogin: dependencies.settings.get().launchAtLogin, onboardingStatus: dependencies.settings.get().onboardingStatus, tempLocation: dependencies.screenshots.directory, appVersion: app.getVersion() })
+  const buildSettingsState = (): SettingsViewState => ({ appearance: dependencies.appearance.getState(), profiles: dependencies.providers.listProfiles(), shortcuts: dependencies.shortcuts.getState(), customPrompts: dependencies.settings.get().customPrompts, launchAtLogin: dependencies.settings.get().launchAtLogin, onboardingStatus: dependencies.settings.get().onboardingStatus, history: dependencies.settings.get().history, tempLocation: dependencies.screenshots.directory, appVersion: app.getVersion() })
   const broadcastSettings = (): void => {
     const state = buildSettingsState()
     for (const window of BrowserWindow.getAllWindows()) {
@@ -65,6 +66,20 @@ export function registerIpc(dependencies: IpcDependencies): void {
     await dependencies.settings.update({ customPrompts: settings.customPrompts.filter((item) => item.id !== promptId) })
   }), 'validation')
   handle(IPC.settingsSetOnboardingStatus, (_event, status) => mutate(() => dependencies.settings.update({ onboardingStatus: requireOnboardingOutcome(status) })), 'validation')
+  handle(IPC.settingsSetPrivateMode, (_event, enabled) => mutate(() => {
+    if (typeof enabled !== 'boolean') throw new Error('Invalid private mode setting.')
+    return dependencies.settings.update({ history: { ...dependencies.settings.get().history, privateMode: enabled } })
+  }), 'validation')
+  handle(IPC.settingsSetHistoryRetention, (_event, days) => mutate(async () => {
+    const retentionDays = requireInteger(days, 1, 3650)
+    await dependencies.settings.update({ history: { ...dependencies.settings.get().history, retentionDays } })
+    await dependencies.history.applyRetention(retentionDays)
+  }), 'validation')
+  handle(IPC.settingsSetScreenshotRetention, (_event, enabled) => mutate(async () => {
+    if (typeof enabled !== 'boolean') throw new Error('Invalid screenshot retention setting.')
+    await dependencies.settings.update({ history: { ...dependencies.settings.get().history, retainScreenshots: enabled } })
+    if (!enabled) await dependencies.history.removeAllScreenshots()
+  }), 'validation')
   handle(IPC.settingsTestOnboardingCapture, (event) => {
     if (event.sender.isDestroyed() || !ownsSettingsWebContents(event.sender.id)) throw new Error('Test capture is only available from Settings.')
     return dependencies.onboarding.testCapture()
@@ -85,7 +100,7 @@ export function registerIpc(dependencies: IpcDependencies): void {
 
   handle(IPC.captureStart, (_event, mode) => dependencies.capture.begin(requireCaptureMode(mode)), 'capture-failed')
   handle(IPC.captureGetContext, (event) => dependencies.capture.getContext(event.sender.id), 'capture-failed')
-  handle(IPC.captureSelect, (event, rectangle) => { if (!isRectangle(rectangle)) throw new Error('Invalid selection.'); return dependencies.capture.select(rectangle, event.sender.id) }, 'capture-failed')
+  handle(IPC.captureSelect, (event, rectangle, operations = [], preferWebSearch = false) => { if (!isRectangle(rectangle)) throw new Error('Invalid selection.'); if (!Array.isArray(operations)) throw new Error('Invalid screenshot edits.'); if (typeof preferWebSearch !== 'boolean') throw new Error('Invalid web-search preference.'); return dependencies.capture.select(rectangle, event.sender.id, operations as ImageEditOperation[], preferWebSearch) }, 'capture-failed')
   handle(IPC.captureCancel, () => dependencies.capture.cancel())
 
   handle(IPC.questionGet, (_event, id) => dependencies.questions.get(requireId(id)))
@@ -100,6 +115,10 @@ export function registerIpc(dependencies: IpcDependencies): void {
     return dependencies.questions.setPreviewOpen(requireId(id), attachmentId === null ? null : requireId(attachmentId))
   }, 'validation')
   handle(IPC.questionRemoveAttachment, (_event, id, attachmentId) => dependencies.questions.removeAttachment(requireId(id), requireId(attachmentId)), 'validation')
+  handle(IPC.questionApplyAttachmentEdits, (_event, id, attachmentId, operations) => {
+    if (!Array.isArray(operations)) throw new Error('Invalid screenshot edits.')
+    return dependencies.questions.applyAttachmentEdits(requireId(id), requireId(attachmentId), operations as ImageEditOperation[])
+  }, 'validation')
   handle(IPC.questionSend, (_event, id, text, preferWebSearch = false) => {
     if (typeof preferWebSearch !== 'boolean') throw new Error('Invalid web-search preference.')
     return dependencies.questions.send(requireId(id), requireString(text, 10_000), preferWebSearch)
@@ -110,6 +129,10 @@ export function registerIpc(dependencies: IpcDependencies): void {
   handle(IPC.questionClose, (_event, id) => dependencies.questions.close(requireId(id)))
   handle(IPC.questionAddSnip, (_event, id) => dependencies.questions.addSnip(requireId(id)), 'capture-failed')
   handle(IPC.questionNewChat, (_event, id) => dependencies.questions.newChat(requireId(id)), 'capture-failed')
+  handle(IPC.historyList, (_event, query = '') => dependencies.history.list(requireString(query, 200)), 'validation')
+  handle(IPC.historyOpen, (_event, id) => dependencies.questions.openHistory(requireId(id)))
+  handle(IPC.historyDelete, (_event, id) => dependencies.history.delete(requireId(id)))
+  handle(IPC.historyClear, () => dependencies.history.clear())
   handle(IPC.applicationOpenSettings, () => showSettingsWindow())
 
   ipcMain.handle(IPC.windowChromeGetState, (event) => requireWindowChromeController(event).getState())
@@ -137,3 +160,4 @@ function requireCaptureMode(value: unknown): CaptureMode { if (!['region', 'disp
 function requireApiProvider(value: unknown): Exclude<ProviderKind, 'chatgpt'> { if (!['openai', 'anthropic', 'openrouter'].includes(String(value))) throw new Error('Invalid API provider.'); return value as Exclude<ProviderKind, 'chatgpt'> }
 function requireSelection(value: unknown): ConversationSelection { if (!value || typeof value !== 'object') throw new Error('Invalid conversation selection.'); const item = value as Record<string, unknown>; return { profileId: requireId(item.profileId), provider: String(item.provider) as ProviderKind, modelId: requireString(item.modelId, 200), reasoningEffort: requireNullableString(item.reasoningEffort, 50) } }
 function isRectangle(value: unknown): value is Rectangle { return Boolean(value && typeof value === 'object' && ['x','y','width','height'].every((key) => typeof (value as Record<string, unknown>)[key] === 'number' && Number.isFinite((value as Record<string, unknown>)[key]))) }
+function requireInteger(value: unknown, minimum: number, maximum: number): number { if (typeof value !== 'number' || !Number.isInteger(value) || value < minimum || value > maximum) throw new Error('Invalid number.'); return value }

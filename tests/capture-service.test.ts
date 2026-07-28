@@ -73,8 +73,11 @@ describe('frozen region capture', () => {
   it('shows and crops the same startup bitmap with physical-pixel scaling', async () => {
     const completed = vi.fn(async () => undefined)
     const save = vi.fn(async () => 'C:\\temp\\capture.png')
+    const remove = vi.fn(async () => undefined)
+    const createDerivative = vi.fn(async () => 'C:\\temp\\capture-edited.png')
+    const operations = [{ id: 'arrow-1', tool: 'arrow' as const, points: [{ x: 0.1, y: 0.1 }, { x: 0.9, y: 0.9 }], strokeWidth: 4 }]
     const { CaptureService } = await import('../src/main/capture/capture-service')
-    const service = new CaptureService({ save } as never, completed, vi.fn())
+    const service = new CaptureService({ save, delete: remove } as never, completed, vi.fn(), { createDerivative })
 
     await service.begin('region')
 
@@ -93,17 +96,22 @@ describe('frozen region capture', () => {
       height: 50,
       minSelectionSize: 24,
       displayId: '7',
-      imageDataUrl: `data:image/jpeg;base64,${Buffer.from('frozen-display').toString('base64')}`
+      imageDataUrl: `data:image/jpeg;base64,${Buffer.from('frozen-display').toString('base64')}`,
+      canEditBeforeSending: true
     })
 
-    await service.select({ x: 10, y: 5, width: 24, height: 24 }, 42)
+    await service.select({ x: 10, y: 5, width: 24, height: 24 }, 42, operations, true)
 
     expect(mocks.crop).toHaveBeenCalledWith({ x: 20, y: 10, width: 48, height: 48 })
     expect(save).toHaveBeenCalledWith(Buffer.from('cropped'))
+    expect(createDerivative).toHaveBeenCalledWith('C:\\temp\\capture.png', operations)
+    expect(remove).toHaveBeenCalledWith('C:\\temp\\capture.png')
     expect(completed).toHaveBeenCalledWith(expect.objectContaining({
-      imagePath: 'C:\\temp\\capture.png',
+      imagePath: 'C:\\temp\\capture-edited.png',
       selectedBounds: { x: 10, y: 5, width: 24, height: 24 },
-      display: mocks.display
+      display: mocks.display,
+      edited: true,
+      preferWebSearch: true
     }))
     service.dispose()
   })
@@ -141,6 +149,7 @@ describe('frozen region capture', () => {
     const service = new CaptureService({ save, delete: vi.fn() } as never, defaultCompleted, vi.fn())
 
     await service.begin('region', { onCompleted: destinationCompleted, onCancelled: destinationCancelled })
+    await expect(service.getContext(42)).resolves.toMatchObject({ canEditBeforeSending: false })
     service.cancel()
     expect(destinationCancelled).toHaveBeenCalledTimes(1)
     expect(destinationCompleted).not.toHaveBeenCalled()

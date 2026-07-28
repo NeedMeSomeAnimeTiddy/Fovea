@@ -60,27 +60,45 @@ describe('response conversation timeline', () => {
     expect(takeNextTypingCharacter('')).toEqual({ character: '', remainder: '' })
   })
 
-  it('previews every screenshot and only offers removal for drafts', () => {
+  it('opens screenshot actions and disables draft-only actions for sent images', () => {
     const preview = vi.fn()
+    const edit = vi.fn()
     const remove = vi.fn()
     render(
       <AttachmentStrip
         attachments={[
-          { id: 'sent', thumbnailDataUrl: 'data:image/png;base64,c2VudA==', status: 'sent' },
-          { id: 'draft', thumbnailDataUrl: 'data:image/png;base64,ZHJhZnQ=', status: 'draft' }
+          { id: 'sent', thumbnailDataUrl: 'data:image/png;base64,c2VudA==', status: 'sent', edited: false },
+          { id: 'draft', thumbnailDataUrl: 'data:image/png;base64,ZHJhZnQ=', status: 'draft', edited: false }
         ]}
         disabled={false}
+        onEdit={edit}
         onPreview={preview}
         onRemove={remove}
       />
     )
 
     expect(screen.getByRole('region', { name: 'Conversation screenshots' })).toBeTruthy()
-    expect(screen.getAllByRole('button', { name: /Preview screenshot/ })).toHaveLength(2)
-    expect(screen.queryByRole('button', { name: 'Remove screenshot 1' })).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: 'Preview screenshot 2, not sent yet' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Remove screenshot 2' }))
+    expect(screen.getAllByRole('button', { name: /Screenshot \d options/ })).toHaveLength(2)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Screenshot 1 options' }))
+    expect(screen.getByRole('menu', { name: 'Screenshot 1 actions' })).toBeTruthy()
+    expect(screen.getByRole('menuitem', { name: 'Edit' }).hasAttribute('disabled')).toBe(true)
+    expect(screen.getByRole('menuitem', { name: 'Remove' }).hasAttribute('disabled')).toBe(true)
+    fireEvent.click(screen.getByRole('menuitem', { name: 'View Full' }))
+    expect(preview).toHaveBeenCalledWith('sent')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Screenshot 2 options, not sent yet' }))
+    expect(screen.getByRole('menuitem', { name: 'Edit' }).hasAttribute('disabled')).toBe(false)
+    expect(screen.getByRole('menuitem', { name: 'Remove' }).hasAttribute('disabled')).toBe(false)
+    fireEvent.click(screen.getByRole('menuitem', { name: 'View Full' }))
     expect(preview).toHaveBeenCalledWith('draft')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Screenshot 2 options, not sent yet' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Edit' }))
+    expect(edit).toHaveBeenCalledWith('draft')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Screenshot 2 options, not sent yet' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Remove' }))
     expect(remove).toHaveBeenCalledWith('draft')
   })
 

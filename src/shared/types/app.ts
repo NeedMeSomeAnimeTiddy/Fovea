@@ -5,6 +5,36 @@ export type AppearancePreference = 'system' | 'dark' | 'light'
 export type ResolvedAppearance = 'dark' | 'light'
 export type OnboardingStatus = 'pending' | 'skipped' | 'completed'
 
+export interface HistorySettings {
+  privateMode: boolean
+  retentionDays: number
+  retainScreenshots: boolean
+}
+
+export interface ConversationHistorySummary {
+  id: string
+  title: string
+  createdAt: string
+  updatedAt: string
+  messageCount: number
+  hasScreenshots: boolean
+}
+
+export type ImageEditTool = 'arrow' | 'rectangle' | 'freehand' | 'text' | 'blur' | 'redact'
+
+export interface ImageEditPoint {
+  x: number
+  y: number
+}
+
+export interface ImageEditOperation {
+  id: string
+  tool: ImageEditTool
+  points: ImageEditPoint[]
+  text?: string
+  strokeWidth?: number
+}
+
 export interface CustomPrompt {
   id: string
   label: string
@@ -65,6 +95,7 @@ export interface QuestionAttachment {
   id: string
   thumbnailDataUrl: string
   status: 'draft' | 'sent'
+  edited: boolean
 }
 
 export type ResponsePhase =

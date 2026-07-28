@@ -3,11 +3,15 @@ import { readFile } from 'node:fs/promises'
 import { app, BrowserWindow, nativeImage, screen } from 'electron'
 import { IPC, type QuestionViewState, type WindowMaterial } from '../../shared/contracts/ipc'
 import type { ConversationExchange, ConversationSegment, ConversationSelection, ProviderModelCapability, QuestionAttachment, ResponsePhase } from '@shared/types/app'
+import type { ImageEditOperation } from '@shared/types/app'
 import type { AssistantResponseMetadata, ProviderEvent } from '@shared/types/provider'
 import { toAppError } from '../errors/app-error'
 import type { CaptureDestination, CompletedCapture } from '../capture/capture-service'
 import type { ProviderRegistry } from '../providers/provider-registry'
 import type { TempScreenshotStore } from '../storage/temp-screenshot-store'
+import type { ConversationHistoryStore } from '../storage/conversation-history-store'
+import type { SettingsStore } from '../storage/settings-store'
+import { ImageEditorService } from '../capture/image-editor-service'
 import { getWindowAppearanceOptions, selectWindowMaterial, type WindowSurfaceSizes } from './window-appearance'
 import { openBrowserWindowWithChrome, WINDOW_CHROME_READY_TIMEOUT_MS } from './window-chrome'
 import { loadRenderer, secureWindow } from './window-factory'
@@ -41,24 +45,82 @@ interface SessionAttachment extends QuestionAttachment { imagePath: string }
 interface QuestionSession {
   id: string; attachments: SessionAttachment[]; window: BrowserWindow | null; previewWindow: BrowserWindow | null; previewAttachmentId: string | null; busy: boolean; cleaningUp: boolean; capturePending: boolean
   phase: ResponsePhase; selection: ConversationSelection | null; exchanges: ConversationExchange[]; segments: ProviderSegmentState[]; disclosure: string | null
-  models: ProviderModelCapability[]; initialization: Promise<void>; pinned: boolean
+  models: ProviderModelCapability[]; initialization: Promise<void>; pinned: boolean; historyId: string; createdAt: string
 }
 
 export class QuestionSessions {
   private readonly sessions = new Map<string, QuestionSession>()
-  constructor(private readonly providers: ProviderRegistry, private readonly screenshots: TempScreenshotStore, private readonly startCapture: (destination?: CaptureDestination) => Promise<void>, private readonly readImage: (path: string) => Promise<Buffer> = readFile) {}
+  constructor(
+    private readonly providers: ProviderRegistry,
+    private readonly screenshots: TempScreenshotStore,
+    private readonly startCapture: (destination?: CaptureDestination) => Promise<void>,
+    private readonly readImage: (path: string) => Promise<Buffer> = readFile,
+    private readonly history?: ConversationHistoryStore,
+    private readonly settings?: SettingsStore,
+    private readonly imageEditor = new ImageEditorService(screenshots)
+  ) {}
 
   async open(capture: CompletedCapture): Promise<void> {
     const id = randomUUID()
-    const attachment = this.createAttachment(capture.imagePath, 'sent')
-    const session: QuestionSession = { id, attachments: [attachment], window: null, previewWindow: null, previewAttachmentId: null, busy: false, cleaningUp: false, capturePending: false, phase: 'idle', selection: null, exchanges: [], segments: [], disclosure: null, models: [], initialization: Promise.resolve(), pinned: false }
+    const createdAt = new Date().toISOString()
+    const attachment = this.createAttachment(capture.imagePath, 'sent', capture.edited === true)
+    const session: QuestionSession = { id, attachments: [attachment], window: null, previewWindow: null, previewAttachmentId: null, busy: false, cleaningUp: false, capturePending: false, phase: 'idle', selection: null, exchanges: [], segments: [], disclosure: null, models: [], initialization: Promise.resolve(), pinned: false, historyId: id, createdAt }
     this.sessions.set(id, session)
-    session.initialization = this.selectInitial(session)
+    session.initialization = this.selectInitial(session, capture.preferWebSearch === true)
     const material = selectWindowMaterial({ disableTransparentWindows: app.commandLine.hasSwitch('disable-transparent-windows') })
     try {
       const opened = await openBrowserWindowWithChrome({ kind: 'question', label: 'Question window', initialMaterial: material, surfaceSize: QUESTION_WINDOW_SIZES.surfaceSize, minimumSurfaceSize: QUESTION_WINDOW_SIZES.minimumSurfaceSize, screenSource: screen, timeoutMs: QUESTION_WINDOW_READY_TIMEOUT_MS, canMaximize: false, canResize: false, createWindow: (attempt) => this.createQuestionWindow(capture, session, attempt), loadRenderer: (window) => loadRenderer(window, 'question', { session: id }), isWindowCurrent: (window) => this.sessions.get(id) === session && session.window === window, beforeRetry: (window) => { if (session.window === window) session.window = null } })
       if (session.window === opened.window && !opened.window.isDestroyed()) opened.window.focus()
     } catch (error) { await this.cleanup(id); throw error }
+  }
+
+  async openHistory(historyId: string): Promise<void> {
+    if (!this.history) throw new Error('Conversation history is unavailable.')
+    const record = this.history.get(historyId)
+    if (!record) throw new Error('That saved conversation no longer exists.')
+    const id = randomUUID()
+    const attachments = record.attachments.map((attachment) => this.createAttachment(attachment.imagePath, 'sent', attachment.edited, attachment.id))
+    const session: QuestionSession = {
+      id,
+      attachments,
+      window: null,
+      previewWindow: null,
+      previewAttachmentId: null,
+      busy: false,
+      cleaningUp: false,
+      capturePending: false,
+      phase: record.exchanges.at(-1)?.phase ?? 'completed',
+      selection: record.selection ? structuredClone(record.selection) : null,
+      exchanges: structuredClone(record.exchanges),
+      segments: record.segments.map((segment) => ({ segment: structuredClone(segment), conversationId: null })),
+      disclosure: 'Reopened from local history. Continuing creates a fresh provider context.',
+      models: [],
+      initialization: Promise.resolve(),
+      pinned: false,
+      historyId: record.id,
+      createdAt: record.createdAt
+    }
+    this.sessions.set(id, session)
+    session.initialization = this.initialiseRestored(session)
+    const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
+    const material = selectWindowMaterial({ disableTransparentWindows: app.commandLine.hasSwitch('disable-transparent-windows') })
+    const syntheticCapture: CompletedCapture = {
+      imagePath: attachments[0]?.imagePath ?? '',
+      display,
+      selectedBounds: {
+        x: Math.round(display.bounds.width / 2),
+        y: Math.round(display.bounds.height / 2),
+        width: 1,
+        height: 1
+      }
+    }
+    try {
+      const opened = await openBrowserWindowWithChrome({ kind: 'question', label: 'Question window', initialMaterial: material, surfaceSize: QUESTION_WINDOW_SIZES.surfaceSize, minimumSurfaceSize: QUESTION_WINDOW_SIZES.minimumSurfaceSize, screenSource: screen, timeoutMs: QUESTION_WINDOW_READY_TIMEOUT_MS, canMaximize: false, canResize: false, createWindow: (attempt) => this.createQuestionWindow(syntheticCapture, session, attempt), loadRenderer: (window) => loadRenderer(window, 'question', { session: id }), isWindowCurrent: (window) => this.sessions.get(id) === session && session.window === window, beforeRetry: (window) => { if (session.window === window) session.window = null } })
+      if (session.window === opened.window && !opened.window.isDestroyed()) opened.window.focus()
+    } catch (error) {
+      await this.cleanup(id)
+      throw error
+    }
   }
 
   async get(id: string): Promise<QuestionViewState> {
@@ -182,6 +244,23 @@ export class QuestionSessions {
     return state
   }
 
+  async applyAttachmentEdits(id: string, attachmentId: string, operations: ImageEditOperation[]): Promise<QuestionViewState> {
+    const session = await this.requireInitializedSession(id)
+    if (session.busy) throw new Error('Wait for the current answer or press Stop before editing a screenshot.')
+    const attachment = this.requireAttachment(session, attachmentId)
+    if (attachment.status !== 'draft') throw new Error('Only screenshots that have not been sent can be edited.')
+    const sourcePath = attachment.imagePath
+    const derivativePath = await this.imageEditor.createDerivative(sourcePath, operations)
+    attachment.imagePath = derivativePath
+    attachment.edited = true
+    await this.screenshots.delete(sourcePath)
+    const image = nativeImage.createFromPath(derivativePath)
+    attachment.thumbnailDataUrl = image.resize({ width: Math.min(380, image.getSize().width), quality: 'good' }).toDataURL()
+    const state = this.snapshot(session)
+    this.emitChanged(session, state)
+    return state
+  }
+
   async send(id: string, text: string, preferWebSearch = false): Promise<void> {
     const session = await this.requireInitializedSession(id); const question = text.trim()
     if (!question) throw new Error('Type a question first.'); if (question.length > 10_000) throw new Error('The question is too long.'); if (session.busy) throw new Error('Wait for the current answer or press Stop.'); if (!session.selection) throw new Error('Choose an authenticated provider profile and model first.')
@@ -194,6 +273,7 @@ export class QuestionSessions {
     for (const attachment of draftAttachments) attachment.status = 'sent'
     const exchangeAttachmentIds = draftAttachments.map((attachment) => attachment.id)
     const imagePaths = this.imagePathsForTurn(session, providerSegment, freshProviderContext, exchangeAttachmentIds)
+    const previousExchanges = [...session.exchanges]
     const exchange: ConversationExchange = {
       id: randomUUID(),
       question,
@@ -210,7 +290,12 @@ export class QuestionSessions {
       exchange,
       providerSegment,
       {
-        text: responsePrompt(question, false, preferWebSearch, preferWebSearch),
+        text: responsePrompt(
+          freshProviderContext && previousExchanges.length ? continuationPrompt(previousExchanges, question) : question,
+          false,
+          preferWebSearch,
+          preferWebSearch
+        ),
         ...(imagePaths.length ? { imagePaths } : {}),
         webSearchAllowed: preferWebSearch,
         webSearchPreferred: preferWebSearch
@@ -313,16 +398,25 @@ export class QuestionSessions {
   }
   async dispose(): Promise<void> { await Promise.all([...this.sessions.keys()].map((id) => this.cleanup(id))) }
 
-  private async selectInitial(session: QuestionSession): Promise<void> {
+  private async selectInitial(session: QuestionSession, preferWebSearch = false): Promise<void> {
     const profiles = this.providers.listProfiles(); const profile = profiles.find((item) => item.isDefault) ?? profiles[0]; if (!profile) return
     const models = await this.safeModels(profile.id); session.models = models; const model = models.find((item) => item.id === profile.defaultModelId) ?? models.find((item) => item.isDefault) ?? models[0]; if (!model) return
     session.selection = { profileId: profile.id, provider: profile.provider, modelId: model.id, reasoningEffort: profile.defaultReasoningEffort && model.supportedReasoningEfforts.includes(profile.defaultReasoningEffort) ? profile.defaultReasoningEffort : model.defaultReasoningEffort ?? null }
     const segment = this.startSegment(session, false)
-    if (segment) this.startInitialAnalysis(session, segment)
+    if (segment) this.startInitialAnalysis(session, segment, preferWebSearch)
   }
-  private startInitialAnalysis(session: QuestionSession, providerSegment: ProviderSegmentState): void {
+  private startInitialAnalysis(session: QuestionSession, providerSegment: ProviderSegmentState, preferWebSearch = false): void {
     const attachmentIds = session.attachments.map((attachment) => attachment.id)
-    const exchange: ConversationExchange = { id: randomUUID(), question: INITIAL_QUESTION, answer: '', phase: 'connecting', segmentId: providerSegment.segment.id, attachmentIds, automatic: true }
+    const exchange: ConversationExchange = {
+      id: randomUUID(),
+      question: INITIAL_QUESTION,
+      answer: '',
+      phase: 'connecting',
+      segmentId: providerSegment.segment.id,
+      attachmentIds,
+      automatic: true,
+      ...(preferWebSearch ? { webSearch: { id: randomUUID(), query: INITIAL_QUESTION, status: 'searching' as const } } : {})
+    }
     session.exchanges.push(exchange)
     session.busy = true
     this.setPhase(session, exchange, 'connecting')
@@ -340,8 +434,13 @@ export class QuestionSessions {
           session,
           exchange,
           providerSegment,
-          { text: responsePrompt(INITIAL_QUESTION, true), imagePaths: this.pathsForAttachmentIds(session, attachmentIds) },
-          { detectMetadata: true, detectWebSearch: true }
+          {
+            text: responsePrompt(INITIAL_QUESTION, true, preferWebSearch, preferWebSearch),
+            imagePaths: this.pathsForAttachmentIds(session, attachmentIds),
+            webSearchAllowed: preferWebSearch,
+            webSearchPreferred: preferWebSearch
+          },
+          { detectMetadata: true, detectWebSearch: !preferWebSearch }
         )
       } catch (error) {
         const appError = toAppError(error, 'provider-unavailable')
@@ -459,14 +558,17 @@ export class QuestionSessions {
       exchange.error = appError
       this.setPhase(session, exchange, 'failed')
       this.emit(session, { type: 'error', error: appError })
-    } finally { session.busy = false }
+    } finally {
+      session.busy = false
+      await this.persistHistory(session).catch(() => undefined)
+    }
   }
   private async safeModels(profileId: string): Promise<ProviderModelCapability[]> { try { return await this.providers.listModels(profileId) } catch { return [] } }
   private emit(session: QuestionSession, event: ProviderEvent): void { if (session.window && !session.window.isDestroyed()) session.window.webContents.send(IPC.questionEvent, session.id, event) }
   private emitChanged(session: QuestionSession, state = this.snapshot(session)): void { if (session.window && !session.window.isDestroyed()) session.window.webContents.send(IPC.questionStateChanged, state) }
-  private createAttachment(imagePath: string, status: QuestionAttachment['status']): SessionAttachment {
+  private createAttachment(imagePath: string, status: QuestionAttachment['status'], edited = false, id: string = randomUUID()): SessionAttachment {
     const image = nativeImage.createFromPath(imagePath)
-    return { id: randomUUID(), imagePath, thumbnailDataUrl: image.resize({ width: Math.min(380, image.getSize().width), quality: 'good' }).toDataURL(), status }
+    return { id, imagePath, thumbnailDataUrl: image.resize({ width: Math.min(380, image.getSize().width), quality: 'good' }).toDataURL(), status, edited }
   }
   private requireAttachment(session: QuestionSession, attachmentId: string): SessionAttachment {
     const attachment = session.attachments.find((candidate) => candidate.id === attachmentId)
@@ -510,11 +612,34 @@ export class QuestionSessions {
     const window = secureWindow({ x: placement.x, y: placement.y, width: placement.width, height: placement.height, minWidth: appearance.minimumSize.width, minHeight: appearance.minimumSize.height, frame: appearance.frame, transparent: appearance.transparent, backgroundColor: appearance.backgroundColor, show: appearance.show, useContentSize: appearance.useContentSize, hasShadow: appearance.hasShadow, resizable: false, maximizable: false, minimizable: appearance.minimizable, closable: appearance.closable, movable: appearance.movable, fullscreenable: appearance.fullscreenable, thickFrame: false, roundedCorners: appearance.roundedCorners, alwaysOnTop: session.pinned, skipTaskbar: false, title: 'Fovea', autoHideMenuBar: true })
     session.window = window; window.webContents.setWindowOpenHandler(() => ({ action: 'deny' })); window.once('closed', () => { if (session.window === window) void this.cleanup(session.id) }); return window
   }
-  private snapshot(session: QuestionSession): QuestionViewState { return { sessionId: session.id, attachments: session.attachments.map(({ id, thumbnailDataUrl, status }) => ({ id, thumbnailDataUrl, status })), capturePending: session.capturePending, phase: session.phase, exchanges: structuredClone(session.exchanges), segments: session.segments.map((item) => structuredClone(item.segment)), selection: session.selection ? structuredClone(session.selection) : null, profiles: this.providers.listProfiles(), models: structuredClone(session.models), disclosure: session.disclosure, busy: session.busy, pinned: session.pinned } }
+  private snapshot(session: QuestionSession): QuestionViewState { return { sessionId: session.id, attachments: session.attachments.map(({ id, thumbnailDataUrl, status, edited }) => ({ id, thumbnailDataUrl, status, edited })), capturePending: session.capturePending, phase: session.phase, exchanges: structuredClone(session.exchanges), segments: session.segments.map((item) => structuredClone(item.segment)), selection: session.selection ? structuredClone(session.selection) : null, profiles: this.providers.listProfiles(), models: structuredClone(session.models), disclosure: session.disclosure, busy: session.busy, pinned: session.pinned } }
   private async requireInitializedSession(id: string): Promise<QuestionSession> { const session = this.requireSession(id); await session.initialization; if (this.sessions.get(id) !== session) throw new Error('This capture session has already closed.'); return session }
   private requireSession(id: string): QuestionSession { const session = this.sessions.get(id); if (!session) throw new Error('This capture session has already closed.'); return session }
   private closePreview(session: QuestionSession): void { const preview = session.previewWindow; session.previewWindow = null; session.previewAttachmentId = null; if (preview && !preview.isDestroyed()) preview.close() }
-  private async cleanup(id: string): Promise<void> { const session = this.sessions.get(id); if (!session || session.cleaningUp) return; session.cleaningUp = true; this.sessions.delete(id); this.closePreview(session); await Promise.all(session.attachments.map((attachment) => this.screenshots.delete(attachment.imagePath))); await Promise.all(session.segments.flatMap((item) => item.conversationId ? [this.providers.deleteConversation(item.conversationId, item.segment.selection.provider).catch(() => undefined)] : [])) }
+  private async initialiseRestored(session: QuestionSession): Promise<void> {
+    if (!session.selection) return
+    session.models = await this.safeModels(session.selection.profileId)
+    if (!session.models.some((model) => model.id === session.selection?.modelId)) session.selection = null
+  }
+  private async persistHistory(session: QuestionSession): Promise<void> {
+    if (!this.history || !this.settings || this.settings.get().history.privateMode || !session.exchanges.length) return
+    const historySettings = this.settings.get().history
+    const now = new Date().toISOString()
+    await this.history.upsert({
+      id: session.historyId,
+      title: historyTitle(session.exchanges),
+      createdAt: session.createdAt,
+      updatedAt: now,
+      exchanges: structuredClone(session.exchanges),
+      segments: session.segments.map((item) => structuredClone(item.segment)),
+      selection: session.selection ? structuredClone(session.selection) : null
+    }, session.attachments.filter((attachment) => attachment.status === 'sent').map((attachment) => ({
+      id: attachment.id,
+      imagePath: attachment.imagePath,
+      edited: attachment.edited
+    })), historySettings.retainScreenshots)
+  }
+  private async cleanup(id: string): Promise<void> { const session = this.sessions.get(id); if (!session || session.cleaningUp) return; session.cleaningUp = true; await this.persistHistory(session).catch(() => undefined); this.sessions.delete(id); this.closePreview(session); await Promise.all(session.attachments.map((attachment) => this.screenshots.delete(attachment.imagePath))); await Promise.all(session.segments.flatMap((item) => item.conversationId ? [this.providers.deleteConversation(item.conversationId, item.segment.selection.provider).catch(() => undefined)] : [])) }
 }
 
 function parseWebSearchRequest(value: string): string | null {
@@ -608,4 +733,29 @@ function regenerationPrompt(exchanges: ConversationExchange[], target: Conversat
     ...(priorTranscript ? ['Prior conversation context:', priorTranscript] : []),
     `Final user request:\n${target.question}`
   ].join('\n\n')
+}
+
+function continuationPrompt(exchanges: ConversationExchange[], question: string): string {
+  const transcript = exchanges
+    .flatMap((exchange) => [
+      `User: ${exchange.question}`,
+      ...(exchange.answer || exchange.metadata?.summary
+        ? [`Assistant: ${[exchange.metadata?.summary, exchange.answer].filter(Boolean).join('\n')}`]
+        : [])
+    ])
+    .join('\n\n')
+    .slice(-12_000)
+  return [
+    '[FOVEA_LOCAL_HISTORY_CONTINUATION]',
+    'Continue this locally restored conversation. Treat the transcript as context and answer the final user request directly.',
+    'Prior local transcript:',
+    transcript,
+    `Final user request:\n${question}`
+  ].join('\n\n')
+}
+
+function historyTitle(exchanges: ConversationExchange[]): string {
+  const firstUserQuestion = exchanges.find((exchange) => !exchange.automatic)?.question.trim()
+  const firstSummary = exchanges.find((exchange) => exchange.metadata?.summary)?.metadata?.summary.trim()
+  return (firstUserQuestion || firstSummary || 'Captured conversation').replace(/\s+/g, ' ').slice(0, 160)
 }

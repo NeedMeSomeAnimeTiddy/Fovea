@@ -128,12 +128,14 @@ const mocks = vi.hoisted(() => {
     workArea: { x: number; y: number; width: number; height: number }
     getCursorScreenPoint(): { x: number; y: number }
     getDisplayMatching(): { bounds: { x: number; y: number; width: number; height: number }; workArea: { x: number; y: number; width: number; height: number } }
+    getDisplayNearestPoint(): { id: number; bounds: { x: number; y: number; width: number; height: number }; workArea: { x: number; y: number; width: number; height: number } }
     getAllDisplays(): Array<{ workArea: { x: number; y: number; width: number; height: number } }>
   }
   screen.cursor = { x: -1200, y: 0 }
   screen.workArea = { x: -1600, y: -120, width: 1600, height: 900 }
   screen.getCursorScreenPoint = () => ({ ...screen.cursor })
   screen.getDisplayMatching = () => ({ bounds: { ...screen.workArea }, workArea: { ...screen.workArea } })
+  screen.getDisplayNearestPoint = () => ({ id: 1, bounds: { ...screen.workArea }, workArea: { ...screen.workArea } })
   screen.getAllDisplays = () => [{ workArea: { ...screen.workArea } }]
 
   const windows: FakeWindow[] = []
@@ -241,13 +243,16 @@ function capture(selectedX = 150): any {
   }
 }
 
-async function createSessions(): Promise<any> {
+async function createSessions(options: { history?: any; settings?: any; imageEditor?: any } = {}): Promise<any> {
   const { QuestionSessions } = await import('../src/main/windows/question-sessions')
   return new QuestionSessions(
     mocks.provider as any,
     { delete: mocks.deleteScreenshot } as any,
     mocks.startNewCapture,
-    mocks.readImage
+    mocks.readImage,
+    options.history,
+    options.settings,
+    options.imageEditor
   )
 }
 
@@ -779,6 +784,111 @@ describe('question-session window migration', () => {
     await sessions.close(sessionId)
     await vi.waitFor(() => expect(mocks.deleteScreenshot).toHaveBeenCalledWith(capture().imagePath))
     await vi.waitFor(() => expect(mocks.deleteScreenshot).toHaveBeenCalledWith(capture(900).imagePath))
+  })
+
+  it('uses the capture browser toggle for the automatic first answer', async () => {
+    const sessions = await createSessions()
+    const opening = sessions.open({ ...capture(), preferWebSearch: true })
+    const sessionId = await finishOpening(opening, 0)
+
+    expect(mocks.sendMessage.mock.calls[0]?.[1]).toMatchObject({
+      webSearchAllowed: true,
+      webSearchPreferred: true
+    })
+    expect(String((mocks.sendMessage.mock.calls[0]?.[1] as { text?: string })?.text)).toContain(
+      '[FOVEA_WEB_SEARCH_PREFERRED]'
+    )
+    await expect(sessions.get(sessionId)).resolves.toMatchObject({
+      exchanges: [{ automatic: true, webSearch: { status: 'completed' } }]
+    })
+  })
+
+  it('sends an edited derivative, deletes its unredacted source, and cleans the derivative on close', async () => {
+    const derivativePath = 'C:\\temp\\edited-derivative.png'
+    const imageEditor = { createDerivative: vi.fn(async () => derivativePath) }
+    const sessions = await createSessions({ imageEditor })
+    const opening = sessions.open(capture())
+    const sessionId = await finishOpening(opening, 0)
+
+    await sessions.addSnip(sessionId)
+    await mocks.startNewCapture.mock.calls[0]![0]!.onCompleted(capture(900))
+    const draft = (await sessions.get(sessionId)).attachments[1]!
+    const edited = await sessions.applyAttachmentEdits(sessionId, draft.id, [{
+      id: 'redaction',
+      tool: 'redact',
+      points: [{ x: 0.1, y: 0.1 }, { x: 0.5, y: 0.5 }]
+    }])
+
+    expect(imageEditor.createDerivative).toHaveBeenCalledWith(capture(900).imagePath, expect.any(Array))
+    expect(mocks.deleteScreenshot).toHaveBeenCalledWith(capture(900).imagePath)
+    expect(edited.attachments[1]).toMatchObject({ id: draft.id, status: 'draft', edited: true })
+
+    await sessions.send(sessionId, 'Check the redacted screenshot')
+    expect(mocks.sendMessage.mock.calls[1]?.[1]).toMatchObject({ imagePaths: [derivativePath] })
+
+    await sessions.close(sessionId)
+    await vi.waitFor(() => expect(mocks.deleteScreenshot).toHaveBeenCalledWith(derivativePath))
+  })
+
+  it.each([true, false])('honours private mode=%s when persisting completed conversations', async (privateMode) => {
+    const history = { upsert: vi.fn(async () => undefined) }
+    const settings = { get: () => ({ history: { privateMode, retentionDays: 30, retainScreenshots: false } }) }
+    const sessions = await createSessions({ history, settings })
+    const opening = sessions.open(capture())
+    const sessionId = await finishOpening(opening, 0)
+
+    if (privateMode) {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(history.upsert).not.toHaveBeenCalled()
+    } else {
+      await vi.waitFor(() => expect(history.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({ exchanges: [expect.any(Object)] }),
+        expect.any(Array),
+        false
+      ))
+    }
+    await sessions.close(sessionId)
+    if (privateMode) expect(history.upsert).not.toHaveBeenCalled()
+  })
+
+  it('reopens a saved transcript locally and continues in a fresh provider context', async () => {
+    const history = {
+      get: vi.fn(() => ({
+        id: 'saved-history',
+        title: 'Saved question',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:01:00.000Z',
+        exchanges: [{
+          id: 'saved-exchange',
+          question: 'What is visible?',
+          answer: 'A saved answer.',
+          phase: 'completed',
+          segmentId: 'saved-segment'
+        }],
+        segments: [{
+          id: 'saved-segment',
+          selection: { profileId: 'profile-1', provider: 'chatgpt', modelId: 'vision-1', reasoningEffort: 'low' },
+          startedAt: '2026-01-01T00:00:00.000Z',
+          disclosure: null
+        }],
+        selection: { profileId: 'profile-1', provider: 'chatgpt', modelId: 'vision-1', reasoningEffort: 'low' },
+        attachments: []
+      }))
+    }
+    const sessions = await createSessions({ history })
+    const opening = sessions.openHistory('saved-history')
+    const sessionId = await finishOpening(opening, 0, false)
+
+    await expect(sessions.get(sessionId)).resolves.toMatchObject({
+      exchanges: [{ id: 'saved-exchange', answer: 'A saved answer.' }],
+      disclosure: expect.stringContaining('local history')
+    })
+
+    await sessions.send(sessionId, 'Continue the explanation')
+    expect(mocks.sendMessage.mock.calls[0]?.[1]).toMatchObject({
+      text: expect.stringContaining('[FOVEA_LOCAL_HISTORY_CONTINUATION]')
+    })
+    expect(String((mocks.sendMessage.mock.calls[0]?.[1] as { text?: string })?.text)).toContain('A saved answer.')
   })
 
   it('keeps cancellation session-scoped and deletes a capture that completes after the session closes', async () => {

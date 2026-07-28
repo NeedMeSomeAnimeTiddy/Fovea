@@ -101,3 +101,29 @@ describe('SettingsStore onboarding status', () => {
     expect(store.get().onboardingStatus).toBe('pending')
   })
 })
+
+describe('SettingsStore history privacy', () => {
+  it('migrates version 2 settings to private-safe history defaults', async () => {
+    const path = await settingsPath()
+    await writeFile(path, JSON.stringify({ version: 2, appearance: 'dark' }))
+    const store = new SettingsStore(path)
+    await store.load()
+
+    expect(store.get()).toMatchObject({
+      version: 3,
+      appearance: 'dark',
+      history: { privateMode: false, retentionDays: 30, retainScreenshots: false }
+    })
+  })
+
+  it('sanitizes and persists history preferences', async () => {
+    const path = await settingsPath()
+    const store = new SettingsStore(path)
+    await store.load()
+    await store.update({ history: { privateMode: true, retentionDays: 90, retainScreenshots: true } })
+
+    const reloaded = new SettingsStore(path)
+    await reloaded.load()
+    expect(reloaded.get().history).toEqual({ privateMode: true, retentionDays: 90, retainScreenshots: true })
+  })
+})

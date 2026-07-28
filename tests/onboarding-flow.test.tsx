@@ -162,6 +162,7 @@ function makeState(patch: Partial<SettingsViewState> = {}): SettingsViewState {
     customPrompts: [],
     launchAtLogin: false,
     onboardingStatus: 'pending',
+    history: { privateMode: false, retentionDays: 30, retainScreenshots: false },
     tempLocation: 'C:\\temp',
     appVersion: '0.1.0',
     ...patch

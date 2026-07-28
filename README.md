@@ -42,17 +42,23 @@ NSIS installer under `dist/`.
    confirm the account and plan appear. API-key auth is also available and is
    billed separately.
 3. Confirm an image-capable model is selected, then press `Ctrl+Shift+Space`.
-4. Drag a rectangle at least 24 × 24 logical pixels on the primary display.
-5. Confirm the compact response window immediately analyses the capture and
-   presents a concise answer without showing the category or screenshot.
+4. Enable **Edit before sending**, then drag a rectangle at least 24 × 24
+    logical pixels on the primary display.
+5. Confirm the selection stays on the frozen screen and the icon toolbar
+   appears at the top. Try an annotation and solid redaction, then press Send
+   and confirm the compact response window analyses the edited derivative.
 6. Open **Ask**, choose a contextual suggestion, then use **Custom question**
    and confirm both questions and answers remain visible in the flowing
    conversation.
-7. Expand **Show details**, then try the icon actions for View capture, Stop,
+7. Add another snip, choose **Edit**, try arrows, rectangles, drawing, text,
+   blur, and solid redaction, then undo/redo and save the edited copy. Confirm
+   the edited draft is the image sent with the next question.
+8. Expand **Show details**, then try the icon actions for View capture, Stop,
    Regenerate, Copy, and New capture. Press `Esc` in the capture viewer and
    confirm the response window remains open.
-8. Close the panel and confirm its PNG disappears from the temporary path shown
-   in Settings. **Delete temporary files now** removes any remaining PNGs.
+9. Close the panel and confirm its PNG disappears from the temporary path shown
+   in Settings. In **History**, search for and reopen the conversation, then
+   delete it. **Clean temporary files** removes any remaining temporary PNGs.
 
 ## Architecture and security
 
@@ -75,9 +81,12 @@ Every model turn uses `approvalPolicy: "never"` and the read-only sandbox.
 Fovea automatically declines command, file-change, permission, and
 interactive-tool requests, and immediately interrupts a turn if a command,
 file-change, connector, dynamic-tool, or web-search item starts. The
-visual-assistant instruction also forbids tools and file changes. Conversation
-UI state is in memory and new threads are marked
-ephemeral; closing a panel deletes the thread and screenshot.
+visual-assistant instruction also forbids tools and file changes. Provider
+threads remain ephemeral and are deleted when a panel closes. Conversation
+metadata and messages can be kept in a versioned local store with configurable
+retention; private mode disables those writes. Screenshot history is separately
+opt-in and defaults off. Edited derivatives are produced locally, and an
+unredacted temporary source is deleted once the derivative replaces it.
 
 ## Known limitations
 

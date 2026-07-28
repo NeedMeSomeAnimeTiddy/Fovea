@@ -40,7 +40,7 @@ body,
 .frozen-frame {
   z-index: 0;
   max-width: none;
-  filter: brightness(0.68) saturate(0.78);
+  filter: var(--fovea-capture-image-filter);
 }
 
 .capture-scrim {
@@ -75,6 +75,14 @@ body,
   animation: selection-in var(--fovea-motion-fast) var(--fovea-ease-standard);
 }
 
+.selection-root.editing {
+  pointer-events: auto;
+}
+
+.overlay.editing {
+  cursor: default;
+}
+
 .selection-viewport,
 .selection-outline {
   position: absolute;
@@ -94,19 +102,46 @@ body,
 }
 
 .selection-outline {
+  z-index: 2;
   border: var(--fovea-border-width) var(--fovea-border-style) var(--fovea-capture-selection-stroke);
   background: var(--fovea-capture-selection-fill);
   box-shadow: var(--fovea-capture-selection-glow);
+  pointer-events: none;
 }
 
 .corner-handle {
   position: absolute;
+  z-index: 4;
   width: 14px;
   height: 14px;
+  padding: 0;
   border-color: var(--fovea-capture-selection-stroke);
   border-style: var(--fovea-border-style);
   border-width: 0;
+  background: transparent;
   filter: drop-shadow(0 1px 2px var(--fovea-color-canvas-deep));
+  pointer-events: none;
+}
+
+.selection-root.editing .corner-handle {
+  width: var(--fovea-control-target-minimum);
+  height: var(--fovea-control-target-minimum);
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.selection-root.editing .corner-handle.nw,
+.selection-root.editing .corner-handle.se {
+  cursor: nwse-resize;
+}
+
+.selection-root.editing .corner-handle.ne,
+.selection-root.editing .corner-handle.sw {
+  cursor: nesw-resize;
+}
+
+.selection-root.editing .corner-handle[data-resizing='true'] {
+  filter: drop-shadow(0 0 5px var(--fovea-capture-selection-stroke));
 }
 
 .corner-handle.nw {
@@ -155,8 +190,210 @@ body,
   font-size: var(--fovea-type-caption);
   line-height: var(--fovea-leading-ui);
   white-space: nowrap;
+  pointer-events: none;
   backdrop-filter: blur(var(--fovea-material-blur)) saturate(var(--fovea-material-saturation));
   -webkit-backdrop-filter: blur(var(--fovea-material-blur)) saturate(var(--fovea-material-saturation));
+}
+
+.capture-editor-canvas {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: var(--fovea-radius-sm);
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.capture-editor-toolbar {
+  position: fixed;
+  z-index: 8;
+  top: var(--fovea-space-4);
+  left: 50%;
+  display: flex;
+  width: max-content;
+  max-width: calc(100vw - var(--fovea-space-8));
+  align-items: center;
+  gap: var(--fovea-space-2);
+  overflow-x: auto;
+  padding: var(--fovea-space-2);
+  border: var(--fovea-border-width) var(--fovea-border-style) var(--fovea-capture-hud-border);
+  border-radius: var(--fovea-radius-round);
+  color: var(--fovea-capture-text);
+  background: var(--fovea-capture-hud-fill);
+  box-shadow: var(--fovea-capture-hud-shadow);
+  transform: translateX(-50%);
+  pointer-events: auto;
+  backdrop-filter: blur(var(--fovea-material-blur-strong)) saturate(var(--fovea-material-saturation));
+  -webkit-backdrop-filter: blur(var(--fovea-material-blur-strong)) saturate(var(--fovea-material-saturation));
+}
+
+.capture-editor-toolbar__group {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--fovea-space-1);
+}
+
+.capture-editor-toolbar__divider {
+  flex: none;
+  width: var(--fovea-border-width);
+  height: var(--fovea-space-6);
+  background: var(--fovea-capture-hud-border);
+}
+
+.capture-editor-tool {
+  display: grid;
+  flex: none;
+  width: var(--fovea-control-target-default);
+  height: var(--fovea-control-target-default);
+  place-items: center;
+  padding: 0;
+  border: var(--fovea-border-width) var(--fovea-border-style) transparent;
+  border-radius: var(--fovea-radius-round);
+  color: var(--fovea-capture-text-muted);
+  background: transparent;
+}
+
+.capture-editor-tool svg {
+  width: var(--fovea-space-6);
+  height: var(--fovea-space-6);
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.capture-editor-tool:not(:disabled):hover,
+.capture-editor-tool:not(:disabled):focus-visible {
+  outline: none;
+  color: var(--fovea-capture-text);
+  background: var(--fovea-capture-control-fill-hover);
+  box-shadow: var(--fovea-focus-ring);
+}
+
+.capture-editor-tool[data-active='true'],
+.capture-editor-send {
+  border-color: var(--fovea-capture-selection-stroke);
+  color: var(--fovea-color-text-on-accent);
+  background: var(--fovea-capture-selection-stroke);
+}
+
+.capture-editor-tool:disabled {
+  color: var(--fovea-color-text-disabled);
+}
+
+.capture-editor-send:disabled {
+  border-color: transparent;
+  background: var(--fovea-capture-control-fill);
+}
+
+.capture-editor-hint {
+  position: absolute;
+  z-index: 3;
+  top: var(--fovea-space-3);
+  left: 50%;
+  min-width: max-content;
+  padding: var(--fovea-space-2) var(--fovea-space-3);
+  border: var(--fovea-border-width) var(--fovea-border-style) var(--fovea-capture-hud-border);
+  border-radius: var(--fovea-radius-round);
+  color: var(--fovea-capture-text);
+  background: var(--fovea-capture-hud-fill);
+  box-shadow: var(--fovea-capture-hud-shadow);
+  font-size: var(--fovea-type-caption);
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.capture-editor-inline-text {
+  --capture-text-offset-x: var(--fovea-space-2);
+  --capture-text-preview-clearance: var(--fovea-space-8);
+  --capture-text-offset-y: var(--capture-text-preview-clearance);
+
+  position: absolute;
+  z-index: 3;
+  display: flex;
+  width: min(18rem, calc(100vw - var(--fovea-space-8)));
+  align-items: center;
+  gap: var(--fovea-space-1);
+  padding: var(--fovea-space-1);
+  border: var(--fovea-border-width) var(--fovea-border-style) var(--fovea-capture-hud-border);
+  border-radius: var(--fovea-radius-round);
+  color: var(--fovea-capture-text);
+  background: var(--fovea-glass-fill-solid-fallback);
+  box-shadow: var(--fovea-capture-hud-shadow);
+  transform: translate(var(--capture-text-offset-x), var(--capture-text-offset-y));
+  user-select: text;
+}
+
+.capture-editor-inline-text input {
+  min-width: 0;
+  height: var(--fovea-control-target-compact);
+  flex: 1;
+  padding: 0 var(--fovea-space-3);
+  border: 0;
+  color: var(--fovea-capture-text);
+  background: transparent;
+  font: inherit;
+  font-size: var(--fovea-type-label);
+  user-select: text;
+}
+
+.capture-editor-inline-text input:focus,
+.capture-editor-inline-text input:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+.capture-editor-inline-text button {
+  display: grid;
+  width: var(--fovea-control-target-compact);
+  height: var(--fovea-control-target-compact);
+  flex: none;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--fovea-radius-round);
+  color: var(--fovea-capture-text);
+  background: var(--fovea-capture-control-fill);
+}
+
+.capture-editor-text-confirm:not(:disabled) {
+  color: var(--fovea-color-text-on-accent);
+  background: var(--fovea-capture-selection-stroke);
+}
+
+.capture-editor-text-drag {
+  cursor: grab;
+}
+
+.capture-editor-text-drag:active {
+  cursor: grabbing;
+}
+
+.capture-editor-inline-text button:disabled {
+  color: var(--fovea-color-text-disabled);
+}
+
+.capture-editor-inline-text button svg {
+  width: var(--fovea-space-4);
+  height: var(--fovea-space-4);
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.capture-editor-inline-text[data-align-x='left'] {
+  --capture-text-offset-x: calc(-100% - var(--fovea-space-2));
+}
+
+.capture-editor-inline-text[data-align-y='above'] {
+  --capture-text-offset-y: calc(-100% - var(--capture-text-preview-clearance));
 }
 
 .dimensions.above {
@@ -196,11 +433,10 @@ body,
 }
 
 .capture-hud {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  display: flex;
   align-items: center;
   gap: var(--fovea-space-4);
-  width: min(440px, calc(100vw - var(--fovea-space-16)));
+  width: min(560px, calc(100vw - var(--fovea-space-16)));
   padding: var(--fovea-space-4) var(--fovea-space-4) var(--fovea-space-4) var(--fovea-space-6);
   animation: hud-in var(--fovea-motion-standard) var(--fovea-ease-standard);
 }
@@ -227,6 +463,7 @@ body,
 }
 
 .hud-copy {
+  flex: 1;
   min-width: 0;
 }
 
@@ -250,7 +487,51 @@ body,
   font-size: var(--fovea-type-caption);
 }
 
-.hud-cancel {
+.hud-icon-button {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--fovea-control-target-default);
+  height: var(--fovea-control-target-default);
+  min-height: var(--fovea-control-target-default);
+  padding: 0;
+  border: var(--fovea-border-width) var(--fovea-border-style) var(--fovea-capture-hud-border);
+  border-radius: var(--fovea-radius-round);
+  color: var(--fovea-capture-text);
+  background: var(--fovea-capture-control-fill);
+  font: inherit;
+  cursor: pointer;
+  transition:
+    color var(--fovea-motion-fast) var(--fovea-ease-standard),
+    background var(--fovea-motion-fast) var(--fovea-ease-standard);
+}
+
+.hud-icon-button svg {
+  width: var(--fovea-space-6);
+  height: var(--fovea-space-6);
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.hud-icon-button:hover,
+.hud-icon-button:focus-visible {
+  outline: none;
+  background: var(--fovea-capture-control-fill-hover);
+  box-shadow: var(--fovea-focus-ring);
+}
+
+.hud-edit-control[data-active='true'],
+.hud-browser-control[data-active='true'] {
+  border-color: var(--fovea-capture-selection-stroke);
+  color: var(--fovea-color-text-on-accent);
+  background: var(--fovea-capture-selection-stroke);
+}
+
+.hud-retry {
   display: inline-flex;
   align-items: center;
   gap: var(--fovea-space-3);
@@ -265,15 +546,9 @@ body,
   transition: background var(--fovea-motion-fast) var(--fovea-ease-standard);
 }
 
-.hud-cancel:hover,
-.hud-cancel:focus-visible {
+.hud-retry:hover,
+.hud-retry:focus-visible {
   background: var(--fovea-capture-control-fill-hover);
-}
-
-.hud-cancel kbd {
-  color: var(--fovea-capture-text-muted);
-  font-family: var(--fovea-font-mono);
-  font-size: var(--fovea-type-caption);
 }
 
 .capture-hud.error {
@@ -327,7 +602,8 @@ body,
     animation: none;
   }
 
-  .hud-cancel {
+  .hud-icon-button,
+  .hud-retry {
     transition: none;
   }
 }

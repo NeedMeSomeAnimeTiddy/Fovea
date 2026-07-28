@@ -15,6 +15,7 @@
   --fovea-color-selection-border: var(--fovea-ref-cyan-400);
 
   /* Capture overlay stays legible over arbitrary desktop content */
+  --fovea-capture-image-filter: brightness(0.68) saturate(0.78);
   --fovea-capture-scrim: rgba(2, 3, 6, 0.46);
   --fovea-capture-hud-fill: rgba(24, 25, 31, 0.76);
   --fovea-capture-hud-border: rgba(255, 255, 255, 0.2);

@@ -2,6 +2,7 @@ import { app, dialog, globalShortcut, safeStorage, shell } from 'electron'
 import { join } from 'node:path'
 import { AppearanceController } from './appearance/appearance-controller'
 import { CaptureService } from './capture/capture-service'
+import { ImageEditorService } from './capture/image-editor-service'
 import { registerIpc } from './ipc/register-ipc'
 import { OnboardingController, shouldShowOnboardingAtStartup } from './onboarding/onboarding-controller'
 import { CodexAppServerProvider } from './providers/codex-app-server/codex-app-server-provider'
@@ -9,6 +10,7 @@ import { ProfileManager } from './providers/profile-manager'
 import { ProviderRegistry } from './providers/provider-registry'
 import { ShortcutManager } from './shortcuts/shortcut-manager'
 import { CredentialStore } from './storage/credential-store'
+import { ConversationHistoryStore } from './storage/conversation-history-store'
 import { SettingsStore } from './storage/settings-store'
 import { TempScreenshotStore } from './storage/temp-screenshot-store'
 import { TrayController } from './tray/tray-controller'
@@ -35,8 +37,9 @@ async function startApplication(): Promise<void> {
   const settings = new SettingsStore(join(userData, 'settings.v2.json'))
   const credentials = new CredentialStore(join(userData, 'credentials.v1.json'), safeStorage)
   const screenshots = new TempScreenshotStore(join(userData, 'temporary-screenshots'))
-  await Promise.all([settings.load(), credentials.load(), screenshots.initialise()])
-  await screenshots.cleanup()
+  const history = new ConversationHistoryStore(join(userData, 'history.v1.json'), join(userData, 'conversation-images'))
+  await Promise.all([settings.load(), credentials.load(), screenshots.initialise(), history.initialise()])
+  await Promise.all([screenshots.cleanup(), history.applyRetention(settings.get().history.retentionDays)])
 
   const appearance = new AppearanceController(settings)
   appearance.initialise()
@@ -50,8 +53,9 @@ async function startApplication(): Promise<void> {
   const profiles = new ProfileManager(settings, credentials)
   const providers = new ProviderRegistry(profiles, codex)
   const services: { questions?: QuestionSessions } = {}
-  const capture = new CaptureService(screenshots, (completed) => services.questions!.open(completed), (message) => showSafeError(message, 'capture-failed'))
-  const questions = new QuestionSessions(providers, screenshots, (destination) => capture.begin('region', destination))
+  const imageEditor = new ImageEditorService(screenshots)
+  const capture = new CaptureService(screenshots, (completed) => services.questions!.open(completed), (message) => showSafeError(message, 'capture-failed'), imageEditor)
+  const questions = new QuestionSessions(providers, screenshots, (destination) => capture.begin('region', destination), undefined, history, settings, imageEditor)
   services.questions = questions
 
   let tray: TrayController | null = null
@@ -73,7 +77,7 @@ async function startApplication(): Promise<void> {
   tray = new TrayController(async (mode) => capture.begin(mode), shortcuts, providers, settings)
   tray.initialise()
   providers.on('status', () => tray?.refreshStatus())
-  registerIpc({ providers, settings, screenshots, capture, onboarding, questions, shortcuts, appearance })
+  registerIpc({ providers, settings, screenshots, history, capture, onboarding, questions, shortcuts, appearance })
   app.setLoginItemSettings({ openAtLogin: settings.get().launchAtLogin, path: process.execPath })
 
   try { await providers.initialise() }

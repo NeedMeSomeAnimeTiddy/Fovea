@@ -2,9 +2,10 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { BrowserWindow, desktopCapturer, screen, type DesktopCapturerSource, type Display, type NativeImage } from 'electron'
 import type { CaptureContext } from '@shared/contracts/ipc'
-import type { CaptureMode } from '@shared/types/app'
+import type { CaptureMode, ImageEditOperation } from '@shared/types/app'
 import type { Rectangle } from '@shared/types/geometry'
 import { clampCropRectangle, logicalToPhysical } from './geometry'
+import type { ImageEditorService } from './image-editor-service'
 import { loadRenderer, secureWindow } from '../windows/window-factory'
 import { WINDOW_BACKGROUND_COLOR } from '../windows/window-appearance'
 import type { TempScreenshotStore } from '../storage/temp-screenshot-store'
@@ -24,7 +25,7 @@ interface PendingDisplay {
 interface CaptureDescriptor { mode: CaptureMode; displayId?: number; rectangle?: Rectangle; sourceId?: string }
 interface PendingCapture { candidates: Map<number, PendingDisplay>; topology: string; destination?: CaptureDestination }
 
-export interface CompletedCapture { imagePath: string; selectedBounds: Rectangle; display: Display }
+export interface CompletedCapture { imagePath: string; selectedBounds: Rectangle; display: Display; edited?: boolean; preferWebSearch?: boolean }
 export interface CaptureDestination {
   onCompleted(capture: CompletedCapture): Promise<void>
   onCancelled?(): void
@@ -35,7 +36,12 @@ export class CaptureService {
   private lastDescriptor: CaptureDescriptor | null = null
   private cancellationTimer: NodeJS.Timeout | null = null
 
-  constructor(private readonly screenshots: TempScreenshotStore, private readonly onCompleted: (capture: CompletedCapture) => Promise<void>, private readonly onError: (message: string) => void) {
+  constructor(
+    private readonly screenshots: TempScreenshotStore,
+    private readonly onCompleted: (capture: CompletedCapture) => Promise<void>,
+    private readonly onError: (message: string) => void,
+    private readonly imageEditor?: Pick<ImageEditorService, 'createDerivative'>
+  ) {
     screen.on('display-added', this.cancelForTopologyChange)
     screen.on('display-removed', this.cancelForTopologyChange)
     screen.on('display-metrics-changed', this.cancelForTopologyChange)
@@ -65,16 +71,17 @@ export class CaptureService {
     await candidate.ready
     if (candidate.readinessError) throw candidate.readinessError
     if (!candidate.image || !candidate.imageDataUrl || !candidate.viewport) throw new Error('The frozen display image is unavailable.')
-    return { width: candidate.viewport.width, height: candidate.viewport.height, minSelectionSize: 24, displayId: String(candidate.display.id), imageDataUrl: candidate.imageDataUrl }
+    return { width: candidate.viewport.width, height: candidate.viewport.height, minSelectionSize: 24, displayId: String(candidate.display.id), imageDataUrl: candidate.imageDataUrl, canEditBeforeSending: !this.pending?.destination }
   }
 
-  async select(rectangle: Rectangle, senderWebContentsId?: number): Promise<void> {
+  async select(rectangle: Rectangle, senderWebContentsId?: number, operations: ImageEditOperation[] = [], preferWebSearch = false): Promise<void> {
     const candidate = this.findCandidate(senderWebContentsId)
     if (!candidate.viewport) throw new Error('The capture surface is not ready.')
     const bounded = boundRectangle(rectangle, candidate.viewport.width, candidate.viewport.height)
     if (bounded.width < 24 || bounded.height < 24) throw new Error('Select an area at least 24 × 24 pixels.')
+    const allowedOperations = this.pending?.destination ? [] : operations
     this.lastDescriptor = { mode: 'region', displayId: candidate.display.id, rectangle: bounded }
-    await this.complete(candidate, bounded)
+    await this.complete(candidate, bounded, allowedOperations, preferWebSearch)
   }
 
   cancel(): void {
@@ -198,7 +205,7 @@ export class CaptureService {
     return candidate
   }
 
-  private async complete(candidate: PendingDisplay, bounded: Rectangle): Promise<void> {
+  private async complete(candidate: PendingDisplay, bounded: Rectangle, operations: ImageEditOperation[], preferWebSearch = false): Promise<void> {
     if (!candidate.image || !candidate.viewport) throw new Error('The frozen display image is unavailable.')
     const imageSize = candidate.image.getSize()
     const physical = logicalToPhysical(bounded, imageSize.width / candidate.viewport.width, imageSize.height / candidate.viewport.height)
@@ -206,15 +213,22 @@ export class CaptureService {
     if (crop.width < 1 || crop.height < 1) throw new Error('The selected area was outside the captured image.')
     const destination = this.pending?.destination
     this.clearPending(false)
-    await this.saveCompleted(candidate.display, candidate.image.crop(crop), bounded, destination)
+    await this.saveCompleted(candidate.display, candidate.image.crop(crop), bounded, destination, operations, preferWebSearch)
   }
 
-  private async saveCompleted(display: Display, image: NativeImage, selectedBounds: Rectangle, destination?: CaptureDestination): Promise<void> {
-    const imagePath = await this.screenshots.save(image.toPNG())
+  private async saveCompleted(display: Display, image: NativeImage, selectedBounds: Rectangle, destination?: CaptureDestination, operations: ImageEditOperation[] = [], preferWebSearch = false): Promise<void> {
+    const sourcePath = await this.screenshots.save(image.toPNG())
+    let imagePath = sourcePath
     try {
-      await (destination?.onCompleted ?? this.onCompleted)({ imagePath, selectedBounds, display })
+      if (operations.length) {
+        if (!this.imageEditor) throw new Error('Screenshot editing is unavailable.')
+        imagePath = await this.imageEditor.createDerivative(sourcePath, operations)
+        await this.screenshots.delete(sourcePath)
+      }
+      await (destination?.onCompleted ?? this.onCompleted)({ imagePath, selectedBounds, display, edited: operations.length > 0, preferWebSearch })
     } catch (error) {
       await this.screenshots.delete(imagePath)
+      if (imagePath !== sourcePath) await this.screenshots.delete(sourcePath)
       throw error
     }
   }

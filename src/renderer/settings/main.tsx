@@ -2,7 +2,7 @@ import { StrictMode, useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import type { SettingsViewState } from '@shared/contracts/ipc'
 import { acceleratorFromKeyInput } from '../../shared/shortcut-accelerator'
-import type { CustomPrompt, ProviderKind, ProviderModelCapability, ShortcutAction, SpectralEdgeState } from '@shared/types/app'
+import type { ConversationHistorySummary, CustomPrompt, ProviderKind, ProviderModelCapability, ShortcutAction, SpectralEdgeState } from '@shared/types/app'
 import type { AppError, AppRecoveryKind } from '@shared/types/app-error'
 import {
   Badge,
@@ -26,7 +26,7 @@ import { OnboardingFlow } from './OnboardingFlow'
 import '../design-system/index.css'
 import './settings.css'
 
-const CATEGORIES = ['Account', 'Models', 'Prompts', 'Capture', 'Appearance', 'Privacy', 'About'] as const
+const CATEGORIES = ['Account', 'Models', 'Prompts', 'Capture', 'Appearance', 'History', 'Privacy', 'About'] as const
 type Category = typeof CATEGORIES[number]
 const CATEGORY_DETAILS: Record<Category, string> = {
   Account: 'Connect and manage the AI services you trust.',
@@ -34,6 +34,7 @@ const CATEGORY_DETAILS: Record<Category, string> = {
   Prompts: 'Keep your most useful follow-up questions close.',
   Capture: 'Set shortcuts and decide how Fovea starts.',
   Appearance: 'Make Fovea feel at home on this PC.',
+  History: 'Search and reopen conversations stored on this PC.',
   Privacy: 'Review and clear data stored on this device.',
   About: 'Version details, product principles, and help.'
 }
@@ -50,8 +51,21 @@ function SettingsApp(): React.JSX.Element {
   const [working, setWorking] = useState(false)
   const [activity, setActivity] = useState<{ label: string; edgeState: SpectralEdgeState } | null>(null)
   const [tourOpen, setTourOpen] = useState(false)
+  const [historyQuery, setHistoryQuery] = useState('')
+  const [historyItems, setHistoryItems] = useState<ConversationHistorySummary[]>([])
+  const [historyRefresh, setHistoryRefresh] = useState(0)
 
   useEffect(() => { void initialiseAppearance(); void window.fovea.settings.get().then(setState).catch((reason) => setError(appErrorFromUnknown(reason))); return window.fovea.settings.onChanged(setState) }, [])
+  useEffect(() => {
+    if (category !== 'History') return
+    let active = true
+    const timer = window.setTimeout(() => {
+      void window.fovea.history.list(historyQuery)
+        .then((items) => { if (active) setHistoryItems(items) })
+        .catch((reason) => { if (active) setError(appErrorFromUnknown(reason)) })
+    }, 120)
+    return () => { active = false; clearTimeout(timer) }
+  }, [category, historyQuery, historyRefresh])
   const run = async (operation: () => Promise<unknown>, success = '', label = 'Saving changes…', edgeState: SpectralEdgeState = 'thinking'): Promise<void> => { setWorking(true); setActivity({ label, edgeState }); setError(null); setNotice(''); try { await operation(); setState(await window.fovea.settings.get()); if (success) setNotice(success) } catch (reason) { setError(appErrorFromUnknown(reason)) } finally { setWorking(false); setActivity(null) } }
   const recover = (recovery: AppRecoveryKind): void => {
     if (recovery === 'authenticate' || recovery === 'choose-provider' || recovery === 'open-settings') setCategory('Account')
@@ -213,7 +227,23 @@ function SettingsApp(): React.JSX.Element {
       {category === 'Prompts' && <CustomPromptsSettings prompts={state.customPrompts} working={working} onSave={(id, label, prompt) => run(() => window.fovea.settings.saveCustomPrompt(id, label, prompt), id ? 'Prompt updated.' : 'Prompt added.')} onDelete={(id) => run(() => window.fovea.settings.deleteCustomPrompt(id), 'Prompt deleted.')} />}
       {category === 'Capture' && <><Card as="section" className="settings-section"><h2>Global shortcuts</h2><p className="muted">Click a shortcut then press a key combination. Suggested: Display +D, Window +W, Settings +S, Repeat +R.</p>{state.shortcuts.map((shortcut) => <ShortcutRecorder key={shortcut.action} action={shortcut.action} value={shortcut.accelerator} error={shortcut.error} onSave={(value) => run(() => window.fovea.settings.setShortcut(shortcut.action, value))} />)}<Button variant="secondary" onClick={() => void run(() => window.fovea.settings.resetShortcuts())}>Reset shortcuts</Button></Card><Card as="section" className="settings-section"><Switch label="Launch Fovea when Windows starts" checked={state.launchAtLogin} onChange={(event) => void run(() => window.fovea.settings.setLaunchAtLogin(event.target.checked))} /></Card></>}
       {category === 'Appearance' && <Card as="section" className="settings-section"><h2>Colour mode</h2><div className="appearance-options">{(['light','dark','system'] as const).map((item) => <button className={state.appearance.preference === item ? 'selected' : ''} key={item} onClick={() => void run(() => window.fovea.settings.setAppearance(item))}><span className={`theme-preview ${item}`} />{item[0]!.toUpperCase()+item.slice(1)}</button>)}</div><p className="muted">System follows the Windows app theme. Reduced-motion preferences are respected automatically.</p></Card>}
-      {category === 'Privacy' && <Card as="section" className="settings-section"><h2>Local data</h2><p className="muted">Secrets are encrypted by Windows and never enter renderer state, settings, or diagnostics. Screenshots are temporary.</p><code className="path">{state.tempLocation}</code><Button variant="secondary" onClick={() => void run(async () => { const count = await window.fovea.settings.deleteTemporaryFiles(); setNotice(`Deleted ${count} temporary screenshot${count === 1 ? '' : 's'}.`) }, '', 'Cleaning temporary files…')}>Clean temporary files</Button></Card>}
+      {category === 'History' && <HistorySettings items={historyItems} query={historyQuery} working={working} onQuery={setHistoryQuery} onRefresh={() => setHistoryRefresh((value) => value + 1)} onRun={run} />}
+      {category === 'Privacy' && <>
+        <Card as="section" className="settings-section">
+          <h2>Conversation history</h2>
+          <Switch label="Private mode — do not save conversations or screenshots" checked={state.history.privateMode} onChange={(event) => void run(() => window.fovea.settings.setPrivateMode(event.target.checked), event.target.checked ? 'Private mode enabled.' : 'Conversation history enabled.')} />
+          <Select label="Keep conversation history" value={String(state.history.retentionDays)} disabled={state.history.privateMode} onChange={(event) => void run(() => window.fovea.settings.setHistoryRetention(Number(event.target.value)), 'History retention updated.')}>
+            <option value="7">7 days</option>
+            <option value="30">30 days</option>
+            <option value="90">90 days</option>
+            <option value="365">1 year</option>
+            <option value="3650">10 years</option>
+          </Select>
+          <Switch label="Keep screenshot copies with history" checked={state.history.retainScreenshots} disabled={state.history.privateMode} onChange={(event) => void run(() => window.fovea.settings.setScreenshotRetention(event.target.checked), event.target.checked ? 'Screenshot history enabled.' : 'Stored screenshot copies removed.')} />
+          <p className="muted">Screenshot copies are off by default. Turning this off removes existing history copies; temporary captures still disappear when their panel closes.</p>
+        </Card>
+        <Card as="section" className="settings-section"><h2>Temporary data</h2><p className="muted">Secrets are encrypted by Windows and never enter renderer state, settings, or diagnostics.</p><code className="path">{state.tempLocation}</code><Button variant="secondary" onClick={() => void run(async () => { const count = await window.fovea.settings.deleteTemporaryFiles(); setNotice(`Deleted ${count} temporary screenshot${count === 1 ? '' : 's'}.`) }, '', 'Cleaning temporary files…')}>Clean temporary files</Button></Card>
+      </>}
       {category === 'About' && <AboutSettings appVersion={state.appVersion} onOpenTour={() => setTourOpen(true)} />}
     </section>
   </main>}
@@ -463,6 +493,17 @@ function ShortcutRecorder({ action, value, error, onSave }: { action: ShortcutAc
   return <div className="shortcut-row"><div><strong>{actionLabel(action)}</strong>{error && <small className="error-text">{error}</small>}</div><button className={recording ? 'shortcut-input recording' : 'shortcut-input'} onClick={() => setRecording(true)} onBlur={() => setRecording(false)} onKeyDown={(event) => { if (!recording) return; event.preventDefault(); if (event.key === 'Escape') { setRecording(false); return } if (event.key === 'Backspace' || event.key === 'Delete') { void onSave(null); setRecording(false); return } const accelerator = acceleratorFromKeyInput(event); if (!accelerator) return; void onSave(accelerator); setRecording(false) }}>{recording ? 'Press shortcut…' : value ?? 'Unassigned'}</button></div>
 }
 function actionLabel(action: ShortcutAction): string { return ({ region: 'Region capture', display: 'Current display', window: 'Focused window', 'repeat-last': 'Repeat last', settings: 'Open Settings' })[action] }
+function HistorySettings({ items, query, working, onQuery, onRefresh, onRun }: { items: ConversationHistorySummary[]; query: string; working: boolean; onQuery(value: string): void; onRefresh(): void; onRun(operation: () => Promise<unknown>, success?: string, label?: string, edgeState?: SpectralEdgeState): Promise<void> }): React.JSX.Element {
+  return <Card as="section" className="settings-section history-section">
+    <div className="history-section__heading"><h2>Saved conversations</h2><Button size="compact" variant="ghost" onClick={onRefresh}>Refresh</Button></div>
+    <TextInput label="Search history" placeholder="Search questions and answers" value={query} onChange={(event) => onQuery(event.target.value)} />
+    {items.length === 0
+      ? <p className="muted">{query ? 'No saved conversations match this search.' : 'No conversations have been saved yet.'}</p>
+      : <div className="history-list">{items.map((item) => <div className="history-row" key={item.id}><div><strong>{item.title}</strong><small>{formatHistoryDate(item.updatedAt)} · {item.messageCount} {item.messageCount === 1 ? 'message' : 'messages'}{item.hasScreenshots ? ' · screenshots retained' : ''}</small></div><div className="history-row__actions"><Button disabled={working} size="compact" variant="secondary" onClick={() => void onRun(() => window.fovea.history.open(item.id), '', 'Opening conversation…')}>Open</Button><Button disabled={working} size="compact" variant="danger" onClick={() => void onRun(async () => { await window.fovea.history.delete(item.id); onRefresh() }, 'Conversation deleted.')}>Delete</Button></div></div>)}</div>}
+    <Button disabled={working || items.length === 0} variant="danger" onClick={() => { if (window.confirm('Delete all saved conversation history? This cannot be undone.')) void onRun(async () => { const count = await window.fovea.history.clear(); onRefresh(); return count }, 'All conversation history deleted.', 'Clearing history…') }}>Clear all history</Button>
+  </Card>
+}
+function formatHistoryDate(value: string): string { const date = new Date(value); return Number.isNaN(date.getTime()) ? 'Unknown date' : date.toLocaleString() }
 function SettingsIcon({ category }: { category: Category }): React.JSX.Element {
   const paths: Record<Category, React.JSX.Element> = {
     Account: <><circle cx="12" cy="8" r="3.25" /><path d="M5.5 19c.7-3.8 2.8-5.7 6.5-5.7s5.8 1.9 6.5 5.7" /></>,
@@ -470,6 +511,7 @@ function SettingsIcon({ category }: { category: Category }): React.JSX.Element {
     Prompts: <><path d="M4 5.5h16v11H9l-5 4v-15Z" /><path d="M8 9h8m-8 3.5h6" /></>,
     Capture: <><path d="M4 8V5a1 1 0 0 1 1-1h3m8 0h3a1 1 0 0 1 1 1v3m0 8v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3" /><rect x="7.5" y="7.5" width="9" height="9" rx="2" /></>,
     Appearance: <><circle cx="12" cy="12" r="4" /><path d="M12 2v2m0 16v2M2 12h2m16 0h2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4m0-14.2-1.4 1.4M6.3 17.7l-1.4 1.4" /></>,
+    History: <><path d="M4 12a8 8 0 1 0 2.3-5.7L4 8.6" /><path d="M4 4v4.6h4.6M12 7.5V12l3 2" /></>,
     Privacy: <><rect x="5" y="10" width="14" height="10" rx="3" /><path d="M8.5 10V7.5a3.5 3.5 0 0 1 7 0V10" /><circle cx="12" cy="15" r="1" /></>,
     About: <><circle cx="12" cy="12" r="9" /><path d="M12 11v5m0-8h.01" /></>
   }

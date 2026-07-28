@@ -3,6 +3,7 @@ import { dirname } from 'node:path'
 import type {
   AppearancePreference,
   CustomPrompt,
+  HistorySettings,
   OnboardingStatus,
   ProviderKind,
   ProfileAuthentication,
@@ -25,7 +26,7 @@ export interface StoredProviderProfile {
 export type ShortcutSettings = Record<ShortcutAction, string | null>
 
 export interface AppSettings {
-  version: 2
+  version: 3
   appearance: AppearancePreference
   onboardingStatus: OnboardingStatus
   launchAtLogin: boolean
@@ -33,6 +34,7 @@ export interface AppSettings {
   profiles: StoredProviderProfile[]
   defaultProfileId: string | null
   customPrompts: CustomPrompt[]
+  history: HistorySettings
 }
 
 export const DEFAULT_SHORTCUTS: ShortcutSettings = {
@@ -44,14 +46,19 @@ export const DEFAULT_SHORTCUTS: ShortcutSettings = {
 }
 
 const DEFAULTS: AppSettings = {
-  version: 2,
+  version: 3,
   appearance: 'light',
   onboardingStatus: 'pending',
   launchAtLogin: false,
   shortcuts: { ...DEFAULT_SHORTCUTS },
   profiles: [],
   defaultProfileId: null,
-  customPrompts: []
+  customPrompts: [],
+  history: {
+    privateMode: false,
+    retentionDays: 30,
+    retainScreenshots: false
+  }
 }
 
 const APPEARANCES = new Set<AppearancePreference>(['system', 'dark', 'light'])
@@ -125,7 +132,7 @@ function sanitize(value: StoredSettingsInput): AppSettings {
         }))
     : []
   return {
-    version: 2,
+    version: 3,
     appearance: APPEARANCES.has(value.appearance as AppearancePreference)
       ? (value.appearance as AppearancePreference)
       : 'light',
@@ -138,7 +145,21 @@ function sanitize(value: StoredSettingsInput): AppSettings {
     shortcuts,
     profiles,
     defaultProfileId,
-    customPrompts
+    customPrompts,
+    history: sanitizeHistorySettings(value.history)
+  }
+}
+
+function sanitizeHistorySettings(value: unknown): HistorySettings {
+  if (!value || typeof value !== 'object') return clone(DEFAULTS.history)
+  const candidate = value as Partial<HistorySettings>
+  const retentionDays = typeof candidate.retentionDays === 'number' && Number.isInteger(candidate.retentionDays)
+    ? Math.min(3650, Math.max(1, candidate.retentionDays))
+    : DEFAULTS.history.retentionDays
+  return {
+    privateMode: candidate.privateMode === true,
+    retentionDays,
+    retainScreenshots: candidate.retainScreenshots === true
   }
 }
 

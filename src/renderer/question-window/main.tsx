@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
+import { createPortal } from 'react-dom'
 import ReactMarkdown from 'react-markdown'
 import rehypeHighlight from 'rehype-highlight'
 import type { QuestionViewState } from '@shared/contracts/ipc'
@@ -20,6 +21,7 @@ import { initialiseAppearance } from '../appearance'
 import { AppStatusNotice, appErrorFromUnknown, spectralStateForPhase } from '../status/status-presentation'
 import { WindowFrame } from '../window-chrome/WindowFrame'
 import { QuestionTitlebarActions } from './QuestionTitlebarActions'
+import { ScreenshotEditor } from './ScreenshotEditor'
 import '../design-system/index.css'
 import 'highlight.js/styles/github-dark.css'
 import './question.css'
@@ -47,6 +49,8 @@ export function QuestionApp(): React.JSX.Element {
   const [modelOpen, setModelOpen] = useState(false)
   const [captureMenuOpen, setCaptureMenuOpen] = useState(false)
   const [expandedModelId, setExpandedModelId] = useState<string | null>(null)
+  const [editor, setEditor] = useState<{ attachmentId: string; imageDataUrl: string } | null>(null)
+  const [editorSaving, setEditorSaving] = useState(false)
   const askRef = useRef<HTMLDivElement>(null)
   const modelRef = useRef<HTMLDivElement>(null)
   const captureRef = useRef<HTMLDivElement>(null)
@@ -311,6 +315,15 @@ export function QuestionApp(): React.JSX.Element {
       void refresh()
     }
   }
+  const editAttachment = async (attachmentId: string): Promise<void> => {
+    setError(null)
+    try {
+      const imageDataUrl = await window.fovea.question.getFullImage(sessionId, attachmentId)
+      setEditor({ attachmentId, imageDataUrl })
+    } catch (reason) {
+      setError(appErrorFromUnknown(reason))
+    }
+  }
   const changeModel = async (modelId: string, reasoningEffort: string | null): Promise<void> => {
     if (!state?.selection || state.busy || state.exchanges.some((exchange) => exchange.webSearch?.status === 'requested')) return
     const selection: ConversationSelection = { ...state.selection, modelId, reasoningEffort }
@@ -526,6 +539,7 @@ export function QuestionApp(): React.JSX.Element {
                 <AttachmentStrip
                   attachments={state.attachments}
                   disabled={state.busy}
+                  onEdit={(attachmentId) => void editAttachment(attachmentId)}
                   onPreview={(attachmentId) => void openPreview(attachmentId)}
                   onRemove={(attachmentId) => void removeAttachment(attachmentId)}
                 />
@@ -626,6 +640,28 @@ export function QuestionApp(): React.JSX.Element {
                 </footer>
               </section>
             )}
+        {editor && (
+          <ScreenshotEditor
+            imageDataUrl={editor.imageDataUrl}
+            saving={editorSaving}
+            onCancel={() => setEditor(null)}
+            onSave={(operations) => {
+              setEditorSaving(true)
+              setError(null)
+              void (async () => {
+                try {
+                  const next = await window.fovea.question.applyAttachmentEdits(sessionId, editor.attachmentId, operations)
+                  setState(next)
+                  setEditor(null)
+                } catch (reason) {
+                  setError(appErrorFromUnknown(reason))
+                } finally {
+                  setEditorSaving(false)
+                }
+              })()
+            }}
+          />
+        )}
         <div className="fui-sr-only" aria-live="polite">{copyStatus}</div>
       </main>
     </WindowFrame>
@@ -635,14 +671,35 @@ export function QuestionApp(): React.JSX.Element {
 export function AttachmentStrip({
   attachments,
   disabled,
+  onEdit,
   onPreview,
   onRemove
 }: {
   attachments: QuestionAttachment[]
   disabled: boolean
+  onEdit(attachmentId: string): void
   onPreview(attachmentId: string): void
   onRemove(attachmentId: string): void
 }): React.JSX.Element {
+  const [menu, setMenu] = useState<{ attachmentId: string; index: number; left: number; top: number } | null>(null)
+  const selected = menu ? attachments.find((attachment) => attachment.id === menu.attachmentId) : null
+  useEffect(() => {
+    if (!menu) return
+    const closeOnEscape = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') setMenu(null)
+    }
+    document.addEventListener('keydown', closeOnEscape)
+    return () => document.removeEventListener('keydown', closeOnEscape)
+  }, [menu])
+  const openMenu = (event: React.MouseEvent<HTMLButtonElement>, attachmentId: string, index: number): void => {
+    const bounds = event.currentTarget.getBoundingClientRect()
+    const menuWidth = 172
+    const menuHeight = 136
+    const left = Math.max(12, Math.min(innerWidth - menuWidth - 12, bounds.left))
+    const above = bounds.top - menuHeight - 8
+    const top = above >= 12 ? above : Math.min(innerHeight - menuHeight - 12, bounds.bottom + 8)
+    setMenu({ attachmentId, index, left, top })
+  }
   return (
     <section className="attachment-strip" aria-label="Conversation screenshots">
       <span className="attachment-strip__label">{attachments.length} {attachments.length === 1 ? 'screenshot' : 'screenshots'}</span>
@@ -650,28 +707,36 @@ export function AttachmentStrip({
         {attachments.map((attachment, index) => (
           <div className="attachment-thumbnail" data-status={attachment.status} key={attachment.id}>
             <button
-              aria-label={`Preview screenshot ${index + 1}${attachment.status === 'draft' ? ', not sent yet' : ''}`}
+              aria-expanded={menu?.attachmentId === attachment.id}
+              aria-haspopup="menu"
+              aria-label={`Screenshot ${index + 1} options${attachment.status === 'draft' ? ', not sent yet' : ''}`}
               className="attachment-thumbnail__preview"
-              onClick={() => onPreview(attachment.id)}
+              onClick={(event) => openMenu(event, attachment.id, index)}
               type="button"
             >
               <img alt="" draggable={false} src={attachment.thumbnailDataUrl} />
               <span aria-hidden="true">{index + 1}</span>
             </button>
-            {attachment.status === 'draft' && (
-              <button
-                aria-label={`Remove screenshot ${index + 1}`}
-                className="attachment-thumbnail__remove"
-                disabled={disabled}
-                onClick={() => onRemove(attachment.id)}
-                type="button"
-              >
-                ×
-              </button>
-            )}
+            {attachment.edited && <span className="attachment-thumbnail__edited">Edited</span>}
           </div>
         ))}
       </div>
+      {menu && selected && createPortal(
+        <div className="attachment-menu-layer" onPointerDown={() => setMenu(null)}>
+          <div
+            aria-label={`Screenshot ${menu.index + 1} actions`}
+            className="attachment-menu"
+            role="menu"
+            style={{ left: menu.left, top: menu.top }}
+            onPointerDown={(event) => event.stopPropagation()}
+          >
+            <button role="menuitem" type="button" onClick={() => { setMenu(null); onPreview(selected.id) }}><Icon name="view" />View Full</button>
+            <button disabled={disabled || selected.status !== 'draft'} role="menuitem" type="button" onClick={() => { setMenu(null); onEdit(selected.id) }}><Icon name="edit" />Edit</button>
+            <button className="danger" disabled={disabled || selected.status !== 'draft'} role="menuitem" type="button" onClick={() => { setMenu(null); onRemove(selected.id) }}><Icon name="remove" />Remove</button>
+          </div>
+        </div>,
+        document.body
+      )}
     </section>
   )
 }
@@ -1061,8 +1126,10 @@ function Icon({ name }: { name: string }): React.JSX.Element {
     'new-chat': <><path d="M5 5h14v11H9l-4 3V5Z" /><path d="M12 8v5m-2.5-2.5h5" /></>,
     recapture: <path d="M20 7v5h-5M4 17v-5h5M6.2 8a7 7 0 0 1 11.2-2l2.6 6M17.8 16a7 7 0 0 1-11.2 2L4 12" />,
     regenerate: <><path d="m12 3 1.3 4.7L18 9l-4.7 1.3L12 15l-1.3-4.7L6 9l4.7-1.3L12 3Z" /><path d="m18 15 .7 2.3L21 18l-2.3.7L18 21l-.7-2.3L15 18l2.3-.7L18 15Z" /></>,
+    remove: <><path d="M5 7h14M9 7V4h6v3m-8 0 1 13h8l1-13" /><path d="M10 11v5m4-5v5" /></>,
     send: <path d="m3 11 18-8-8 18-2-8-8-2Zm8 2 4-4" />,
-    stop: <rect x="7" y="7" width="10" height="10" rx="1" />
+    stop: <rect x="7" y="7" width="10" height="10" rx="1" />,
+    view: <><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" /><circle cx="12" cy="12" r="2.5" /></>
   }
   return <svg className="mono-icon" viewBox="0 0 24 24" aria-hidden="true">{paths[name] ?? paths.arrow}</svg>
 }

@@ -13,21 +13,22 @@
   --fovea-color-selection-fill: rgba(0, 122, 255, 0.15);
   --fovea-color-selection-border: #007aff;
 
-  /* Capture overlay deliberately remains dark over arbitrary content */
-  --fovea-capture-scrim: rgba(2, 3, 6, 0.46);
-  --fovea-capture-hud-fill: rgba(24, 25, 31, 0.76);
-  --fovea-capture-hud-border: rgba(255, 255, 255, 0.2);
-  --fovea-capture-control-fill: rgba(255, 255, 255, 0.1);
-  --fovea-capture-control-fill-hover: rgba(255, 255, 255, 0.17);
-  --fovea-capture-text: rgba(255, 255, 255, 0.98);
-  --fovea-capture-text-muted: rgba(255, 255, 255, 0.66);
-  --fovea-capture-selection-stroke: #73baff;
-  --fovea-capture-selection-fill: rgba(10, 132, 255, 0.06);
-  --fovea-capture-guide: rgba(115, 186, 255, 0.38);
-  --fovea-capture-error: rgba(255, 138, 130, 0.98);
-  --fovea-capture-error-border: rgba(255, 138, 130, 0.58);
-  --fovea-capture-selection-glow: 0 0 0 1px rgba(0, 0, 0, 0.42), 0 0 24px rgba(10, 132, 255, 0.25);
-  --fovea-capture-hud-shadow: 0 20px 52px rgba(0, 0, 0, 0.44), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  /* Capture overlay */
+  --fovea-capture-image-filter: brightness(0.92) saturate(0.9);
+  --fovea-capture-scrim: rgba(237, 242, 249, 0.38);
+  --fovea-capture-hud-fill: rgba(250, 252, 255, 0.96);
+  --fovea-capture-hud-border: rgba(39, 48, 62, 0.18);
+  --fovea-capture-control-fill: rgba(39, 48, 62, 0.07);
+  --fovea-capture-control-fill-hover: rgba(39, 48, 62, 0.13);
+  --fovea-capture-text: rgba(23, 29, 40, 0.98);
+  --fovea-capture-text-muted: rgba(48, 59, 77, 0.7);
+  --fovea-capture-selection-stroke: #007aff;
+  --fovea-capture-selection-fill: rgba(0, 122, 255, 0.08);
+  --fovea-capture-guide: rgba(0, 104, 208, 0.42);
+  --fovea-capture-error: #b42318;
+  --fovea-capture-error-border: rgba(180, 35, 24, 0.46);
+  --fovea-capture-selection-glow: 0 0 0 1px rgba(255, 255, 255, 0.86), 0 0 24px rgba(0, 122, 255, 0.22);
+  --fovea-capture-hud-shadow: 0 20px 52px rgba(42, 55, 79, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.9);
 
   /* Text */
   --fovea-color-text-primary: #1d1d1f;
