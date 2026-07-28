@@ -127,3 +127,20 @@ describe('SettingsStore history privacy', () => {
     expect(reloaded.get().history).toEqual({ privateMode: true, retentionDays: 90, retainScreenshots: true })
   })
 })
+
+describe('SettingsStore OCR language preference', () => {
+  it('persists a valid selected language and defaults invalid values to automatic', async () => {
+    const path = await settingsPath()
+    const store = new SettingsStore(path)
+    await store.load()
+    await store.update({ ocrLanguageCode: 'ja-JP' })
+
+    const reloaded = new SettingsStore(path)
+    await reloaded.load()
+    expect(reloaded.get().ocrLanguageCode).toBe('ja-JP')
+
+    await writeFile(path, JSON.stringify({ version: 3, ocrLanguageCode: '../unsafe' }))
+    await reloaded.load()
+    expect(reloaded.get().ocrLanguageCode).toBe('')
+  })
+})

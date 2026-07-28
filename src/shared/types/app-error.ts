@@ -7,6 +7,9 @@ export type AppErrorCode =
   | 'no-compatible-models'
   | 'sidecar-terminated'
   | 'capture-failed'
+  | 'ocr-unavailable'
+  | 'ocr-language-unavailable'
+  | 'ocr-failed'
   | 'validation'
   | 'unexpected'
 

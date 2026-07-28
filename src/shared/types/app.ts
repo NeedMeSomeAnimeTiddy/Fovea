@@ -96,7 +96,70 @@ export interface QuestionAttachment {
   thumbnailDataUrl: string
   status: 'draft' | 'sent'
   edited: boolean
+  ocr: OcrAttachmentState
 }
+
+export interface OcrLanguage {
+  code: string
+  label: string
+  source: 'configured' | 'detected'
+}
+
+export interface OcrBounds {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+export interface OcrRegion {
+  id: string
+  text: string
+  confidence: number
+  bounds: OcrBounds
+}
+
+export interface OcrEntity {
+  id: string
+  kind: 'url' | 'email' | 'phone' | 'qr' | 'barcode'
+  value: string
+}
+
+export type OcrExternalActionKind = 'url' | 'email' | 'phone'
+export type OcrPreprocessing = 'none' | 'upscaled-contrast' | 'high-contrast'
+
+export interface OcrResult {
+  attachmentId: string
+  text: string
+  confidence: number
+  quality: 'normal' | 'low-confidence'
+  language: OcrLanguage
+  regions: OcrRegion[]
+  truncated: boolean
+  entities?: OcrEntity[]
+  engine?: 'tesseract' | 'windows'
+  cached?: boolean
+  preprocessing?: OcrPreprocessing
+  geometryCorrection?: 'deskewed' | 'perspective-corrected'
+  durationMs?: number
+}
+
+export type OcrAttachmentState =
+  | { status: 'idle' }
+  | { status: 'running'; progress: number; stage: string }
+  | {
+      status: 'ready'
+      confidence: number
+      quality: OcrResult['quality']
+      language: OcrLanguage
+      regionCount: number
+      selectedRegionCount: number
+      selectedRegionIds: string[]
+      includeNextRequest: boolean
+      truncated: boolean
+    }
+  | { status: 'empty'; language: OcrLanguage }
+  | { status: 'failed'; error: AppError }
 
 export type ResponsePhase =
   | 'idle'
@@ -135,6 +198,18 @@ export interface ConversationExchange {
   answer: string
   phase: ResponsePhase
   segmentId: string
+  source?: 'ai' | 'ocr'
+  ocr?: {
+    confidence: number
+    quality: OcrResult['quality']
+    language: OcrLanguage
+    entities: OcrEntity[]
+    engine: 'tesseract' | 'windows'
+    cached: boolean
+    preprocessing: OcrPreprocessing
+    geometryCorrection?: 'deskewed' | 'perspective-corrected'
+    durationMs: number
+  }
   attachmentIds?: string[]
   automatic?: boolean
   metadata?: AssistantResponseMetadata

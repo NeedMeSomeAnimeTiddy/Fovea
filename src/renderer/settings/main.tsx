@@ -32,7 +32,7 @@ const CATEGORY_DETAILS: Record<Category, string> = {
   Account: 'Connect and manage the AI services you trust.',
   Models: 'Choose the visual model used by each profile.',
   Prompts: 'Keep your most useful follow-up questions close.',
-  Capture: 'Set shortcuts and decide how Fovea starts.',
+  Capture: 'Set shortcuts, local OCR languages, and how Fovea starts.',
   Appearance: 'Make Fovea feel at home on this PC.',
   History: 'Search and reopen conversations stored on this PC.',
   Privacy: 'Review and clear data stored on this device.',
@@ -225,7 +225,7 @@ function SettingsApp(): React.JSX.Element {
       </>}
       {category === 'Models' && <Card as="section" className="settings-section"><h2>Profile defaults</h2>{state.profiles.length === 0 && <StatusBanner title="No provider profiles" tone="warning">Add a provider from the Account page before choosing a model.</StatusBanner>}{state.profiles.map((profile) => { const available = models[profile.id] ?? []; return <div className="model-row" key={profile.id}><div><strong>{profile.name}</strong><small>Only confirmed image-capable models are offered.</small></div><Select label="Default model" value={profile.defaultModelId ?? ''} onFocus={() => { if (!models[profile.id]) void window.fovea.profiles.models(profile.id).then((items) => setModels((current) => ({ ...current, [profile.id]: items }))).catch((reason) => setError(appErrorFromUnknown(reason))) }} onChange={(event) => void run(() => window.fovea.profiles.setDefaults(profile.id, event.target.value || null, null), '', 'Saving model…')}><option value="">Choose automatically</option>{available.map((model) => <option key={model.id} value={model.id}>{model.displayName}</option>)}</Select></div> })}</Card>}
       {category === 'Prompts' && <CustomPromptsSettings prompts={state.customPrompts} working={working} onSave={(id, label, prompt) => run(() => window.fovea.settings.saveCustomPrompt(id, label, prompt), id ? 'Prompt updated.' : 'Prompt added.')} onDelete={(id) => run(() => window.fovea.settings.deleteCustomPrompt(id), 'Prompt deleted.')} />}
-      {category === 'Capture' && <><Card as="section" className="settings-section"><h2>Global shortcuts</h2><p className="muted">Click a shortcut then press a key combination. Suggested: Display +D, Window +W, Settings +S, Repeat +R.</p>{state.shortcuts.map((shortcut) => <ShortcutRecorder key={shortcut.action} action={shortcut.action} value={shortcut.accelerator} error={shortcut.error} onSave={(value) => run(() => window.fovea.settings.setShortcut(shortcut.action, value))} />)}<Button variant="secondary" onClick={() => void run(() => window.fovea.settings.resetShortcuts())}>Reset shortcuts</Button></Card><Card as="section" className="settings-section"><Switch label="Launch Fovea when Windows starts" checked={state.launchAtLogin} onChange={(event) => void run(() => window.fovea.settings.setLaunchAtLogin(event.target.checked))} /></Card></>}
+      {category === 'Capture' && <><Card as="section" className="settings-section"><h2>Global shortcuts</h2><p className="muted">Click a shortcut then press a key combination. Suggested: Display +D, Window +W, Settings +S, Repeat +R.</p>{state.shortcuts.map((shortcut) => <ShortcutRecorder key={shortcut.action} action={shortcut.action} value={shortcut.accelerator} error={shortcut.error} onSave={(value) => run(() => window.fovea.settings.setShortcut(shortcut.action, value))} />)}<Button variant="secondary" onClick={() => void run(() => window.fovea.settings.resetShortcuts())}>Reset shortcuts</Button></Card><OcrLanguageSettings working={working} onOpen={() => void run(() => window.fovea.settings.openOcrLanguages(), 'Windows language settings opened.')} /><Card as="section" className="settings-section"><Switch label="Launch Fovea when Windows starts" checked={state.launchAtLogin} onChange={(event) => void run(() => window.fovea.settings.setLaunchAtLogin(event.target.checked))} /></Card></>}
       {category === 'Appearance' && <Card as="section" className="settings-section"><h2>Colour mode</h2><div className="appearance-options">{(['light','dark','system'] as const).map((item) => <button className={state.appearance.preference === item ? 'selected' : ''} key={item} onClick={() => void run(() => window.fovea.settings.setAppearance(item))}><span className={`theme-preview ${item}`} />{item[0]!.toUpperCase()+item.slice(1)}</button>)}</div><p className="muted">System follows the Windows app theme. Reduced-motion preferences are respected automatically.</p></Card>}
       {category === 'History' && <HistorySettings items={historyItems} query={historyQuery} working={working} onQuery={setHistoryQuery} onRefresh={() => setHistoryRefresh((value) => value + 1)} onRun={run} />}
       {category === 'Privacy' && <>
@@ -432,6 +432,26 @@ function providerLabel(provider: ProviderKind): string {
 
 export function AboutSettings({ appVersion, onOpenTour }: { appVersion: string; onOpenTour(): void }): React.JSX.Element {
   return <Card as="section" className="settings-section about-card"><div className="about-hero"><BrandMark className="about-hero__mark" /><div><h2>Fovea</h2><span>Version {appVersion}</span></div></div><p>Ask questions about any part of your screen with the provider profile you choose.</p><p className="muted">MIT licensed · No analytics · Official provider APIs only</p><Button variant="secondary" onClick={onOpenTour}>Run welcome tour again</Button></Card>
+}
+
+export function OcrLanguageSettings({
+  working,
+  onOpen
+}: {
+  working: boolean
+  onOpen(): void
+}): React.JSX.Element {
+  return (
+    <Card as="section" className="settings-section">
+      <h2>Text recognition languages</h2>
+      <p className="muted">
+        Fovea uses OCR languages installed in Windows. Add a Windows language pack to recognise more languages locally.
+      </p>
+      <Button disabled={working} variant="secondary" onClick={onOpen}>
+        Manage OCR languages
+      </Button>
+    </Card>
+  )
 }
 
 export function CustomPromptsSettings({

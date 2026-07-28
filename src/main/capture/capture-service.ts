@@ -25,7 +25,7 @@ interface PendingDisplay {
 interface CaptureDescriptor { mode: CaptureMode; displayId?: number; rectangle?: Rectangle; sourceId?: string }
 interface PendingCapture { candidates: Map<number, PendingDisplay>; topology: string; destination?: CaptureDestination }
 
-export interface CompletedCapture { imagePath: string; selectedBounds: Rectangle; display: Display; edited?: boolean; preferWebSearch?: boolean }
+export interface CompletedCapture { imagePath: string; selectedBounds: Rectangle; display: Display; edited?: boolean; preferWebSearch?: boolean; extractText?: boolean; ocrLanguageCode?: string }
 export interface CaptureDestination {
   onCompleted(capture: CompletedCapture): Promise<void>
   onCancelled?(): void
@@ -74,14 +74,14 @@ export class CaptureService {
     return { width: candidate.viewport.width, height: candidate.viewport.height, minSelectionSize: 24, displayId: String(candidate.display.id), imageDataUrl: candidate.imageDataUrl, canEditBeforeSending: !this.pending?.destination }
   }
 
-  async select(rectangle: Rectangle, senderWebContentsId?: number, operations: ImageEditOperation[] = [], preferWebSearch = false): Promise<void> {
+  async select(rectangle: Rectangle, senderWebContentsId?: number, operations: ImageEditOperation[] = [], preferWebSearch = false, extractText = false, ocrLanguageCode?: string): Promise<void> {
     const candidate = this.findCandidate(senderWebContentsId)
     if (!candidate.viewport) throw new Error('The capture surface is not ready.')
     const bounded = boundRectangle(rectangle, candidate.viewport.width, candidate.viewport.height)
     if (bounded.width < 24 || bounded.height < 24) throw new Error('Select an area at least 24 × 24 pixels.')
     const allowedOperations = this.pending?.destination ? [] : operations
     this.lastDescriptor = { mode: 'region', displayId: candidate.display.id, rectangle: bounded }
-    await this.complete(candidate, bounded, allowedOperations, preferWebSearch)
+    await this.complete(candidate, bounded, allowedOperations, preferWebSearch, extractText, ocrLanguageCode)
   }
 
   cancel(): void {
@@ -205,7 +205,7 @@ export class CaptureService {
     return candidate
   }
 
-  private async complete(candidate: PendingDisplay, bounded: Rectangle, operations: ImageEditOperation[], preferWebSearch = false): Promise<void> {
+  private async complete(candidate: PendingDisplay, bounded: Rectangle, operations: ImageEditOperation[], preferWebSearch = false, extractText = false, ocrLanguageCode?: string): Promise<void> {
     if (!candidate.image || !candidate.viewport) throw new Error('The frozen display image is unavailable.')
     const imageSize = candidate.image.getSize()
     const physical = logicalToPhysical(bounded, imageSize.width / candidate.viewport.width, imageSize.height / candidate.viewport.height)
@@ -213,10 +213,10 @@ export class CaptureService {
     if (crop.width < 1 || crop.height < 1) throw new Error('The selected area was outside the captured image.')
     const destination = this.pending?.destination
     this.clearPending(false)
-    await this.saveCompleted(candidate.display, candidate.image.crop(crop), bounded, destination, operations, preferWebSearch)
+    await this.saveCompleted(candidate.display, candidate.image.crop(crop), bounded, destination, operations, preferWebSearch, extractText, ocrLanguageCode)
   }
 
-  private async saveCompleted(display: Display, image: NativeImage, selectedBounds: Rectangle, destination?: CaptureDestination, operations: ImageEditOperation[] = [], preferWebSearch = false): Promise<void> {
+  private async saveCompleted(display: Display, image: NativeImage, selectedBounds: Rectangle, destination?: CaptureDestination, operations: ImageEditOperation[] = [], preferWebSearch = false, extractText = false, ocrLanguageCode?: string): Promise<void> {
     const sourcePath = await this.screenshots.save(image.toPNG())
     let imagePath = sourcePath
     try {
@@ -225,7 +225,7 @@ export class CaptureService {
         imagePath = await this.imageEditor.createDerivative(sourcePath, operations)
         await this.screenshots.delete(sourcePath)
       }
-      await (destination?.onCompleted ?? this.onCompleted)({ imagePath, selectedBounds, display, edited: operations.length > 0, preferWebSearch })
+      await (destination?.onCompleted ?? this.onCompleted)({ imagePath, selectedBounds, display, edited: operations.length > 0, preferWebSearch, extractText, ...(ocrLanguageCode ? { ocrLanguageCode } : {}) })
     } catch (error) {
       await this.screenshots.delete(imagePath)
       if (imagePath !== sourcePath) await this.screenshots.delete(sourcePath)

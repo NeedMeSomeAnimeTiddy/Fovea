@@ -24,6 +24,7 @@ npm run dev
 npm run typecheck
 npm run lint
 npm test
+npm run ocr:benchmark -- capture.png
 npm run build
 npm run package:win
 ```
@@ -35,6 +36,36 @@ generate its complete TypeScript app-server schema under
 run `npm run sidecar:fetch` to restore or verify them. `package:win` writes an
 NSIS installer under `dist/`.
 
+On Windows, text extraction first uses the operating system's local OCR engine
+and the recognition languages installed in Windows Settings. The bundled
+English Tesseract model remains an offline fallback when native recognition is
+unavailable or finds no useful text. Enabling **Extract text locally** reveals
+an optional capture-language picker; **Automatic** uses the Windows preference.
+The last available language selected in the capture bar is remembered for the
+next capture.
+Short or suspicious English results are compared with Tesseract and the
+stronger result is retained. Recent native and fallback results are cached
+locally for repeated captures. Low-confidence photographed text also gets a
+bounded black-and-white recovery pass. Clearly photographed pages are
+perspective-corrected, modest text skew is straightened, and wide word gaps are
+preserved as table or column separators. Captures can return several QR codes
+or barcodes, rather than only the first one found.
+
+Detected links, email addresses, and phone numbers appear beside their Copy
+action in the normal response panel. Opening one always asks for confirmation;
+only validated web, email, and phone targets are handed to Windows. Other QR
+content and barcodes remain copy-only.
+
+`ocr:benchmark` runs the bundled English fallback model and small-image
+preprocessing used by the app, entirely on the development machine. Pass one
+or more representative PNG/JPEG captures to compare confidence, recognised
+character count, preprocessing, and elapsed time. Add `--json` before the
+image paths for machine-readable output:
+
+```powershell
+npm run ocr:benchmark -- --json .\samples\small-text.png .\samples\document.png
+```
+
 ## Manual test
 
 1. Run `npm run dev`, or install the generated NSIS package.
@@ -42,21 +73,24 @@ NSIS installer under `dist/`.
    confirm the account and plan appear. API-key auth is also available and is
    billed separately.
 3. Confirm an image-capable model is selected, then press `Ctrl+Shift+Space`.
-4. Enable **Edit before sending**, then drag a rectangle at least 24 × 24
+4. Toggle **Extract text locally** in the capture bar, make a selection, and
+   confirm the recognised text appears in the normal response panel. Try Stop,
+   Copy, and any detected URL, email, phone, QR-code, or barcode action.
+5. Enable **Edit before sending**, then drag a rectangle at least 24 × 24
     logical pixels on the primary display.
-5. Confirm the selection stays on the frozen screen and the icon toolbar
+6. Confirm the selection stays on the frozen screen and the icon toolbar
    appears at the top. Try an annotation and solid redaction, then press Send
    and confirm the compact response window analyses the edited derivative.
-6. Open **Ask**, choose a contextual suggestion, then use **Custom question**
+7. Open **Ask**, choose a contextual suggestion, then use **Custom question**
    and confirm both questions and answers remain visible in the flowing
    conversation.
-7. Add another snip, choose **Edit**, try arrows, rectangles, drawing, text,
+8. Add another snip, choose **Edit**, try arrows, rectangles, drawing, text,
    blur, and solid redaction, then undo/redo and save the edited copy. Confirm
    the edited draft is the image sent with the next question.
-8. Expand **Show details**, then try the icon actions for View capture, Stop,
+9. Expand **Show details**, then try the icon actions for View capture, Stop,
    Regenerate, Copy, and New capture. Press `Esc` in the capture viewer and
    confirm the response window remains open.
-9. Close the panel and confirm its PNG disappears from the temporary path shown
+10. Close the panel and confirm its PNG disappears from the temporary path shown
    in Settings. In **History**, search for and reopen the conversation, then
    delete it. **Clean temporary files** removes any remaining temporary PNGs.
 

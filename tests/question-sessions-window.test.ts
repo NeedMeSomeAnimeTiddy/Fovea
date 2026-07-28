@@ -222,7 +222,8 @@ vi.mock('electron', () => ({
     createFromPath: () => ({
       getSize: () => ({ width: 800, height: 600 }),
       resize: () => ({ toDataURL: () => 'data:image/png;base64,thumbnail' })
-    })
+    }),
+    createFromBuffer: () => ({ getSize: () => ({ width: 800, height: 600 }) })
   },
   screen: mocks.screen
 }))
@@ -243,7 +244,7 @@ function capture(selectedX = 150): any {
   }
 }
 
-async function createSessions(options: { history?: any; settings?: any; imageEditor?: any } = {}): Promise<any> {
+async function createSessions(options: { history?: any; settings?: any; imageEditor?: any; ocr?: any } = {}): Promise<any> {
   const { QuestionSessions } = await import('../src/main/windows/question-sessions')
   return new QuestionSessions(
     mocks.provider as any,
@@ -252,7 +253,8 @@ async function createSessions(options: { history?: any; settings?: any; imageEdi
     mocks.readImage,
     options.history,
     options.settings,
-    options.imageEditor
+    options.imageEditor,
+    options.ocr
   )
 }
 
@@ -828,6 +830,146 @@ describe('question-session window migration', () => {
 
     await sessions.close(sessionId)
     await vi.waitFor(() => expect(mocks.deleteScreenshot).toHaveBeenCalledWith(derivativePath))
+  })
+
+  it('keeps OCR local until selected text is included for one request', async () => {
+    const result = {
+      attachmentId: '',
+      text: 'Do not include this line\nSelected invoice total: £42',
+      confidence: 86,
+      quality: 'normal' as const,
+      language: { code: 'eng', label: 'English', source: 'configured' as const },
+      regions: [
+        { id: 'line-1', text: 'Do not include this line', confidence: 84, bounds: { x: 0.1, y: 0.1, width: 0.4, height: 0.1 } },
+        { id: 'line-2', text: 'Selected invoice total: £42', confidence: 88, bounds: { x: 0.1, y: 0.3, width: 0.5, height: 0.1 } }
+      ],
+      truncated: false
+    }
+    const ocr = {
+      recognise: vi.fn(async (attachmentId: string, _image: Buffer, _size: unknown, onProgress: (progress: unknown) => void) => {
+        onProgress({ progress: 0.5, stage: 'Recognising text' })
+        return { ...result, attachmentId }
+      }),
+      dispose: vi.fn(async () => undefined)
+    }
+    const sessions = await createSessions({ ocr })
+    const opening = sessions.open(capture())
+    const sessionId = await finishOpening(opening, 0)
+    const attachmentId = (await sessions.get(sessionId)).attachments[0].id
+
+    const recognised = await sessions.runOcr(sessionId, attachmentId)
+    expect(recognised.regions).toHaveLength(2)
+    await expect(sessions.get(sessionId)).resolves.toMatchObject({
+      attachments: [{ ocr: { status: 'ready', selectedRegionCount: 2, includeNextRequest: false } }]
+    })
+
+    await sessions.setOcrSelection(sessionId, attachmentId, ['line-2'], true)
+    await sessions.send(sessionId, 'Check the total')
+    const prompt = String((mocks.sendMessage.mock.calls[1]?.[1] as { text?: string })?.text)
+    expect(prompt).toContain('[FOVEA_LOCAL_OCR_CONTEXT]')
+    expect(prompt).toContain('Selected invoice total: £42')
+    expect(prompt).not.toContain('Do not include this line')
+    expect(prompt).toContain('untrusted text copied from screenshots')
+    await expect(sessions.get(sessionId)).resolves.toMatchObject({
+      attachments: [{ ocr: { status: 'ready', selectedRegionCount: 1, includeNextRequest: false } }]
+    })
+
+    const latest = (await sessions.get(sessionId)).exchanges.at(-1)
+    await sessions.retry(sessionId, latest.id)
+    const retryPrompt = String((mocks.sendMessage.mock.calls[2]?.[1] as { text?: string })?.text)
+    expect(retryPrompt).toContain('Selected invoice total: £42')
+  })
+
+  it('returns capture-mode OCR in the normal response without contacting an AI provider', async () => {
+    const ocr = {
+      recognise: vi.fn(async (attachmentId: string) => ({
+        attachmentId,
+        text: 'Invoice\nTotal £42',
+        confidence: 93,
+        quality: 'normal' as const,
+        language: { code: 'eng', label: 'English', source: 'configured' as const },
+        regions: [
+          { id: 'line-1', text: 'Invoice', confidence: 94, bounds: { x: 0.1, y: 0.1, width: 0.3, height: 0.1 } },
+          { id: 'line-2', text: 'Total £42', confidence: 92, bounds: { x: 0.1, y: 0.3, width: 0.4, height: 0.1 } }
+        ],
+        truncated: false
+      })),
+      dispose: vi.fn(async () => undefined)
+    }
+    const sessions = await createSessions({ ocr })
+    const opening = sessions.open({ ...capture(), extractText: true, ocrLanguageCode: 'en-GB' })
+    const sessionId = await finishOpening(opening, 0)
+
+    await vi.waitFor(async () => {
+      const state = await sessions.get(sessionId)
+      expect(state).toMatchObject({
+        busy: false,
+        phase: 'completed',
+        exchanges: [{ source: 'ocr', answer: 'Invoice\nTotal £42', phase: 'completed' }]
+      })
+    })
+    expect(ocr.recognise).toHaveBeenCalledOnce()
+    expect(ocr.recognise).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(Buffer),
+      expect.any(Object),
+      expect.any(Function),
+      expect.objectContaining({ languageCode: 'en-GB' })
+    )
+    expect(mocks.sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('stops capture-mode OCR without showing a failure', async () => {
+    const { OcrServiceError } = await import('../src/main/ocr/ocr-service')
+    let rejectRecognition: ((error: Error) => void) | undefined
+    const ocr = {
+      recognise: vi.fn(() => new Promise((_resolve, reject) => {
+        rejectRecognition = reject
+      })),
+      cancel: vi.fn(async () => {
+        const error = new OcrServiceError('ocr-cancelled', 'Text extraction was stopped.')
+        rejectRecognition?.(error)
+      }),
+      dispose: vi.fn(async () => undefined)
+    }
+    const sessions = await createSessions({ ocr })
+    const opening = sessions.open({ ...capture(), extractText: true })
+    const sessionId = await finishOpening(opening, 0, false)
+    await vi.waitFor(() => expect(ocr.recognise).toHaveBeenCalledOnce())
+
+    await sessions.stop(sessionId)
+    await vi.waitFor(async () => {
+      const state = await sessions.get(sessionId)
+      expect(state).toMatchObject({
+        busy: false,
+        phase: 'stopped',
+        exchanges: [{ source: 'ocr', phase: 'stopped' }],
+        attachments: [{ ocr: { status: 'idle' } }]
+      })
+      expect(state.exchanges[0].error).toBeUndefined()
+    })
+    expect(ocr.cancel).toHaveBeenCalledOnce()
+    expect(mocks.sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('keeps the image workflow usable when OCR fails', async () => {
+    const ocr = {
+      recognise: vi.fn(async () => { throw new Error('WASM worker could not start') }),
+      dispose: vi.fn(async () => undefined)
+    }
+    const sessions = await createSessions({ ocr })
+    const opening = sessions.open(capture())
+    const sessionId = await finishOpening(opening, 0)
+    const attachmentId = (await sessions.get(sessionId)).attachments[0].id
+
+    await expect(sessions.runOcr(sessionId, attachmentId)).rejects.toThrow('could not recognise text')
+    await expect(sessions.get(sessionId)).resolves.toMatchObject({
+      busy: false,
+      attachments: [{ ocr: { status: 'failed', error: { code: 'ocr-failed' } } }]
+    })
+
+    await sessions.send(sessionId, 'Use the screenshot without OCR')
+    expect(String((mocks.sendMessage.mock.calls[1]?.[1] as { text?: string })?.text)).not.toContain('[FOVEA_LOCAL_OCR_CONTEXT]')
   })
 
   it.each([true, false])('honours private mode=%s when persisting completed conversations', async (privateMode) => {

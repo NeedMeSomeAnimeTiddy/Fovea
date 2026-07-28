@@ -1,10 +1,11 @@
-import { app, BrowserWindow, ipcMain, shell, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron'
+import { app, BrowserWindow, clipboard, ipcMain, shell, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { IPC, isWindowResizeEdge, type SettingsViewState } from '@shared/contracts/ipc'
-import type { AppearancePreference, CaptureMode, ConversationSelection, ImageEditOperation, OnboardingStatus, ProviderKind, ShortcutAction } from '@shared/types/app'
+import type { AppearancePreference, CaptureMode, ConversationSelection, ImageEditOperation, OcrExternalActionKind, OnboardingStatus, ProviderKind, ShortcutAction } from '@shared/types/app'
 import type { Rectangle } from '@shared/types/geometry'
 import type { AppErrorCode } from '@shared/types/app-error'
 import { toIpcResult } from '../errors/app-error'
+import { ocrEntityExternalTarget } from '../external/ocr-entity-target'
 import type { AppearanceController } from '../appearance/appearance-controller'
 import type { CaptureService } from '../capture/capture-service'
 import type { OnboardingController } from '../onboarding/onboarding-controller'
@@ -21,7 +22,7 @@ export interface IpcDependencies { providers: ProviderRegistry; settings: Settin
 
 export function registerIpc(dependencies: IpcDependencies): void {
   ipcMain.on(IPC.appearanceGet, (event) => { event.returnValue = dependencies.appearance.getState() })
-  const buildSettingsState = (): SettingsViewState => ({ appearance: dependencies.appearance.getState(), profiles: dependencies.providers.listProfiles(), shortcuts: dependencies.shortcuts.getState(), customPrompts: dependencies.settings.get().customPrompts, launchAtLogin: dependencies.settings.get().launchAtLogin, onboardingStatus: dependencies.settings.get().onboardingStatus, history: dependencies.settings.get().history, tempLocation: dependencies.screenshots.directory, appVersion: app.getVersion() })
+  const buildSettingsState = (): SettingsViewState => ({ appearance: dependencies.appearance.getState(), profiles: dependencies.providers.listProfiles(), shortcuts: dependencies.shortcuts.getState(), customPrompts: dependencies.settings.get().customPrompts, launchAtLogin: dependencies.settings.get().launchAtLogin, onboardingStatus: dependencies.settings.get().onboardingStatus, history: dependencies.settings.get().history, ocrLanguageCode: dependencies.settings.get().ocrLanguageCode, tempLocation: dependencies.screenshots.directory, appVersion: app.getVersion() })
   const broadcastSettings = (): void => {
     const state = buildSettingsState()
     for (const window of BrowserWindow.getAllWindows()) {
@@ -39,6 +40,7 @@ export function registerIpc(dependencies: IpcDependencies): void {
   }
 
   handle(IPC.settingsGet, buildSettingsState)
+  handle(IPC.settingsOpenOcrLanguages, () => shell.openExternal('ms-settings:regionlanguage'))
   handle(IPC.settingsSetAppearance, (_event, value) => mutate(() => dependencies.appearance.setPreference(requireAppearance(value))), 'validation')
   handle(IPC.settingsSetLaunchAtLogin, (_event, enabled) => mutate(async () => { if (typeof enabled !== 'boolean') throw new Error('Invalid launch setting.'); app.setLoginItemSettings({ openAtLogin: enabled, path: process.execPath }); await dependencies.settings.update({ launchAtLogin: enabled }) }), 'validation')
   handle(IPC.settingsSetShortcut, (_event, action, accelerator) => mutate(() => dependencies.shortcuts.set(requireShortcutAction(action), requireAccelerator(accelerator))), 'validation')
@@ -100,11 +102,36 @@ export function registerIpc(dependencies: IpcDependencies): void {
 
   handle(IPC.captureStart, (_event, mode) => dependencies.capture.begin(requireCaptureMode(mode)), 'capture-failed')
   handle(IPC.captureGetContext, (event) => dependencies.capture.getContext(event.sender.id), 'capture-failed')
-  handle(IPC.captureSelect, (event, rectangle, operations = [], preferWebSearch = false) => { if (!isRectangle(rectangle)) throw new Error('Invalid selection.'); if (!Array.isArray(operations)) throw new Error('Invalid screenshot edits.'); if (typeof preferWebSearch !== 'boolean') throw new Error('Invalid web-search preference.'); return dependencies.capture.select(rectangle, event.sender.id, operations as ImageEditOperation[], preferWebSearch) }, 'capture-failed')
+  handle(IPC.captureGetOcrLanguages, () => dependencies.questions.listOcrLanguages())
+  handle(IPC.captureSetOcrLanguage, async (_event, value) => {
+    const code = requireOcrLanguagePreference(value)
+    if (code) {
+      const languages = await dependencies.questions.listOcrLanguages()
+      if (!languages.some((language) => language.code === code)) throw new Error('OCR language is not installed.')
+    }
+    await dependencies.settings.update({ ocrLanguageCode: code })
+  }, 'validation')
+  handle(IPC.captureSelect, (event, rectangle, operations = [], preferWebSearch = false, extractText = false, ocrLanguageCode) => {
+    if (!isRectangle(rectangle)) throw new Error('Invalid selection.')
+    if (!Array.isArray(operations)) throw new Error('Invalid screenshot edits.')
+    if (typeof preferWebSearch !== 'boolean') throw new Error('Invalid web-search preference.')
+    if (typeof extractText !== 'boolean') throw new Error('Invalid text-extraction preference.')
+    if (preferWebSearch && extractText) throw new Error('Web search and text extraction cannot both be enabled.')
+    if (ocrLanguageCode !== undefined && (typeof ocrLanguageCode !== 'string' || !/^[A-Za-z0-9-]{2,35}$/.test(ocrLanguageCode))) throw new Error('Invalid OCR language.')
+    if (!extractText && ocrLanguageCode !== undefined) throw new Error('OCR language requires text extraction.')
+    return dependencies.capture.select(rectangle, event.sender.id, operations as ImageEditOperation[], preferWebSearch, extractText, ocrLanguageCode)
+  }, 'capture-failed')
   handle(IPC.captureCancel, () => dependencies.capture.cancel())
 
   handle(IPC.questionGet, (_event, id) => dependencies.questions.get(requireId(id)))
   handle(IPC.questionGetFullImage, (_event, id, attachmentId) => dependencies.questions.getFullImage(requireId(id), requireId(attachmentId)), 'capture-failed')
+  handle(IPC.questionRunOcr, (_event, id, attachmentId) => dependencies.questions.runOcr(requireId(id), requireId(attachmentId)), 'ocr-failed')
+  handle(IPC.questionGetOcrResult, (_event, id, attachmentId) => dependencies.questions.getOcrResult(requireId(id), requireId(attachmentId)), 'ocr-failed')
+  handle(IPC.questionSetOcrSelection, (_event, id, attachmentId, regionIds, includeNextRequest) => {
+    if (!Array.isArray(regionIds) || regionIds.length > 2_000 || !regionIds.every((regionId) => typeof regionId === 'string' && regionId.length <= 100)) throw new Error('Invalid OCR region selection.')
+    if (typeof includeNextRequest !== 'boolean') throw new Error('Invalid OCR inclusion preference.')
+    return dependencies.questions.setOcrSelection(requireId(id), requireId(attachmentId), regionIds, includeNextRequest)
+  }, 'validation')
   handle(IPC.questionSetSelection, (_event, id, selection) => dependencies.questions.setSelection(requireId(id), requireSelection(selection)), 'validation')
   handle(IPC.questionSetPinned, (_event, id, pinned) => {
     if (typeof pinned !== 'boolean') throw new Error('Invalid pin state.')
@@ -134,6 +161,10 @@ export function registerIpc(dependencies: IpcDependencies): void {
   handle(IPC.historyDelete, (_event, id) => dependencies.history.delete(requireId(id)))
   handle(IPC.historyClear, () => dependencies.history.clear())
   handle(IPC.applicationOpenSettings, () => showSettingsWindow())
+  handle(IPC.clipboardWriteText, (_event, value) => {
+    const text = requireString(value, 200_000)
+    clipboard.writeText(text)
+  }, 'validation')
 
   ipcMain.handle(IPC.windowChromeGetState, (event) => requireWindowChromeController(event).getState())
   ipcMain.on(IPC.windowChromeReady, (event) => getWindowChromeController(event)?.markRendererReady())
@@ -144,6 +175,9 @@ export function registerIpc(dependencies: IpcDependencies): void {
   ipcMain.on(IPC.windowChromeUpdateResize, (event) => getWindowChromeController(event)?.requestResizeUpdate())
   ipcMain.on(IPC.windowChromeEndResize, (event) => getWindowChromeController(event)?.endResize())
   handle(IPC.externalOpen, async (_event, value) => { const url = new URL(requireString(value, 2048)); if (!['https:', 'http:'].includes(url.protocol)) throw new Error('Only web links can be opened.'); await shell.openExternal(url.toString()) }, 'validation')
+  handle(IPC.externalOpenOcrEntity, async (_event, kind, value) => {
+    await shell.openExternal(ocrEntityExternalTarget(requireOcrExternalActionKind(kind), requireString(value, 2_048)))
+  }, 'validation')
 }
 
 function requireWindowChromeController(event: IpcMainInvokeEvent | IpcMainEvent): WindowChromeController { const controller = resolveWindowChromeController(event as WindowChromeIpcEvent); const target = BrowserWindow.fromWebContents(event.sender); if (!target || target.isDestroyed() || target.id !== controller.windowId || target.webContents.id !== controller.webContentsId) throw new Error('Window chrome is unavailable for this sender.'); return controller }
@@ -157,6 +191,8 @@ function requireAppearance(value: unknown): AppearancePreference { if (!['system
 function requireOnboardingOutcome(value: unknown): Exclude<OnboardingStatus, 'pending'> { if (!['skipped', 'completed'].includes(String(value))) throw new Error('Invalid onboarding outcome.'); return value as Exclude<OnboardingStatus, 'pending'> }
 function requireShortcutAction(value: unknown): ShortcutAction { if (!['region', 'display', 'window', 'repeat-last', 'settings'].includes(String(value))) throw new Error('Invalid shortcut action.'); return value as ShortcutAction }
 function requireCaptureMode(value: unknown): CaptureMode { if (!['region', 'display', 'window', 'repeat-last'].includes(String(value))) throw new Error('Invalid capture mode.'); return value as CaptureMode }
+function requireOcrExternalActionKind(value: unknown): OcrExternalActionKind { if (!['url', 'email', 'phone'].includes(String(value))) throw new Error('Invalid OCR action.'); return value as OcrExternalActionKind }
+function requireOcrLanguagePreference(value: unknown): string { const code = requireString(value, 35); if (code && !/^[A-Za-z0-9-]{2,35}$/.test(code)) throw new Error('Invalid OCR language.'); return code }
 function requireApiProvider(value: unknown): Exclude<ProviderKind, 'chatgpt'> { if (!['openai', 'anthropic', 'openrouter'].includes(String(value))) throw new Error('Invalid API provider.'); return value as Exclude<ProviderKind, 'chatgpt'> }
 function requireSelection(value: unknown): ConversationSelection { if (!value || typeof value !== 'object') throw new Error('Invalid conversation selection.'); const item = value as Record<string, unknown>; return { profileId: requireId(item.profileId), provider: String(item.provider) as ProviderKind, modelId: requireString(item.modelId, 200), reasoningEffort: requireNullableString(item.reasoningEffort, 50) } }
 function isRectangle(value: unknown): value is Rectangle { return Boolean(value && typeof value === 'object' && ['x','y','width','height'].every((key) => typeof (value as Record<string, unknown>)[key] === 'number' && Number.isFinite((value as Record<string, unknown>)[key]))) }
