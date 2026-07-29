@@ -25,6 +25,8 @@ npm run typecheck
 npm run lint
 npm test
 npm run ocr:benchmark -- capture.png
+npm run paddle:setup
+npm run ocr:benchmark:paddle -- capture.png
 npm run build
 npm run package:win
 ```
@@ -37,9 +39,11 @@ run `npm run sidecar:fetch` to restore or verify them. `package:win` writes an
 NSIS installer under `dist/`.
 
 On Windows, text extraction first uses the operating system's local OCR engine
-and the recognition languages installed in Windows Settings. The bundled
-English Tesseract model remains an offline fallback when native recognition is
-unavailable or finds no useful text. Enabling **Extract text locally** reveals
+and the recognition languages installed in Windows Settings. When the isolated
+PaddleOCR evaluation runtime is installed, frozen-screen analysis compares
+Windows OCR with PP-OCRv6 and keeps the stronger result. The bundled English
+Tesseract model remains an offline fallback when PaddleOCR is not installed,
+fails, or finds no useful text. Enabling **Extract text locally** reveals
 an optional capture-language picker; **Automatic** uses the Windows preference.
 The last available language selected in the capture bar is remembered for the
 next capture.
@@ -62,9 +66,10 @@ provider. Choosing a box opens a small menu of preset questions plus quick
 actions to extract its text locally, copy recognized text, or identify and
 verify it with web search. Only that boxed region and the chosen question or
 action continue to the response window.
-Short or suspicious English results are compared with Tesseract and the
-stronger result is retained. Recent native and fallback results are cached
-locally for repeated captures. Low-confidence photographed text also gets a
+Normal capture OCR keeps the fast native-first behavior, while full-screen
+Analyze runs Windows and PaddleOCR concurrently after the frozen overlay is
+already visible. Recent native and fallback results are cached locally for
+repeated captures. Low-confidence photographed Tesseract text also gets a
 bounded black-and-white recovery pass. Clearly photographed pages are
 perspective-corrected, modest text skew is straightened, and wide word gaps are
 preserved as table or column separators. Captures can return several QR codes
@@ -78,12 +83,36 @@ content and barcodes remain copy-only.
 `ocr:benchmark` runs the bundled English fallback model and small-image
 preprocessing used by the app, entirely on the development machine. Pass one
 or more representative PNG/JPEG captures to compare confidence, recognised
-character count, preprocessing, and elapsed time. Add `--json` before the
-image paths for machine-readable output:
+character count, preprocessing, and elapsed time. If `capture.txt` exists beside
+`capture.png`, the benchmark also reports character and word error rates.
+Add `--json` before the image paths for machine-readable output:
 
 ```powershell
 npm run ocr:benchmark -- --json .\samples\small-text.png .\samples\document.png
 ```
+
+PP-OCRv6 is evaluated in an isolated Python 3.11 environment and does not
+modify the system Python installation. `paddle:setup` installs the pinned
+PaddleOCR 3.7.0/PaddlePaddle 3.2.2 runtime and downloads all unique evaluation
+models into ignored repository folders. The three Fovea profiles are:
+
+- `small`: small detector and small recognizer.
+- `medium`: small detector and medium recognizer.
+- `large`: medium detector and medium recognizer, the largest PP-OCRv6 pair.
+
+Generate a controlled 1920 × 1080 UI fixture or benchmark real captures with:
+
+```powershell
+npm run ocr:fixture
+npm run ocr:benchmark:paddle -- .\.paddle-ocr-cache\fixtures\screen-text.png
+npm run ocr:benchmark:paddle -- --profiles small,medium .\samples\capture.png
+```
+
+The app defaults to the small profile. Set
+`FOVEA_PADDLE_OCR_PROFILE=medium` or `large` before `npm run dev` to test
+another profile. Set `FOVEA_PADDLE_MKLDNN=0` only when diagnosing the slower
+portable CPU path. PaddlePaddle 3.3.x is intentionally not used because its
+Windows oneDNN/PIR path currently crashes during PP-OCRv6 inference.
 
 ## Manual test
 
@@ -158,6 +187,9 @@ unredacted temporary source is deleted once the derivative replaces it.
   accepted and the assistant is explicitly instructed not to use tools.
 - The installer is unsigned, has no auto-update support, and packages only the
   architecture used for the build.
+- PaddleOCR is currently a development evaluation sidecar. The Python runtime
+  and models are not included in the NSIS installer yet; packaged builds safely
+  continue to Tesseract when that sidecar is absent.
 - A real ChatGPT/App Server request cannot be exercised in CI because it needs
   an interactive user login; protocol tests use an in-memory transport instead.
 

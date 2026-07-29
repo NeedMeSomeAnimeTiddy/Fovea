@@ -105,6 +105,59 @@ describe('Windows OCR integration', () => {
     expect(fallback.recognise).not.toHaveBeenCalled()
   })
 
+  it('always compares frozen-screen OCR so plausible Windows mistakes can be corrected', async () => {
+    const native = service(vi.fn(async () => ({
+      ...emptyResult,
+      text: 'Plausible Windows text with enough characters',
+      regions: [{ id: 'line-1', text: 'Plausible Windows text with enough characters', confidence: 0, bounds: { x: 0, y: 0, width: 1, height: 1 } }]
+    })))
+    const fallback = service(vi.fn(async () => ({
+      ...emptyResult,
+      text: 'Accurate Paddle text with enough characters',
+      confidence: 96,
+      engine: 'paddle' as const,
+      paddleProfile: 'small' as const,
+      regions: [{ id: 'line-1', text: 'Accurate Paddle text with enough characters', confidence: 96, bounds: { x: 0, y: 0, width: 1, height: 1 } }]
+    })))
+
+    await expect(new NativeFirstOcrService(native, fallback)
+      .recognise('capture', Buffer.from('image'), { width: 100, height: 100 }, undefined, {
+        sourcePath: 'capture.png',
+        preserveGeometry: true
+      }))
+      .resolves.toMatchObject({ text: 'Accurate Paddle text with enough characters', engine: 'paddle' })
+    expect(fallback.recognise).toHaveBeenCalledOnce()
+  })
+
+  it('starts the frozen-screen engines concurrently', async () => {
+    let releaseNative: (() => void) | undefined
+    const native = service(vi.fn(async () => {
+      await new Promise<void>((resolve) => { releaseNative = resolve })
+      return {
+        ...emptyResult,
+        text: 'Windows screen result with enough characters',
+        regions: [{ id: 'line-1', text: 'Windows screen result with enough characters', confidence: 0, bounds: { x: 0, y: 0, width: 1, height: 1 } }]
+      }
+    }))
+    const fallback = service(vi.fn(async () => ({
+      ...emptyResult,
+      text: 'Paddle screen result with enough characters',
+      confidence: 98,
+      engine: 'paddle' as const,
+      paddleProfile: 'small' as const,
+      regions: [{ id: 'line-1', text: 'Paddle screen result with enough characters', confidence: 98, bounds: { x: 0, y: 0, width: 1, height: 1 } }]
+    })))
+    const recognition = new NativeFirstOcrService(native, fallback)
+      .recognise('capture', Buffer.from('image'), { width: 100, height: 100 }, undefined, {
+        sourcePath: 'capture.png',
+        preserveGeometry: true
+      })
+
+    await vi.waitFor(() => expect(fallback.recognise).toHaveBeenCalledOnce())
+    releaseNative?.()
+    await expect(recognition).resolves.toMatchObject({ engine: 'paddle' })
+  })
+
   it('passes a corrected temporary image to Windows OCR and removes it afterwards', async () => {
     const root = await mkdtemp(join(tmpdir(), 'fovea-ocr-geometry-'))
     roots.push(root)

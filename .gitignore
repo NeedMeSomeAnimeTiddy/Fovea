@@ -10,6 +10,8 @@ resources/codex-schema/
 .agents/
 .tmp-openai-docs-cache/
 .sidecar-smoke/
+.venv-paddleocr/
+.paddle-ocr-cache/
 temporary-screenshots/
 screenshots/
 snip-*.png

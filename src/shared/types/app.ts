@@ -128,6 +128,7 @@ export interface OcrEntity {
 
 export type OcrExternalActionKind = 'url' | 'email' | 'phone'
 export type OcrPreprocessing = 'none' | 'upscaled-contrast' | 'high-contrast'
+export type PaddleOcrProfile = 'small' | 'medium' | 'large'
 
 export interface OcrResult {
   attachmentId: string
@@ -139,7 +140,12 @@ export interface OcrResult {
   words?: OcrRegion[]
   truncated: boolean
   entities?: OcrEntity[]
-  engine?: 'tesseract' | 'windows'
+  engine?: 'tesseract' | 'windows' | 'paddle'
+  paddleProfile?: PaddleOcrProfile
+  paddleModels?: {
+    detector: string
+    recognizer: string
+  }
   cached?: boolean
   preprocessing?: OcrPreprocessing
   geometryCorrection?: 'deskewed' | 'perspective-corrected'
@@ -229,7 +235,8 @@ export interface ConversationExchange {
     quality: OcrResult['quality']
     language: OcrLanguage
     entities: OcrEntity[]
-    engine: 'tesseract' | 'windows'
+    engine: 'tesseract' | 'windows' | 'paddle'
+    paddleProfile?: PaddleOcrProfile
     cached: boolean
     preprocessing: OcrPreprocessing
     geometryCorrection?: 'deskewed' | 'perspective-corrected'

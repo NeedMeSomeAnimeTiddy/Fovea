@@ -71,7 +71,8 @@ if (arguments_.includes('--help') || imagePaths.length === 0) {
         confidence: Math.round(selected.confidence),
         characters: selected.text.length,
         preprocessing: selected.preprocessing,
-        durationMs: Math.round(performance.now() - startedAt)
+        durationMs: Math.round(performance.now() - startedAt),
+        ...await groundTruthMetrics(absolutePath, selected.text)
       })
     }
 
@@ -136,4 +137,39 @@ async function prepareHighContrastImage(image, width, height) {
 function resultScore(result) {
   const usefulLength = Math.min(2_000, result.text.replace(/\s/g, '').length)
   return result.confidence * 10 + usefulLength
+}
+
+async function groundTruthMetrics(imagePath, actual) {
+  const truthPath = imagePath.replace(/\.[^.]+$/, '.txt')
+  const expected = await readFile(truthPath, 'utf8').catch(() => null)
+  if (expected === null) return {}
+  return {
+    cer: errorRate([...normalise(expected)], [...normalise(actual)]),
+    wer: errorRate(words(expected), words(actual))
+  }
+}
+
+function normalise(value) {
+  return value.normalize('NFKC').toLocaleLowerCase().replace(/\s+/g, ' ').trim()
+}
+
+function words(value) {
+  return normalise(value).split(' ').filter(Boolean)
+}
+
+function errorRate(expected, actual) {
+  if (!expected.length) return actual.length ? 1 : 0
+  const previous = Array.from({ length: actual.length + 1 }, (_, index) => index)
+  for (let expectedIndex = 1; expectedIndex <= expected.length; expectedIndex += 1) {
+    const current = [expectedIndex]
+    for (let actualIndex = 1; actualIndex <= actual.length; actualIndex += 1) {
+      current[actualIndex] = Math.min(
+        current[actualIndex - 1] + 1,
+        previous[actualIndex] + 1,
+        previous[actualIndex - 1] + (expected[expectedIndex - 1] === actual[actualIndex - 1] ? 0 : 1)
+      )
+    }
+    previous.splice(0, previous.length, ...current)
+  }
+  return Math.round((previous[actual.length] / expected.length) * 10_000) / 10_000
 }

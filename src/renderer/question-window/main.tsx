@@ -1032,7 +1032,7 @@ function ResponseBody({
         {ocr && (
           <div className="ocr-response-meta">
             <span>{ocr.language.label}</span>
-            <span>{ocr.engine === 'windows' ? 'Windows OCR' : 'Tesseract OCR'}</span>
+            <span>{ocr.engine === 'windows' ? 'Windows OCR' : ocr.engine === 'paddle' ? `PaddleOCR ${ocr.paddleProfile ?? ''}`.trim() : 'Tesseract OCR'}</span>
             {ocr.engine !== 'windows' && <span>{ocr.confidence}% confidence</span>}
             {ocr.durationMs > 0 && <span>{formatOcrDuration(ocr.durationMs)}</span>}
             {ocr.preprocessing === 'upscaled-contrast' && <span>Enhanced</span>}

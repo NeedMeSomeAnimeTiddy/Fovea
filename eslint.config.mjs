@@ -3,7 +3,7 @@ import reactHooks from 'eslint-plugin-react-hooks'
 import tseslint from 'typescript-eslint'
 
 export default tseslint.config(
-  { ignores: ['node_modules', 'out', 'dist', 'release', 'resources/codex-schema', '.tmp-openai-docs-cache', '.sidecar-smoke'] },
+  { ignores: ['node_modules', 'out', 'dist', 'release', 'resources/codex-schema', '.tmp-openai-docs-cache', '.sidecar-smoke', '.venv-paddleocr', '.paddle-ocr-cache'] },
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
   {

@@ -547,6 +547,7 @@ export class QuestionSessions {
           language: structuredClone(result.language),
           entities: structuredClone(result.entities ?? []),
           engine: result.engine ?? 'tesseract',
+          paddleProfile: result.paddleProfile,
           cached: result.cached === true,
           preprocessing: result.preprocessing ?? 'none',
           geometryCorrection: result.geometryCorrection,

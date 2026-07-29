@@ -240,6 +240,36 @@ export class NativeFirstOcrService implements OcrService {
       const applyCorrection = (result: OcrResult): OcrResult => corrected.correction === 'none'
         ? result
         : { ...result, geometryCorrection: corrected.correction }
+      if (options.preserveGeometry) {
+        onProgress?.({ progress: 0, stage: 'Comparing screen text recognition' })
+        const [nativeAttempt, fallbackAttempt] = await Promise.allSettled([
+          this.native.recognise(
+            attachmentId,
+            corrected.image,
+            corrected.size,
+            onProgress,
+            correctedOptions
+          ),
+          this.fallback.recognise(
+            attachmentId,
+            corrected.image,
+            corrected.size,
+            onProgress,
+            correctedOptions
+          )
+        ])
+        this.throwIfCancelled(attachmentId)
+        const nativeResult = nativeAttempt.status === 'fulfilled' ? applyCorrection(nativeAttempt.value) : null
+        const fallbackResult = fallbackAttempt.status === 'fulfilled' ? applyCorrection(fallbackAttempt.value) : null
+        if (nativeResult && fallbackResult) {
+          return resultQualityScore(fallbackResult) > resultQualityScore(nativeResult) ? fallbackResult : nativeResult
+        }
+        if (fallbackResult) return fallbackResult
+        if (nativeResult) return nativeResult
+        if (fallbackAttempt.status === 'rejected') throw fallbackAttempt.reason
+        if (nativeAttempt.status === 'rejected') throw nativeAttempt.reason
+        throw new OcrServiceError('ocr-unavailable', 'No local OCR engine returned a result.')
+      }
       let nativeResult: OcrResult | null = null
       try {
         nativeResult = applyCorrection(await this.native.recognise(
@@ -316,7 +346,7 @@ export function resultQualityScore(result: OcrResult): number {
   const useful = [...compact].filter((character) => /[\p{L}\p{N}\p{P}\p{S}]/u.test(character)).length
   const cleanliness = useful / Math.max(1, [...compact].length)
   const lengthScore = Math.min(2_000, compact.length) * cleanliness
-  const confidenceScore = result.engine === 'tesseract' ? result.confidence * 3 : 225
+  const confidenceScore = result.engine === 'windows' ? 225 : result.confidence * 3
   return Math.round(lengthScore + confidenceScore - (result.quality === 'low-confidence' ? 100 : 0))
 }
 

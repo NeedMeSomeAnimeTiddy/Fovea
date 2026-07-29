@@ -7,6 +7,7 @@ import { WindowsUiAutomationService } from './capture/windows-ui-automation-serv
 import { registerIpc } from './ipc/register-ipc'
 import { OnboardingController, shouldShowOnboardingAtStartup } from './onboarding/onboarding-controller'
 import { TesseractOcrService } from './ocr/ocr-service'
+import { PaddleFirstOcrService, PaddleOcrService, resolvePaddleOcrProfile } from './ocr/paddle-ocr-service'
 import { NativeFirstOcrService, WindowsOcrService } from './ocr/windows-ocr-service'
 import { CodexAppServerProvider } from './providers/codex-app-server/codex-app-server-provider'
 import { ProfileManager } from './providers/profile-manager'
@@ -67,7 +68,19 @@ async function startApplication(): Promise<void> {
       ? join(process.resourcesPath, 'ocr', 'windows-ocr.ps1')
       : join(app.getAppPath(), 'resources', 'ocr', 'windows-ocr.ps1')
   )
-  const ocr = new NativeFirstOcrService(windowsOcr, tesseractOcr)
+  const paddleOcr = new PaddleOcrService({
+    pythonPath: process.env.FOVEA_PADDLE_PYTHON?.trim() || (app.isPackaged
+      ? join(process.resourcesPath, 'ocr', 'paddle', 'python.exe')
+      : join(app.getAppPath(), '.venv-paddleocr', 'Scripts', 'python.exe')),
+    scriptPath: app.isPackaged
+      ? join(process.resourcesPath, 'ocr', 'paddle-ocr.py')
+      : join(app.getAppPath(), 'resources', 'ocr', 'paddle-ocr.py'),
+    runtimePath: app.isPackaged
+      ? join(runtimeRoot, 'paddle-ocr')
+      : join(app.getAppPath(), '.paddle-ocr-cache'),
+    profile: resolvePaddleOcrProfile(process.env.FOVEA_PADDLE_OCR_PROFILE)
+  })
+  const ocr = new NativeFirstOcrService(windowsOcr, new PaddleFirstOcrService(paddleOcr, tesseractOcr))
   const uiAutomation = new WindowsUiAutomationService(
     app.isPackaged
       ? join(process.resourcesPath, 'automation', 'windows-ui-elements.ps1')
