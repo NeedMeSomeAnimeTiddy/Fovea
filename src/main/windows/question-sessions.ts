@@ -73,7 +73,7 @@ export class QuestionSessions {
     const attachment = this.createAttachment(capture.imagePath, 'sent', capture.edited === true)
     const session: QuestionSession = { id, attachments: [attachment], window: null, previewWindow: null, previewAttachmentId: null, busy: false, cleaningUp: false, capturePending: false, phase: 'idle', selection: null, exchanges: [], segments: [], disclosure: null, models: [], initialization: Promise.resolve(), pinned: false, historyId: id, createdAt, ocrContextByExchangeId: new Map() }
     this.sessions.set(id, session)
-    session.initialization = this.selectInitial(session, capture.preferWebSearch === true, capture.extractText === true, capture.ocrLanguageCode)
+    session.initialization = this.selectInitial(session, capture.preferWebSearch === true, capture.extractText === true, capture.ocrLanguageCode, capture.initialQuestion)
     const material = selectWindowMaterial({ disableTransparentWindows: app.commandLine.hasSwitch('disable-transparent-windows') })
     try {
       const opened = await openBrowserWindowWithChrome({ kind: 'question', label: 'Question window', initialMaterial: material, surfaceSize: QUESTION_WINDOW_SIZES.surfaceSize, minimumSurfaceSize: QUESTION_WINDOW_SIZES.minimumSurfaceSize, screenSource: screen, timeoutMs: QUESTION_WINDOW_READY_TIMEOUT_MS, canMaximize: false, canResize: false, createWindow: (attempt) => this.createQuestionWindow(capture, session, attempt), loadRenderer: (window) => loadRenderer(window, 'question', { session: id }), isWindowCurrent: (window) => this.sessions.get(id) === session && session.window === window, beforeRetry: (window) => { if (session.window === window) session.window = null } })
@@ -510,14 +510,14 @@ export class QuestionSessions {
     await this.ocr.dispose()
   }
 
-  private async selectInitial(session: QuestionSession, preferWebSearch = false, extractText = false, ocrLanguageCode?: string): Promise<void> {
+  private async selectInitial(session: QuestionSession, preferWebSearch = false, extractText = false, ocrLanguageCode?: string, initialQuestion?: string): Promise<void> {
     if (extractText) this.startInitialOcr(session, ocrLanguageCode)
     const profiles = this.providers.listProfiles(); const profile = profiles.find((item) => item.isDefault) ?? profiles[0]; if (!profile) return
     const models = await this.safeModels(profile.id); session.models = models; const model = models.find((item) => item.id === profile.defaultModelId) ?? models.find((item) => item.isDefault) ?? models[0]; if (!model) return
     session.selection = { profileId: profile.id, provider: profile.provider, modelId: model.id, reasoningEffort: profile.defaultReasoningEffort && model.supportedReasoningEfforts.includes(profile.defaultReasoningEffort) ? profile.defaultReasoningEffort : model.defaultReasoningEffort ?? null }
     if (!extractText) {
       const segment = this.startSegment(session, false)
-      if (segment) this.startInitialAnalysis(session, segment, preferWebSearch)
+      if (segment) this.startInitialAnalysis(session, segment, preferWebSearch, initialQuestion ?? INITIAL_QUESTION, !initialQuestion)
     }
   }
   private startInitialOcr(session: QuestionSession, ocrLanguageCode?: string): void {
@@ -570,17 +570,17 @@ export class QuestionSessions {
       }
     })()
   }
-  private startInitialAnalysis(session: QuestionSession, providerSegment: ProviderSegmentState, preferWebSearch = false): void {
+  private startInitialAnalysis(session: QuestionSession, providerSegment: ProviderSegmentState, preferWebSearch = false, question = INITIAL_QUESTION, automatic = true): void {
     const attachmentIds = session.attachments.map((attachment) => attachment.id)
     const exchange: ConversationExchange = {
       id: randomUUID(),
-      question: INITIAL_QUESTION,
+      question,
       answer: '',
       phase: 'connecting',
       segmentId: providerSegment.segment.id,
       attachmentIds,
-      automatic: true,
-      ...(preferWebSearch ? { webSearch: { id: randomUUID(), query: INITIAL_QUESTION, status: 'searching' as const } } : {})
+      automatic,
+      ...(preferWebSearch ? { webSearch: { id: randomUUID(), query: question, status: 'searching' as const } } : {})
     }
     session.exchanges.push(exchange)
     session.busy = true
@@ -600,7 +600,7 @@ export class QuestionSessions {
           exchange,
           providerSegment,
           {
-            text: responsePrompt(INITIAL_QUESTION, true, preferWebSearch, preferWebSearch),
+            text: responsePrompt(question, automatic, preferWebSearch, preferWebSearch),
             imagePaths: this.pathsForAttachmentIds(session, attachmentIds),
             webSearchAllowed: preferWebSearch,
             webSearchPreferred: preferWebSearch

@@ -25,6 +25,15 @@
   --fovea-capture-selection-stroke: #007aff;
   --fovea-capture-selection-fill: rgba(0, 122, 255, 0.08);
   --fovea-capture-guide: rgba(0, 104, 208, 0.42);
+  --fovea-capture-feature-control: #007aff;
+  --fovea-capture-feature-text: #7c3aed;
+  --fovea-capture-feature-link: #007c72;
+  --fovea-capture-feature-value: #9a5600;
+  --fovea-capture-feature-visual: #167a3d;
+  --fovea-capture-feature-label-text: #fff;
+  --fovea-glow-capture-feature: 0 0 0 1px color-mix(in srgb, var(--analyze-feature-color) 22%, transparent), 0 0 16px color-mix(in srgb, var(--analyze-feature-color) 20%, transparent);
+  --fovea-glow-capture-feature-selected: 0 0 0 1px color-mix(in srgb, var(--analyze-feature-color) 36%, transparent), 0 0 22px color-mix(in srgb, var(--analyze-feature-color) 34%, transparent);
+  --fovea-glow-capture-feature-key: 0 0 7px color-mix(in srgb, var(--legend-color) 48%, transparent);
   --fovea-capture-error: #b42318;
   --fovea-capture-error-border: rgba(180, 35, 24, 0.46);
   --fovea-capture-selection-glow: 0 0 0 1px rgba(255, 255, 255, 0.86), 0 0 24px rgba(0, 122, 255, 0.22);

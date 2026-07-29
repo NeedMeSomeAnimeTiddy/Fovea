@@ -1,11 +1,12 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { IPC, type FoveaApi, type QuestionViewState, type SettingsViewState, type WindowChromeState } from '@shared/contracts/ipc'
-import type { AppearanceState } from '@shared/types/app'
+import type { AppearanceState, CaptureAnalysis } from '@shared/types/app'
 import type { ProviderEvent } from '@shared/types/provider'
 import type { IpcResult } from '@shared/types/app-error'
 
 const initialAppearance = ipcRenderer.sendSync(IPC.appearanceGet) as AppearanceState
 applyInitialAppearance(initialAppearance)
+let captureAnalysisRequestSequence = 0
 
 function applyInitialAppearance(appearance: AppearanceState): void {
   const apply = (): boolean => {
@@ -41,7 +42,7 @@ const api: FoveaApi = {
     get: () => invokeResult(IPC.settingsGet), openOcrLanguages: () => invokeResult(IPC.settingsOpenOcrLanguages), setAppearance: (value) => invokeResult(IPC.settingsSetAppearance, value), setLaunchAtLogin: (enabled) => invokeResult(IPC.settingsSetLaunchAtLogin, enabled), setShortcut: (action, accelerator) => invokeResult(IPC.settingsSetShortcut, action, accelerator), resetShortcuts: () => invokeResult(IPC.settingsResetShortcuts), saveCustomPrompt: (id, label, prompt) => invokeResult(IPC.settingsSaveCustomPrompt, id, label, prompt), deleteCustomPrompt: (id) => invokeResult(IPC.settingsDeleteCustomPrompt, id), setOnboardingStatus: (status) => invokeResult(IPC.settingsSetOnboardingStatus, status), setPrivateMode: (enabled) => invokeResult(IPC.settingsSetPrivateMode, enabled), setHistoryRetention: (days) => invokeResult(IPC.settingsSetHistoryRetention, days), setScreenshotRetention: (enabled) => invokeResult(IPC.settingsSetScreenshotRetention, enabled), testOnboardingCapture: () => invokeResult(IPC.settingsTestOnboardingCapture), deleteTemporaryFiles: () => invokeResult(IPC.settingsDeleteTemp),
     onChanged: (callback) => subscribe(IPC.settingsChanged, callback), onAppearanceChanged: (callback) => subscribe(IPC.appearanceChanged, callback)
   },
-  capture: { start: (mode) => invokeResult(IPC.captureStart, mode), getContext: () => invokeResult(IPC.captureGetContext), getOcrLanguages: () => invokeResult(IPC.captureGetOcrLanguages), setOcrLanguage: (code) => invokeResult(IPC.captureSetOcrLanguage, code), select: (rectangle, operations = [], preferWebSearch = false, extractText = false, ocrLanguageCode) => invokeResult(IPC.captureSelect, rectangle, operations, preferWebSearch, extractText, ocrLanguageCode), cancel: () => invokeResult(IPC.captureCancel) },
+  capture: { start: (mode) => invokeResult(IPC.captureStart, mode), getContext: () => invokeResult(IPC.captureGetContext), analyze: (onProgress) => runCaptureAnalysis(onProgress), cancelAnalysis: () => invokeResult(IPC.captureCancelAnalysis), getOcrLanguages: () => invokeResult(IPC.captureGetOcrLanguages), setOcrLanguage: (code) => invokeResult(IPC.captureSetOcrLanguage, code), select: (rectangle, operations = [], preferWebSearch = false, extractText = false, ocrLanguageCode, initialQuestion) => invokeResult(IPC.captureSelect, rectangle, operations, preferWebSearch, extractText, ocrLanguageCode, initialQuestion), cancel: () => invokeResult(IPC.captureCancel) },
   question: {
     get: (id) => invokeResult(IPC.questionGet, id), getFullImage: (id, attachmentId) => invokeResult(IPC.questionGetFullImage, id, attachmentId), runOcr: (id, attachmentId) => invokeResult(IPC.questionRunOcr, id, attachmentId), getOcrResult: (id, attachmentId) => invokeResult(IPC.questionGetOcrResult, id, attachmentId), setOcrSelection: (id, attachmentId, regionIds, includeNextRequest) => invokeResult(IPC.questionSetOcrSelection, id, attachmentId, regionIds, includeNextRequest), setSelection: (id, selection) => invokeResult(IPC.questionSetSelection, id, selection), setPinned: (id, pinned) => invokeResult(IPC.questionSetPinned, id, pinned), setPreviewOpen: (id, attachmentId) => invokeResult(IPC.questionSetPreviewOpen, id, attachmentId), removeAttachment: (id, attachmentId) => invokeResult(IPC.questionRemoveAttachment, id, attachmentId), applyAttachmentEdits: (id, attachmentId, operations) => invokeResult(IPC.questionApplyAttachmentEdits, id, attachmentId, operations), send: (id, text, preferWebSearch = false) => invokeResult(IPC.questionSend, id, text, preferWebSearch), retry: (id, exchangeId) => invokeResult(IPC.questionRetry, id, exchangeId), resolveWebSearch: (id, requestId, approved) => invokeResult(IPC.questionResolveWebSearch, id, requestId, approved), stop: (id) => invokeResult(IPC.questionStop, id), close: (id) => invokeResult(IPC.questionClose, id), addSnip: (id) => invokeResult(IPC.questionAddSnip, id), newChat: (id) => invokeResult(IPC.questionNewChat, id),
     onEvent: (callback) => { const listener = (_event: Electron.IpcRendererEvent, id: string, event: ProviderEvent): void => callback(id, event); ipcRenderer.on(IPC.questionEvent, listener); return () => ipcRenderer.removeListener(IPC.questionEvent, listener) },
@@ -59,6 +60,20 @@ async function invokeResult<T>(channel: string, ...arguments_: unknown[]): Promi
   const result = await ipcRenderer.invoke(channel, ...arguments_) as IpcResult<T>
   if (result.ok) return result.value
   return Promise.reject(structuredClone(result.error))
+}
+
+async function runCaptureAnalysis(onProgress?: (analysis: CaptureAnalysis) => void): Promise<CaptureAnalysis> {
+  captureAnalysisRequestSequence += 1
+  const requestId = `capture-analysis-${Date.now()}-${captureAnalysisRequestSequence}`
+  const listener = (_event: Electron.IpcRendererEvent, progress: { requestId: string; analysis: CaptureAnalysis }): void => {
+    if (progress.requestId === requestId) onProgress?.(structuredClone(progress.analysis))
+  }
+  ipcRenderer.on(IPC.captureAnalysisProgress, listener)
+  try {
+    return await invokeResult(IPC.captureAnalyze, requestId)
+  } finally {
+    ipcRenderer.removeListener(IPC.captureAnalysisProgress, listener)
+  }
 }
 
 function subscribe<T extends SettingsViewState | AppearanceState | WindowChromeState | QuestionViewState>(channel: string, callback: (value: T) => void): () => void {

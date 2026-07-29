@@ -43,6 +43,25 @@ unavailable or finds no useful text. Enabling **Extract text locally** reveals
 an optional capture-language picker; **Automatic** uses the Windows preference.
 The last available language selected in the capture bar is remembered for the
 next capture.
+**Analyze full screen** records the foreground window before the capture overlay
+appears and limits its local Windows UI Automation snapshot to that window, so
+occluded apps cannot leak boxes onto the frozen screen. It then combines those
+semantic controls and roles with full-screen word-level OCR and bounded visual
+feature detection on the frozen bitmap.
+Overlapping results are fused so a named button is one target rather than a
+control box plus duplicate text boxes. Results render progressively—semantic
+controls first, sentence-level OCR next, and only strong visual candidates last.
+Targets are ranked by source, meaning, confidence, and size; repeated clicks at
+an overlap cycle through every target under the pointer so a large container
+cannot hide a smaller box. Overlapping static text fragments are clustered by
+geometry and token similarity, with the most complete line retained. Every
+candidate is also checked against the frozen bitmap: uniform rectangles without
+visible pixels are removed, while accepted visual boxes are tightened to their
+actual edge content. It draws clickable boxes without sending the desktop to a
+provider. Choosing a box opens a small menu of preset questions plus quick
+actions to extract its text locally, copy recognized text, or identify and
+verify it with web search. Only that boxed region and the chosen question or
+action continue to the response window.
 Short or suspicious English results are compared with Tesseract and the
 stronger result is retained. Recent native and fallback results are cached
 locally for repeated captures. Low-confidence photographed text also gets a
@@ -76,21 +95,25 @@ npm run ocr:benchmark -- --json .\samples\small-text.png .\samples\document.png
 4. Toggle **Extract text locally** in the capture bar, make a selection, and
    confirm the recognised text appears in the normal response panel. Try Stop,
    Copy, and any detected URL, email, phone, QR-code, or barcode action.
-5. Enable **Edit before sending**, then drag a rectangle at least 24 × 24
+5. Choose **Analyze full screen** in the capture bar and confirm identified
+   features are boxed across the frozen display. Select a box, choose one of
+   its preset **Ask** questions, and confirm that exact question opens in the
+   response window with the boxed region.
+6. Enable **Edit before sending**, then drag a rectangle at least 24 × 24
     logical pixels on the primary display.
-6. Confirm the selection stays on the frozen screen and the icon toolbar
+7. Confirm the selection stays on the frozen screen and the icon toolbar
    appears at the top. Try an annotation and solid redaction, then press Send
    and confirm the compact response window analyses the edited derivative.
-7. Open **Ask**, choose a contextual suggestion, then use **Custom question**
+8. Open **Ask**, choose a contextual suggestion, then use **Custom question**
    and confirm both questions and answers remain visible in the flowing
    conversation.
-8. Add another snip, choose **Edit**, try arrows, rectangles, drawing, text,
+9. Add another snip, choose **Edit**, try arrows, rectangles, drawing, text,
    blur, and solid redaction, then undo/redo and save the edited copy. Confirm
    the edited draft is the image sent with the next question.
-9. Expand **Show details**, then try the icon actions for View capture, Stop,
+10. Expand **Show details**, then try the icon actions for View capture, Stop,
    Regenerate, Copy, and New capture. Press `Esc` in the capture viewer and
    confirm the response window remains open.
-10. Close the panel and confirm its PNG disappears from the temporary path shown
+11. Close the panel and confirm its PNG disappears from the temporary path shown
    in Settings. In **History**, search for and reopen the conversation, then
    delete it. **Clean temporary files** removes any remaining temporary PNGs.
 

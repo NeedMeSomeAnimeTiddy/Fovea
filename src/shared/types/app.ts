@@ -123,6 +123,7 @@ export interface OcrEntity {
   id: string
   kind: 'url' | 'email' | 'phone' | 'qr' | 'barcode'
   value: string
+  bounds?: OcrBounds
 }
 
 export type OcrExternalActionKind = 'url' | 'email' | 'phone'
@@ -135,6 +136,7 @@ export interface OcrResult {
   quality: 'normal' | 'low-confidence'
   language: OcrLanguage
   regions: OcrRegion[]
+  words?: OcrRegion[]
   truncated: boolean
   entities?: OcrEntity[]
   engine?: 'tesseract' | 'windows'
@@ -184,6 +186,29 @@ export type SpectralEdgeState =
 
 export type CaptureMode = 'region' | 'display' | 'window' | 'repeat-last'
 export type ShortcutAction = CaptureMode | 'settings'
+
+export type CaptureFeatureKind = 'text' | 'control' | 'link' | 'error' | 'value' | 'visual'
+
+export interface CaptureFeature {
+  id: string
+  kind: CaptureFeatureKind
+  label: string
+  bounds: OcrBounds
+  rank?: number
+  source?: 'uia' | 'hybrid' | 'ocr-word' | 'ocr-line' | 'visual'
+  role?: string
+  description?: string
+  enabled?: boolean
+  visibility?: number
+  visibilityVerified?: boolean
+}
+
+export interface CaptureAnalysis {
+  features: CaptureFeature[]
+  truncated: boolean
+  stage?: 'semantic' | 'text' | 'visual'
+  complete?: boolean
+}
 
 export interface ShortcutBindingState {
   action: ShortcutAction

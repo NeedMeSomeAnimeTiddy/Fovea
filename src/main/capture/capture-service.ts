@@ -1,16 +1,21 @@
 import { execFile } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { promisify } from 'node:util'
 import { BrowserWindow, desktopCapturer, screen, type DesktopCapturerSource, type Display, type NativeImage } from 'electron'
 import type { CaptureContext } from '@shared/contracts/ipc'
-import type { CaptureMode, ImageEditOperation } from '@shared/types/app'
+import type { CaptureAnalysis, CaptureFeature, CaptureMode, ImageEditOperation, OcrEntity, OcrRegion } from '@shared/types/app'
 import type { Rectangle } from '@shared/types/geometry'
 import { clampCropRectangle, logicalToPhysical } from './geometry'
 import type { ImageEditorService } from './image-editor-service'
+import { buildCaptureAnalysis, buildCaptureAnalysisStage, detectVisualControlFeatures, validateCaptureAnalysis } from './screen-feature-analysis'
+import { mapUiAutomationFeatures, type UiAutomationSnapshotService } from './windows-ui-automation-service'
+import type { OcrService } from '../ocr/ocr-service'
 import { loadRenderer, secureWindow } from '../windows/window-factory'
 import { WINDOW_BACKGROUND_COLOR } from '../windows/window-appearance'
 import type { TempScreenshotStore } from '../storage/temp-screenshot-store'
 
 const execFileAsync = promisify(execFile)
+const CAPTURE_STARTUP_TIMEOUT_MS = 20_000
 
 interface PendingDisplay {
   display: Display
@@ -21,11 +26,20 @@ interface PendingDisplay {
   ready: Promise<void>
   resolveReady(): void
   readinessError: Error | null
+  uiFeatures: CaptureFeature[]
+  uiFeaturesReady: Promise<void>
+}
+interface PrewarmedOverlay {
+  displayKey: string
+  window: BrowserWindow
+  rendererReady: Promise<void>
+  activation: ReturnType<typeof createDeferred>
+  claimed: boolean
 }
 interface CaptureDescriptor { mode: CaptureMode; displayId?: number; rectangle?: Rectangle; sourceId?: string }
 interface PendingCapture { candidates: Map<number, PendingDisplay>; topology: string; destination?: CaptureDestination }
 
-export interface CompletedCapture { imagePath: string; selectedBounds: Rectangle; display: Display; edited?: boolean; preferWebSearch?: boolean; extractText?: boolean; ocrLanguageCode?: string }
+export interface CompletedCapture { imagePath: string; selectedBounds: Rectangle; display: Display; edited?: boolean; preferWebSearch?: boolean; extractText?: boolean; ocrLanguageCode?: string; initialQuestion?: string }
 export interface CaptureDestination {
   onCompleted(capture: CompletedCapture): Promise<void>
   onCancelled?(): void
@@ -34,13 +48,19 @@ export interface CaptureDestination {
 export class CaptureService {
   private pending: PendingCapture | null = null
   private lastDescriptor: CaptureDescriptor | null = null
-  private cancellationTimer: NodeJS.Timeout | null = null
+  private startupTimer: NodeJS.Timeout | null = null
+  private rejectStartup: ((error: Error) => void) | null = null
+  private readonly analysisIds = new Map<number, string>()
+  private readonly prewarmedOverlays = new Map<number, PrewarmedOverlay>()
+  private disposed = false
 
   constructor(
     private readonly screenshots: TempScreenshotStore,
     private readonly onCompleted: (capture: CompletedCapture) => Promise<void>,
     private readonly onError: (message: string) => void,
-    private readonly imageEditor?: Pick<ImageEditorService, 'createDerivative'>
+    private readonly imageEditor?: Pick<ImageEditorService, 'createDerivative'>,
+    private readonly ocr?: Pick<OcrService, 'recognise' | 'cancel'>,
+    private readonly uiAutomation?: UiAutomationSnapshotService
   ) {
     screen.on('display-added', this.cancelForTopologyChange)
     screen.on('display-removed', this.cancelForTopologyChange)
@@ -67,57 +87,181 @@ export class CaptureService {
   }
 
   async getContext(senderWebContentsId?: number): Promise<CaptureContext> {
-    const candidate = this.findCandidate(senderWebContentsId)
+    const candidate = await this.findCandidateAfterActivation(senderWebContentsId)
     await candidate.ready
     if (candidate.readinessError) throw candidate.readinessError
     if (!candidate.image || !candidate.imageDataUrl || !candidate.viewport) throw new Error('The frozen display image is unavailable.')
     return { width: candidate.viewport.width, height: candidate.viewport.height, minSelectionSize: 24, displayId: String(candidate.display.id), imageDataUrl: candidate.imageDataUrl, canEditBeforeSending: !this.pending?.destination }
   }
 
-  async select(rectangle: Rectangle, senderWebContentsId?: number, operations: ImageEditOperation[] = [], preferWebSearch = false, extractText = false, ocrLanguageCode?: string): Promise<void> {
+  async analyze(senderWebContentsId?: number, onProgress?: (analysis: CaptureAnalysis) => void): Promise<CaptureAnalysis> {
+    const analysisStartedAt = Date.now()
+    const candidate = this.findCandidate(senderWebContentsId)
+    await candidate.ready
+    await candidate.uiFeaturesReady
+    if (candidate.readinessError) throw candidate.readinessError
+    if (!candidate.image || !candidate.viewport) throw new Error('The frozen display image is unavailable.')
+    const uiFeatures = candidate.uiFeatures
+    const ownerId = senderWebContentsId ?? candidate.window.webContents.id
+    const pending = this.pending
+    const analysisId = `capture-analysis-${randomUUID()}`
+    const png = candidate.image.toPNG()
+    onProgress?.(await validateCaptureAnalysis(png, buildCaptureAnalysisStage({ lines: [], uiFeatures }, 'semantic')))
+    const imagePath = await this.screenshots.save(png)
+    this.analysisIds.set(ownerId, analysisId)
+    try {
+      let regions: OcrRegion[] = []
+      let words: OcrRegion[] = []
+      let entities: OcrEntity[] = []
+      const visualFeaturesReady = detectVisualControlFeatures(png, { lines: [], uiFeatures })
+      const ocrReady = (async (): Promise<void> => {
+        if (this.ocr) {
+          try {
+            const result = await this.ocr.recognise(analysisId, png, candidate.image!.getSize(), undefined, { sourcePath: imagePath, preserveGeometry: true })
+            regions = result.regions
+            words = result.words ?? []
+            entities = result.entities ?? []
+          } catch {
+            // Keep Analyze available with no targets when local text recognition is unavailable.
+          }
+        }
+      })()
+      const visualFeatures = await visualFeaturesReady
+      if (visualFeatures.length) {
+        onProgress?.(await validateCaptureAnalysis(
+          png,
+          buildCaptureAnalysisStage({ lines: [], uiFeatures, visualFeatures }, 'semantic')
+        ))
+      }
+      await ocrReady
+      onProgress?.(await validateCaptureAnalysis(png, buildCaptureAnalysisStage({ lines: regions, words, entities, uiFeatures, visualFeatures }, 'text')))
+      const analysis = await buildCaptureAnalysis(png, { lines: regions, words, entities, uiFeatures, visualFeatures })
+      if (this.pending !== pending || !pending?.candidates.has(ownerId)) throw new Error('Screen analysis was cancelled.')
+      console.info(`[capture] Analyze completed in ${Date.now() - analysisStartedAt}ms with ${analysis.features.length} features.`)
+      return analysis
+    } finally {
+      if (this.analysisIds.get(ownerId) === analysisId) this.analysisIds.delete(ownerId)
+      await this.screenshots.delete(imagePath)
+    }
+  }
+
+  async cancelAnalysis(senderWebContentsId?: number): Promise<void> {
+    if (!senderWebContentsId) return
+    const analysisId = this.analysisIds.get(senderWebContentsId)
+    if (!analysisId) return
+    this.analysisIds.delete(senderWebContentsId)
+    await this.ocr?.cancel?.(analysisId)
+  }
+
+  async select(rectangle: Rectangle, senderWebContentsId?: number, operations: ImageEditOperation[] = [], preferWebSearch = false, extractText = false, ocrLanguageCode?: string, initialQuestion?: string): Promise<void> {
     const candidate = this.findCandidate(senderWebContentsId)
     if (!candidate.viewport) throw new Error('The capture surface is not ready.')
     const bounded = boundRectangle(rectangle, candidate.viewport.width, candidate.viewport.height)
     if (bounded.width < 24 || bounded.height < 24) throw new Error('Select an area at least 24 × 24 pixels.')
     const allowedOperations = this.pending?.destination ? [] : operations
     this.lastDescriptor = { mode: 'region', displayId: candidate.display.id, rectangle: bounded }
-    await this.complete(candidate, bounded, allowedOperations, preferWebSearch, extractText, ocrLanguageCode)
+    await this.complete(candidate, bounded, allowedOperations, preferWebSearch, extractText, ocrLanguageCode, initialQuestion)
   }
 
   cancel(): void {
     this.clearPending(true)
   }
 
+  prewarm(): void {
+    if (this.disposed || this.pending) return
+    for (const display of screen.getAllDisplays()) {
+      const current = this.prewarmedOverlays.get(display.id)
+      if (current && current.displayKey === displayKey(display) && !current.window.isDestroyed()) continue
+      if (current) this.releasePrewarmedOverlay(display.id, current)
+      const window = this.createOverlay(display)
+      const entry: PrewarmedOverlay = {
+        displayKey: displayKey(display),
+        window,
+        rendererReady: Promise.resolve(),
+        activation: createDeferred(),
+        claimed: false
+      }
+      this.prewarmedOverlays.set(display.id, entry)
+      entry.rendererReady = loadRenderer(window, 'overlay').catch((error) => {
+        if (this.prewarmedOverlays.get(display.id) === entry) {
+          this.prewarmedOverlays.delete(display.id)
+          entry.activation.resolve()
+        }
+        if (!window.isDestroyed()) window.close()
+        throw error
+      })
+      void entry.rendererReady.catch(() => undefined)
+    }
+  }
+
   dispose(): void {
+    this.disposed = true
     this.cancel()
+    this.releaseAllPrewarmedOverlays()
     screen.off('display-added', this.cancelForTopologyChange)
     screen.off('display-removed', this.cancelForTopologyChange)
     screen.off('display-metrics-changed', this.cancelForTopologyChange)
   }
 
   private async beginRegion(descriptor?: CaptureDescriptor, destination?: CaptureDestination): Promise<void> {
+    const startupStartedAt = Date.now()
     const displays = screen.getAllDisplays()
+    const semanticSnapshot = this.uiAutomation
+      ? this.uiAutomation.snapshot([], true, true).catch(() => [])
+      : Promise.resolve([])
     const topology = displays.map((display) => `${display.id}:${display.bounds.x},${display.bounds.y},${display.bounds.width},${display.bounds.height}:${display.scaleFactor}`).sort().join('|')
     const maxWidth = Math.max(...displays.map((display) => Math.round(display.bounds.width * display.scaleFactor)))
     const maxHeight = Math.max(...displays.map((display) => Math.round(display.bounds.height * display.scaleFactor)))
     const candidates = new Map<number, PendingDisplay>()
+    const rendererReadiness: Promise<void>[] = []
+    const claimedPrewarmed: Array<[number, PrewarmedOverlay]> = []
     for (const display of displays) {
       if (descriptor?.displayId && descriptor.displayId !== display.id) continue
-      const overlay = this.createOverlay(display)
+      const prewarmed = this.claimPrewarmedOverlay(display)
+      const overlay = prewarmed?.window ?? this.createOverlay(display)
+      rendererReadiness.push(prewarmed?.rendererReady ?? loadRenderer(overlay, 'overlay'))
+      if (prewarmed) claimedPrewarmed.push([display.id, prewarmed])
       const deferred = createDeferred()
-      candidates.set(overlay.webContents.id, { display, image: null, imageDataUrl: null, viewport: null, window: overlay, ready: deferred.promise, resolveReady: deferred.resolve, readinessError: null })
+      candidates.set(overlay.webContents.id, {
+        display,
+        image: null,
+        imageDataUrl: null,
+        viewport: null,
+        window: overlay,
+        ready: deferred.promise,
+        resolveReady: deferred.resolve,
+        readinessError: null,
+        uiFeatures: [],
+        uiFeaturesReady: Promise.resolve()
+      })
     }
     if (!candidates.size) throw new Error('Windows did not provide any screen images to capture.')
     this.pending = { candidates, topology, destination }
-    this.startCancellationTimer()
+    for (const [displayId, prewarmed] of claimedPrewarmed) {
+      prewarmed.activation.resolve()
+      if (this.prewarmedOverlays.get(displayId) === prewarmed) this.prewarmedOverlays.delete(displayId)
+    }
     try {
-      const rendererLoads = Promise.all([...candidates.values()].map((candidate) => loadRenderer(candidate.window, 'overlay')))
-      const [sources] = await Promise.all([
-        desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: maxWidth, height: maxHeight }, fetchWindowIcons: false }),
+      const preparationStartedAt = Date.now()
+      const rendererLoads = Promise.all(rendererReadiness).then((value) => {
+        console.info(`[capture] Overlay renderer prepared in ${Date.now() - preparationStartedAt}ms.`)
+        return value
+      })
+      const screenImages = desktopCapturer.getSources({
+        types: ['screen'],
+        thumbnailSize: { width: maxWidth, height: maxHeight },
+        fetchWindowIcons: false
+      }).then((value) => {
+        console.info(`[capture] Screen bitmap acquired in ${Date.now() - preparationStartedAt}ms.`)
+        return value
+      })
+      const [sources] = await this.awaitCaptureStartup(Promise.all([
+        screenImages,
         rendererLoads
-      ])
+      ] as const))
       if (this.pending?.candidates !== candidates) throw new Error('Screen capture was cancelled.')
       if (topology !== this.currentTopology()) throw new Error('Display configuration changed; capture was cancelled.')
+      const imagePreparationStartedAt = Date.now()
       for (const [webContentsId, candidate] of candidates) {
         const source = sources.find((entry) => entry.display_id === String(candidate.display.id))
         if (!source || source.thumbnail.isEmpty()) {
@@ -130,10 +274,32 @@ export class CaptureService {
         candidate.image = source.thumbnail
         candidate.imageDataUrl = jpegDataUrl(source.thumbnail)
         candidate.viewport = this.alignOverlayToDisplay(candidate)
-        candidate.resolveReady()
       }
+      console.info(`[capture] Frozen bitmap encoded in ${Date.now() - imagePreparationStartedAt}ms.`)
       if (!candidates.size) throw new Error('Windows did not provide any screen images to capture.')
-      for (const candidate of candidates.values()) if (!candidate.window.isDestroyed()) { candidate.window.show(); candidate.window.focus() }
+      const semanticReady = semanticSnapshot.then((uiElements) => {
+        if (this.pending?.candidates !== candidates) return
+        for (const candidate of candidates.values()) {
+          candidate.uiFeatures = mapUiAutomationFeatures(
+            uiElements,
+            candidate.display.bounds,
+            (bounds) => typeof screen.screenToDipRect === 'function' ? screen.screenToDipRect(null, bounds) : bounds
+          )
+        }
+        console.info(`[capture] Semantic scan completed with ${uiElements.length} controls.`)
+      })
+      for (const candidate of candidates.values()) {
+        candidate.uiFeaturesReady = semanticReady
+        candidate.resolveReady()
+        if (!candidate.window.isDestroyed()) candidate.window.showInactive()
+      }
+      console.info(`[capture] Frozen screen displayed in ${Date.now() - startupStartedAt}ms.`)
+      void semanticReady.finally(() => {
+        if (this.pending?.candidates !== candidates) return
+        for (const candidate of candidates.values()) {
+          if (!candidate.window.isDestroyed()) candidate.window.focus()
+        }
+      })
       if (descriptor?.rectangle) await this.select(descriptor.rectangle, [...candidates.keys()][0])
     } catch (error) { this.cancel(); throw error }
   }
@@ -205,7 +371,42 @@ export class CaptureService {
     return candidate
   }
 
-  private async complete(candidate: PendingDisplay, bounded: Rectangle, operations: ImageEditOperation[], preferWebSearch = false, extractText = false, ocrLanguageCode?: string): Promise<void> {
+  private async findCandidateAfterActivation(senderWebContentsId?: number): Promise<PendingDisplay> {
+    if (this.pending) return this.findCandidate(senderWebContentsId)
+    if (!senderWebContentsId) throw new Error('There is no active screen capture.')
+    const prewarmed = [...this.prewarmedOverlays.values()].find(
+      ({ window }) => window.webContents.id === senderWebContentsId
+    )
+    if (!prewarmed) throw new Error('There is no active screen capture.')
+    await prewarmed.activation.promise
+    return this.findCandidate(senderWebContentsId)
+  }
+
+  private claimPrewarmedOverlay(display: Display): PrewarmedOverlay | null {
+    const candidate = this.prewarmedOverlays.get(display.id)
+    if (
+      !candidate ||
+      candidate.claimed ||
+      candidate.displayKey !== displayKey(display) ||
+      candidate.window.isDestroyed()
+    ) return null
+    candidate.claimed = true
+    return candidate
+  }
+
+  private releasePrewarmedOverlay(displayId: number, candidate: PrewarmedOverlay): void {
+    if (this.prewarmedOverlays.get(displayId) === candidate) this.prewarmedOverlays.delete(displayId)
+    candidate.activation.resolve()
+    if (!candidate.window.isDestroyed()) candidate.window.close()
+  }
+
+  private releaseAllPrewarmedOverlays(): void {
+    for (const [displayId, candidate] of this.prewarmedOverlays) {
+      this.releasePrewarmedOverlay(displayId, candidate)
+    }
+  }
+
+  private async complete(candidate: PendingDisplay, bounded: Rectangle, operations: ImageEditOperation[], preferWebSearch = false, extractText = false, ocrLanguageCode?: string, initialQuestion?: string): Promise<void> {
     if (!candidate.image || !candidate.viewport) throw new Error('The frozen display image is unavailable.')
     const imageSize = candidate.image.getSize()
     const physical = logicalToPhysical(bounded, imageSize.width / candidate.viewport.width, imageSize.height / candidate.viewport.height)
@@ -213,10 +414,10 @@ export class CaptureService {
     if (crop.width < 1 || crop.height < 1) throw new Error('The selected area was outside the captured image.')
     const destination = this.pending?.destination
     this.clearPending(false)
-    await this.saveCompleted(candidate.display, candidate.image.crop(crop), bounded, destination, operations, preferWebSearch, extractText, ocrLanguageCode)
+    await this.saveCompleted(candidate.display, candidate.image.crop(crop), bounded, destination, operations, preferWebSearch, extractText, ocrLanguageCode, initialQuestion)
   }
 
-  private async saveCompleted(display: Display, image: NativeImage, selectedBounds: Rectangle, destination?: CaptureDestination, operations: ImageEditOperation[] = [], preferWebSearch = false, extractText = false, ocrLanguageCode?: string): Promise<void> {
+  private async saveCompleted(display: Display, image: NativeImage, selectedBounds: Rectangle, destination?: CaptureDestination, operations: ImageEditOperation[] = [], preferWebSearch = false, extractText = false, ocrLanguageCode?: string, initialQuestion?: string): Promise<void> {
     const sourcePath = await this.screenshots.save(image.toPNG())
     let imagePath = sourcePath
     try {
@@ -225,7 +426,7 @@ export class CaptureService {
         imagePath = await this.imageEditor.createDerivative(sourcePath, operations)
         await this.screenshots.delete(sourcePath)
       }
-      await (destination?.onCompleted ?? this.onCompleted)({ imagePath, selectedBounds, display, edited: operations.length > 0, preferWebSearch, extractText, ...(ocrLanguageCode ? { ocrLanguageCode } : {}) })
+      await (destination?.onCompleted ?? this.onCompleted)({ imagePath, selectedBounds, display, edited: operations.length > 0, preferWebSearch, extractText, ...(ocrLanguageCode ? { ocrLanguageCode } : {}), ...(initialQuestion ? { initialQuestion } : {}) })
     } catch (error) {
       await this.screenshots.delete(imagePath)
       if (imagePath !== sourcePath) await this.screenshots.delete(sourcePath)
@@ -236,19 +437,60 @@ export class CaptureService {
   private clearPending(notifyCancelled: boolean): void {
     const pending = this.pending
     this.pending = null
-    this.clearCancellationTimer()
+    this.cancelCaptureStartup(new Error('Screen capture was cancelled.'))
     for (const candidate of pending?.candidates.values() ?? []) {
+      const analysisId = this.analysisIds.get(candidate.window.webContents.id)
+      if (analysisId) {
+        this.analysisIds.delete(candidate.window.webContents.id)
+        void this.ocr?.cancel?.(analysisId).catch(() => undefined)
+      }
       if (!candidate.image && !candidate.readinessError) candidate.readinessError = new Error('Screen capture was cancelled.')
       candidate.resolveReady()
       if (!candidate.window.isDestroyed()) candidate.window.close()
     }
     if (notifyCancelled) pending?.destination?.onCancelled?.()
+    this.prewarm()
   }
 
-  private readonly cancelForTopologyChange = (): void => { if (this.pending && this.pending.topology !== this.currentTopology()) { this.cancel(); this.onError('Display configuration changed; capture was cancelled cleanly.') } }
+  private readonly cancelForTopologyChange = (): void => {
+    this.releaseAllPrewarmedOverlays()
+    if (this.pending && this.pending.topology !== this.currentTopology()) {
+      this.cancel()
+      this.onError('Display configuration changed; capture was cancelled cleanly.')
+      return
+    }
+    this.prewarm()
+  }
   private currentTopology(): string { return screen.getAllDisplays().map((display) => `${display.id}:${display.bounds.x},${display.bounds.y},${display.bounds.width},${display.bounds.height}:${display.scaleFactor}`).sort().join('|') }
-  private startCancellationTimer(): void { this.clearCancellationTimer(); this.cancellationTimer = setTimeout(() => { this.cancel(); this.onError('Screen selection timed out and was cancelled.') }, 60_000) }
-  private clearCancellationTimer(): void { if (this.cancellationTimer) clearTimeout(this.cancellationTimer); this.cancellationTimer = null }
+  private awaitCaptureStartup<T>(operation: Promise<T>): Promise<T> {
+    this.cancelCaptureStartup(new Error('A newer screen capture replaced this startup request.'))
+    return new Promise<T>((resolve, reject) => {
+      let settled = false
+      const settle = (callback: () => void): void => {
+        if (settled) return
+        settled = true
+        this.clearCaptureStartup()
+        callback()
+      }
+      this.rejectStartup = (error) => settle(() => reject(error))
+      this.startupTimer = setTimeout(() => {
+        this.rejectStartup?.(new Error('The frozen screen could not be prepared in time. Please try again.'))
+      }, CAPTURE_STARTUP_TIMEOUT_MS)
+      operation.then(
+        (value) => settle(() => resolve(value)),
+        (error) => settle(() => reject(error))
+      )
+    })
+  }
+  private cancelCaptureStartup(error: Error): void {
+    if (this.rejectStartup) this.rejectStartup(error)
+    else this.clearCaptureStartup()
+  }
+  private clearCaptureStartup(): void {
+    if (this.startupTimer) clearTimeout(this.startupTimer)
+    this.startupTimer = null
+    this.rejectStartup = null
+  }
 }
 
 function boundRectangle(rectangle: Rectangle, width: number, height: number): Rectangle {
@@ -257,6 +499,9 @@ function boundRectangle(rectangle: Rectangle, width: number, height: number): Re
 }
 function sameRectangle(left: Rectangle, right: Rectangle): boolean {
   return left.x === right.x && left.y === right.y && left.width === right.width && left.height === right.height
+}
+function displayKey(display: Display): string {
+  return `${display.bounds.x},${display.bounds.y},${display.bounds.width},${display.bounds.height}:${display.scaleFactor}`
 }
 function createDeferred(): { promise: Promise<void>; resolve(): void } {
   let resolve!: () => void

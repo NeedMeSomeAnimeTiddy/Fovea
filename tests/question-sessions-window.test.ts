@@ -360,6 +360,25 @@ describe('question-session window migration', () => {
     await vi.waitFor(async () => expect((await sessions.get(sessionId)).busy).toBe(false))
   })
 
+  it('uses an Analyze-mode preset as the first visible question', async () => {
+    const sessions = await createSessions()
+    const analyzedCapture = { ...capture(), initialQuestion: 'Explain this error' }
+    const opening = sessions.open(analyzedCapture)
+    const sessionId = await finishOpening(opening, 0)
+
+    await expect(sessions.get(sessionId)).resolves.toMatchObject({
+      exchanges: [{
+        question: 'Explain this error',
+        automatic: false
+      }]
+    })
+    expect(mocks.sendMessage.mock.calls[0]?.[1]).toMatchObject({
+      text: expect.stringContaining('User request:\nExplain this error'),
+      imagePaths: [analyzedCapture.imagePath]
+    })
+    expect(String((mocks.sendMessage.mock.calls[0]?.[1] as { text?: string }).text)).not.toContain('infer the user')
+  })
+
   it('keeps simultaneous sessions and their chrome state independent', async () => {
     const sessions = await createSessions()
     const firstOpening = sessions.open(capture(150))

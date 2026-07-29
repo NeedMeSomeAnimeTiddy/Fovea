@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => {
   type Listener = (...arguments_: unknown[]) => void
@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => {
     crop,
     getSize: () => ({ width: 200, height: 100 }),
     isEmpty: () => false,
+    toPNG: () => Buffer.from('whole-display'),
     toJPEG: () => Buffer.from('frozen-display')
   }
   const webListeners = new Map<string, Listener>()
@@ -27,6 +28,7 @@ const mocks = vi.hoisted(() => {
     setAlwaysOnTop: vi.fn(),
     setVisibleOnAllWorkspaces: vi.fn(),
     show: vi.fn(),
+    showInactive: vi.fn(),
     webContents: {
       id: 42,
       on: vi.fn((event: string, listener: Listener) => { webListeners.set(event, listener) }),
@@ -41,6 +43,7 @@ const mocks = vi.hoisted(() => {
     getAllDisplays: () => [display],
     getCursorScreenPoint: () => ({ x: -50, y: 30 }),
     getDisplayNearestPoint: () => display,
+    screenToDipRect: (_window: unknown, bounds: typeof display.bounds) => bounds,
     on: vi.fn((event: string, listener: Listener) => {
       const bucket = listeners.get(event) ?? new Set<Listener>()
       bucket.add(listener)
@@ -68,6 +71,9 @@ describe('frozen region capture', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mocks.resetContentBounds()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
   })
 
   it('shows and crops the same startup bitmap with physical-pixel scaling', async () => {
@@ -134,27 +140,181 @@ describe('frozen region capture', () => {
     service.dispose()
   })
 
+  it('analyzes the full frozen bitmap locally and removes its temporary source', async () => {
+    const save = vi.fn(async () => 'C:\\temp\\analysis.png')
+    const remove = vi.fn(async () => undefined)
+    const recognise = vi.fn(async () => ({
+      attachmentId: 'analysis',
+      text: 'Save',
+      confidence: 100,
+      quality: 'normal' as const,
+      language: { code: 'en-GB', label: 'English', source: 'configured' as const },
+      regions: [{ id: 'line-1', text: 'Save', confidence: 100, bounds: { x: 0.1, y: 0.2, width: 0.12, height: 0.08 } }],
+      words: [{ id: 'word-1', text: 'Save', confidence: 100, bounds: { x: 0.1, y: 0.2, width: 0.12, height: 0.08 } }],
+      truncated: false
+    }))
+    const snapshot = vi.fn(async () => [{
+      name: 'Save',
+      controlType: 'Button',
+      localizedControlType: 'button',
+      automationId: 'save',
+      helpText: 'Save the current document',
+      enabled: true,
+      focusable: true,
+      visibleRatio: 1,
+      centerVisible: true,
+      bounds: { x: -92, y: 28, width: 20, height: 10 }
+    }])
+    const { CaptureService } = await import('../src/main/capture/capture-service')
+    const service = new CaptureService(
+      { save, delete: remove } as never,
+      vi.fn(),
+      vi.fn(),
+      undefined,
+      { recognise },
+      { snapshot }
+    )
+
+    await service.begin('region')
+    const onProgress = vi.fn()
+    await expect(service.analyze(42, onProgress)).resolves.toMatchObject({
+      features: [expect.objectContaining({
+        kind: 'control',
+        label: 'Save',
+        source: 'hybrid',
+        role: 'button',
+        description: 'Save the current document'
+      })],
+      stage: 'text',
+      complete: true,
+      truncated: false
+    })
+
+    expect(onProgress).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      stage: 'semantic',
+      complete: false,
+      features: [expect.objectContaining({ label: 'Save', source: 'uia', role: 'button' })]
+    }))
+    expect(onProgress).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      stage: 'text',
+      complete: false,
+      features: expect.arrayContaining([expect.objectContaining({ label: 'Save', source: 'hybrid' })])
+    }))
+    expect(snapshot).toHaveBeenCalledWith([], true, true)
+    expect(mocks.getSources).toHaveBeenCalledTimes(1)
+    expect(mocks.getSources).toHaveBeenCalledWith(expect.objectContaining({ types: ['screen'] }))
+    expect(recognise).toHaveBeenCalledWith(
+      expect.stringMatching(/^capture-analysis-/),
+      Buffer.from('whole-display'),
+      { width: 200, height: 100 },
+      undefined,
+      { sourcePath: 'C:\\temp\\analysis.png', preserveGeometry: true }
+    )
+    expect(remove).toHaveBeenCalledWith('C:\\temp\\analysis.png')
+    service.dispose()
+  })
+
   it('loads the hidden overlay while Windows is capturing the screen', async () => {
     let finishRenderer!: () => void
     let finishCapture!: () => void
     mocks.loadRenderer.mockImplementationOnce(() => new Promise<undefined>((resolve) => { finishRenderer = () => resolve(undefined) }))
     mocks.getSources.mockImplementationOnce(() => new Promise((resolve) => { finishCapture = () => resolve([mocks.source]) }))
     const { CaptureService } = await import('../src/main/capture/capture-service')
-    const service = new CaptureService({ save: vi.fn() } as never, vi.fn(), vi.fn())
+    const service = new CaptureService(
+      { save: vi.fn() } as never,
+      vi.fn(),
+      vi.fn()
+    )
 
     const opening = service.begin('region')
 
     expect(mocks.loadRenderer).toHaveBeenCalledTimes(1)
     expect(mocks.getSources).toHaveBeenCalledTimes(1)
-    expect(mocks.window.show).not.toHaveBeenCalled()
+    expect(mocks.window.showInactive).not.toHaveBeenCalled()
 
     finishRenderer()
     await Promise.resolve()
-    expect(mocks.window.show).not.toHaveBeenCalled()
+    expect(mocks.window.showInactive).not.toHaveBeenCalled()
 
     finishCapture()
     await opening
-    expect(mocks.window.show).toHaveBeenCalledTimes(1)
+    expect(mocks.window.showInactive).toHaveBeenCalledTimes(1)
+    service.dispose()
+  })
+
+  it('reuses a prewarmed overlay for the first capture', async () => {
+    const { CaptureService } = await import('../src/main/capture/capture-service')
+    const service = new CaptureService(
+      { save: vi.fn() } as never,
+      vi.fn(),
+      vi.fn()
+    )
+
+    service.prewarm()
+    const waitingContext = service.getContext(42)
+    await Promise.resolve()
+
+    expect(mocks.secureWindow).toHaveBeenCalledTimes(1)
+    expect(mocks.loadRenderer).toHaveBeenCalledTimes(1)
+
+    await service.begin('region')
+
+    await expect(waitingContext).resolves.toMatchObject({ displayId: '7' })
+    expect(mocks.secureWindow).toHaveBeenCalledTimes(1)
+    expect(mocks.loadRenderer).toHaveBeenCalledTimes(1)
+    service.dispose()
+  })
+
+  it('displays the frozen screen without waiting for semantic analysis', async () => {
+    let finishSemantic!: () => void
+    const snapshot = vi.fn(() => new Promise<never[]>((resolve) => {
+      finishSemantic = () => resolve([])
+    }))
+    const { CaptureService } = await import('../src/main/capture/capture-service')
+    const service = new CaptureService(
+      { save: vi.fn() } as never,
+      vi.fn(),
+      vi.fn(),
+      undefined,
+      undefined,
+      { snapshot }
+    )
+
+    await service.begin('region')
+
+    expect(snapshot).toHaveBeenCalledWith([], true, true)
+    expect(mocks.window.showInactive).toHaveBeenCalledTimes(1)
+    await expect(service.getContext(42)).resolves.toMatchObject({ displayId: '7' })
+
+    finishSemantic()
+    await Promise.resolve()
+    service.dispose()
+  })
+
+  it('does not cancel an active frozen-screen session after sixty seconds', async () => {
+    vi.useFakeTimers()
+    const { CaptureService } = await import('../src/main/capture/capture-service')
+    const service = new CaptureService({ save: vi.fn() } as never, vi.fn(), vi.fn())
+
+    await service.begin('region')
+    await vi.advanceTimersByTimeAsync(60_000)
+
+    expect(mocks.window.close).not.toHaveBeenCalled()
+    await expect(service.getContext(42)).resolves.toMatchObject({ imageDataUrl: expect.stringContaining('data:image/jpeg') })
+    service.dispose()
+  })
+
+  it('uses a startup-only watchdog when the frozen screen cannot be prepared', async () => {
+    vi.useFakeTimers()
+    mocks.loadRenderer.mockImplementationOnce(() => new Promise<undefined>(() => undefined))
+    const { CaptureService } = await import('../src/main/capture/capture-service')
+    const service = new CaptureService({ save: vi.fn() } as never, vi.fn(), vi.fn())
+
+    const opening = expect(service.begin('region')).rejects.toThrow('The frozen screen could not be prepared in time')
+    await vi.advanceTimersByTimeAsync(20_000)
+
+    await opening
+    expect(mocks.window.close).toHaveBeenCalledTimes(1)
     service.dispose()
   })
 

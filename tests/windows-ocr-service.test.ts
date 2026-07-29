@@ -85,6 +85,10 @@ describe('Windows OCR integration', () => {
     }, { width: 500, height: 200 })
 
     expect(result.text).toBe('Product\tPrice')
+    expect(result.words).toEqual([
+      expect.objectContaining({ text: 'Product', bounds: { x: 0.02, y: 0.1, width: 0.14, height: 0.12 } }),
+      expect.objectContaining({ text: 'Price', bounds: { x: 0.66, y: 0.1, width: 0.1, height: 0.12 } })
+    ])
   })
 
   it('uses a useful native result without starting the bundled fallback', async () => {

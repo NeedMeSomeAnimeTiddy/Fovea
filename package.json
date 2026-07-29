@@ -81,6 +81,10 @@
         "to": "assets"
       },
       {
+        "from": "resources/automation/windows-ui-elements.ps1",
+        "to": "automation/windows-ui-elements.ps1"
+      },
+      {
         "from": "node_modules/@tesseract.js-data/eng/4.0.0_best_int/eng.traineddata.gz",
         "to": "ocr/lang/eng.traineddata.gz"
       },

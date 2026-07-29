@@ -102,6 +102,13 @@ export function registerIpc(dependencies: IpcDependencies): void {
 
   handle(IPC.captureStart, (_event, mode) => dependencies.capture.begin(requireCaptureMode(mode)), 'capture-failed')
   handle(IPC.captureGetContext, (event) => dependencies.capture.getContext(event.sender.id), 'capture-failed')
+  handle(IPC.captureAnalyze, (event, requestId) => {
+    const id = requireId(requestId)
+    return dependencies.capture.analyze(event.sender.id, (analysis) => {
+      if (!event.sender.isDestroyed()) event.sender.send(IPC.captureAnalysisProgress, { requestId: id, analysis })
+    })
+  }, 'capture-failed')
+  handle(IPC.captureCancelAnalysis, (event) => dependencies.capture.cancelAnalysis(event.sender.id), 'capture-failed')
   handle(IPC.captureGetOcrLanguages, () => dependencies.questions.listOcrLanguages())
   handle(IPC.captureSetOcrLanguage, async (_event, value) => {
     const code = requireOcrLanguagePreference(value)
@@ -111,7 +118,7 @@ export function registerIpc(dependencies: IpcDependencies): void {
     }
     await dependencies.settings.update({ ocrLanguageCode: code })
   }, 'validation')
-  handle(IPC.captureSelect, (event, rectangle, operations = [], preferWebSearch = false, extractText = false, ocrLanguageCode) => {
+  handle(IPC.captureSelect, (event, rectangle, operations = [], preferWebSearch = false, extractText = false, ocrLanguageCode, initialQuestion) => {
     if (!isRectangle(rectangle)) throw new Error('Invalid selection.')
     if (!Array.isArray(operations)) throw new Error('Invalid screenshot edits.')
     if (typeof preferWebSearch !== 'boolean') throw new Error('Invalid web-search preference.')
@@ -119,7 +126,8 @@ export function registerIpc(dependencies: IpcDependencies): void {
     if (preferWebSearch && extractText) throw new Error('Web search and text extraction cannot both be enabled.')
     if (ocrLanguageCode !== undefined && (typeof ocrLanguageCode !== 'string' || !/^[A-Za-z0-9-]{2,35}$/.test(ocrLanguageCode))) throw new Error('Invalid OCR language.')
     if (!extractText && ocrLanguageCode !== undefined) throw new Error('OCR language requires text extraction.')
-    return dependencies.capture.select(rectangle, event.sender.id, operations as ImageEditOperation[], preferWebSearch, extractText, ocrLanguageCode)
+    if (initialQuestion !== undefined && (typeof initialQuestion !== 'string' || !initialQuestion.trim() || initialQuestion.length > 500)) throw new Error('Invalid initial question.')
+    return dependencies.capture.select(rectangle, event.sender.id, operations as ImageEditOperation[], preferWebSearch, extractText, ocrLanguageCode, initialQuestion?.trim())
   }, 'capture-failed')
   handle(IPC.captureCancel, () => dependencies.capture.cancel())
 

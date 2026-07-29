@@ -33,6 +33,7 @@ export interface OcrProgress {
 export interface OcrRecognitionOptions {
   sourcePath?: string
   languageCode?: string
+  preserveGeometry?: boolean
 }
 
 export interface OcrService {
@@ -322,10 +323,20 @@ export function mapOcrPage(
       paragraph.lines.map((line) => ({ line, paragraphKey: `${blockIndex}:${paragraphIndex}` }))
     )
   )
+  const wordCandidates = candidates.flatMap(({ line }) => line.words)
+  const words = wordCandidates
+    .slice(0, MAX_REGIONS)
+    .map((word, index) => ({
+      id: `word-${index + 1}`,
+      text: word.text.replaceAll('\0', '').replace(/\s+/g, ' ').trim(),
+      confidence: normaliseConfidence(word.confidence),
+      bounds: normaliseBounds(word.bbox, size)
+    }))
+    .filter((word) => word.text)
   const regions: OcrRegion[] = []
   const paragraphKeys: string[] = []
   let textLength = 0
-  let truncated = candidates.length > MAX_REGIONS
+  let truncated = candidates.length > MAX_REGIONS || wordCandidates.length > MAX_REGIONS
 
   for (const { line, paragraphKey } of candidates.slice(0, MAX_REGIONS)) {
     const text = layoutAwareLineText(line.words, line.text)
@@ -370,6 +381,7 @@ export function mapOcrPage(
     quality: confidence < LOW_CONFIDENCE_THRESHOLD ? 'low-confidence' : 'normal',
     language: structuredClone(language),
     regions,
+    words,
     entities: detectOcrEntities(text),
     truncated
   }
@@ -448,7 +460,8 @@ export async function detectVisualCodes(image: Buffer): Promise<OcrEntity[]> {
         if (!value || seen.has(key)) continue
         seen.add(key)
         const kind: OcrEntity['kind'] = result.getBarcodeFormat() === BarcodeFormat.QR_CODE ? 'qr' : 'barcode'
-        entities.push({ id: `entity-${entities.length + 1}`, kind, value })
+        const bounds = visualCodeBounds(result.getResultPoints(), region, info.width, info.height)
+        entities.push({ id: `entity-${entities.length + 1}`, kind, value, ...(bounds ? { bounds } : {}) })
         if (entities.length >= 10) break
       } catch {
         // A scan region without a readable code is expected.
@@ -457,6 +470,36 @@ export async function detectVisualCodes(image: Buffer): Promise<OcrEntity[]> {
     return entities
   } catch {
     return []
+  }
+}
+
+function visualCodeBounds(
+  points: Array<{ getX(): number; getY(): number }> | null,
+  region: { left: number; top: number; width: number; height: number },
+  imageWidth: number,
+  imageHeight: number
+): OcrBounds | null {
+  if (!points || points.length < 2) return null
+  const xs = points.map((point) => region.left + point.getX())
+  const ys = points.map((point) => region.top + point.getY())
+  const rawLeft = Math.min(...xs)
+  const rawTop = Math.min(...ys)
+  const rawRight = Math.max(...xs)
+  const rawBottom = Math.max(...ys)
+  const rawWidth = rawRight - rawLeft
+  const rawHeight = rawBottom - rawTop
+  if (rawWidth < 4 || rawHeight < 4) return null
+  const paddingX = Math.max(6, rawWidth * 0.16)
+  const paddingY = Math.max(6, rawHeight * 0.16)
+  const left = Math.max(0, rawLeft - paddingX)
+  const top = Math.max(0, rawTop - paddingY)
+  const right = Math.min(imageWidth, rawRight + paddingX)
+  const bottom = Math.min(imageHeight, rawBottom + paddingY)
+  return {
+    x: left / imageWidth,
+    y: top / imageHeight,
+    width: (right - left) / imageWidth,
+    height: (bottom - top) / imageHeight
   }
 }
 

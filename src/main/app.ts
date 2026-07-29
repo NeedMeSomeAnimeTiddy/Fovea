@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { AppearanceController } from './appearance/appearance-controller'
 import { CaptureService } from './capture/capture-service'
 import { ImageEditorService } from './capture/image-editor-service'
+import { WindowsUiAutomationService } from './capture/windows-ui-automation-service'
 import { registerIpc } from './ipc/register-ipc'
 import { OnboardingController, shouldShowOnboardingAtStartup } from './onboarding/onboarding-controller'
 import { TesseractOcrService } from './ocr/ocr-service'
@@ -67,7 +68,12 @@ async function startApplication(): Promise<void> {
       : join(app.getAppPath(), 'resources', 'ocr', 'windows-ocr.ps1')
   )
   const ocr = new NativeFirstOcrService(windowsOcr, tesseractOcr)
-  const capture = new CaptureService(screenshots, (completed) => services.questions!.open(completed), (message) => showSafeError(message, 'capture-failed'), imageEditor)
+  const uiAutomation = new WindowsUiAutomationService(
+    app.isPackaged
+      ? join(process.resourcesPath, 'automation', 'windows-ui-elements.ps1')
+      : join(app.getAppPath(), 'resources', 'automation', 'windows-ui-elements.ps1')
+  )
+  const capture = new CaptureService(screenshots, (completed) => services.questions!.open(completed), (message) => showSafeError(message, 'capture-failed'), imageEditor, ocr, uiAutomation)
   const questions = new QuestionSessions(providers, screenshots, (destination) => capture.begin('region', destination), undefined, history, settings, imageEditor, ocr)
   services.questions = questions
 
@@ -91,6 +97,7 @@ async function startApplication(): Promise<void> {
   tray.initialise()
   providers.on('status', () => tray?.refreshStatus())
   registerIpc({ providers, settings, screenshots, history, capture, onboarding, questions, shortcuts, appearance })
+  capture.prewarm()
   app.setLoginItemSettings({ openAtLogin: settings.get().launchAtLogin, path: process.execPath })
 
   try { await providers.initialise() }

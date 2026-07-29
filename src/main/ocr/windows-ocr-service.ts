@@ -220,8 +220,15 @@ export class NativeFirstOcrService implements OcrService {
     this.active.add(attachmentId)
     let correctedPath: string | undefined
     try {
-      onProgress?.({ progress: 0, stage: 'Checking document alignment' })
-      const corrected = await correctOcrGeometry(image, size)
+      onProgress?.({ progress: 0, stage: options.preserveGeometry ? 'Preparing screen recognition' : 'Checking document alignment' })
+      const corrected = options.preserveGeometry
+        ? {
+            image,
+            size: { width: Math.max(1, Math.round(size.width)), height: Math.max(1, Math.round(size.height)) },
+            correction: 'none' as const,
+            angle: 0
+          }
+        : await correctOcrGeometry(image, size)
       this.throwIfCancelled(attachmentId)
       const correctedOptions = { ...options }
       if (corrected.correction !== 'none' && options.sourcePath) {
@@ -345,6 +352,26 @@ export function mapWindowsOcrPayload(
       }
     })
     .filter((line) => line.text)
+  const wordCandidates = payload.lines.flatMap((line) => line.words ?? [])
+  const words = wordCandidates
+    .slice(0, MAX_REGIONS)
+    .map((word, index) => {
+      const text = word.text.replaceAll('\0', '').replace(/\s+/g, ' ').trim()
+      const x = clamp(word.x / width, 0, 1)
+      const y = clamp(word.y / height, 0, 1)
+      return {
+        id: `word-${index + 1}`,
+        text,
+        confidence: 0,
+        bounds: {
+          x,
+          y,
+          width: clamp(word.width / width, 0, 1 - x),
+          height: clamp(word.height / height, 0, 1 - y)
+        }
+      }
+    })
+    .filter((word) => word.text)
   const fullText = regions.map((line) => line.text).join('\n')
   const text = fullText.slice(0, MAX_TEXT_LENGTH)
   return {
@@ -358,8 +385,9 @@ export function mapWindowsOcrPayload(
       source: 'detected'
     },
     regions,
+    words,
     entities: detectOcrEntities(text),
-    truncated: payload.lines.length > MAX_REGIONS || fullText.length > MAX_TEXT_LENGTH,
+    truncated: payload.lines.length > MAX_REGIONS || wordCandidates.length > MAX_REGIONS || fullText.length > MAX_TEXT_LENGTH,
     engine: 'windows',
     cached: false,
     preprocessing: 'none',

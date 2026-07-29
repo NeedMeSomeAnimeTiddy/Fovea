@@ -227,7 +227,12 @@ describe('local OCR result mapping', () => {
     const image = await qrPng('https://example.com/local-qr')
 
     await expect(detectVisualCodes(image)).resolves.toEqual([
-      { id: 'entity-1', kind: 'qr', value: 'https://example.com/local-qr' }
+      expect.objectContaining({
+        id: 'entity-1',
+        kind: 'qr',
+        value: 'https://example.com/local-qr',
+        bounds: expect.objectContaining({ x: expect.any(Number), y: expect.any(Number), width: expect.any(Number), height: expect.any(Number) })
+      })
     ])
   })
 
@@ -247,6 +252,7 @@ describe('local OCR result mapping', () => {
       { kind: 'qr', value: 'https://example.com/first' },
       { kind: 'qr', value: 'https://example.com/second' }
     ]))
+    expect(entities.every(({ bounds }) => bounds && bounds.width > 0 && bounds.height > 0)).toBe(true)
     expect(new Set(entities.map(({ value }) => value)).size).toBe(entities.length)
   })
 
