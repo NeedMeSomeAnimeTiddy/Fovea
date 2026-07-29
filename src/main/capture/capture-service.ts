@@ -121,7 +121,12 @@ export class CaptureService {
             regions = result.regions
             words = result.words ?? []
             entities = result.entities ?? []
-          } catch {
+            console.info(
+              `[capture] OCR selected ${result.engine ?? 'unknown'} with ${regions.length} lines, ` +
+              `${words.length} words, ${result.text.length} characters, and ${result.confidence}% confidence.`
+            )
+          } catch (error) {
+            console.warn(`[capture] OCR unavailable during Analyze: ${error instanceof Error ? error.message : String(error)}`)
             // Keep Analyze available with no targets when local text recognition is unavailable.
           }
         }

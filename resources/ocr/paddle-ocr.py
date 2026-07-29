@@ -31,6 +31,13 @@ PROFILES = {
 }
 
 PROTOCOL_STDOUT = sys.stdout
+MIN_LINES_BEFORE_HIGH_RES_RETRY = 8
+BASE_DETECTION_MIN_SIDE = 1080
+BASE_DETECTION_MAX_WIDTH = 1920
+BASE_DETECTION_MAX_HEIGHT = 1080
+RETRY_DETECTION_MIN_SIDE = 2160
+RETRY_DETECTION_MAX_WIDTH = 3840
+RETRY_DETECTION_MAX_HEIGHT = 2160
 
 
 def emit(payload: dict[str, Any], stream: TextIO = PROTOCOL_STDOUT) -> None:
@@ -82,7 +89,12 @@ def load_pipeline(profile: str) -> Any:
             use_doc_orientation_classify=False,
             use_doc_unwarping=False,
             use_textline_orientation=False,
-            text_rec_score_thresh=0.35,
+            text_det_limit_side_len=BASE_DETECTION_MIN_SIDE,
+            text_det_limit_type="min",
+            text_det_thresh=0.2,
+            text_det_box_thresh=0.35,
+            text_det_unclip_ratio=1.4,
+            text_rec_score_thresh=0.0,
             device="cpu",
             # PaddlePaddle 3.3.x currently crashes in the Windows CPU
             # oneDNN/PIR conversion path for PP-OCRv6. Keep the safe kernels
@@ -135,28 +147,43 @@ def rectangle_from_box(box: Any) -> list[float] | None:
     return [min(xs), min(ys), max(xs), max(ys)]
 
 
-def recognise(pipeline: Any, profile: str, image_path: str) -> dict[str, Any]:
-    started = time.perf_counter()
+def predict(
+    pipeline: Any,
+    image: Any,
+    detection_min_side: int,
+) -> list[Any]:
     with contextlib.redirect_stdout(sys.stderr):
-        predictions = list(
+        return list(
             pipeline.predict(
-                input=str(Path(image_path).resolve()),
+                input=image,
                 use_doc_orientation_classify=False,
                 use_doc_unwarping=False,
                 use_textline_orientation=False,
-                text_rec_score_thresh=0.35,
+                text_det_limit_side_len=detection_min_side,
+                text_det_limit_type="min",
+                text_det_thresh=0.2,
+                text_det_box_thresh=0.35,
+                text_det_unclip_ratio=1.4,
+                text_rec_score_thresh=0.0,
             )
         )
-    inference_ms = round((time.perf_counter() - started) * 1000)
+
+
+def extract_lines(predictions: list[Any]) -> tuple[list[dict[str, Any]], dict[str, int]]:
     lines: list[dict[str, Any]] = []
+    raw_texts = 0
+    discarded_empty = 0
+    discarded_bounds = 0
     for prediction in predictions:
         data = result_data(prediction)
         texts = to_list(data.get("rec_texts"))
         scores = to_list(data.get("rec_scores"))
         boxes = to_list(data.get("rec_boxes"))
         polygons = to_list(data.get("rec_polys"))
+        raw_texts += len(texts)
         for index, text in enumerate(texts):
             if not isinstance(text, str) or not text.strip():
+                discarded_empty += 1
                 continue
             score = scores[index] if index < len(scores) else 0
             source_box = boxes[index] if index < len(boxes) else (
@@ -164,6 +191,7 @@ def recognise(pipeline: Any, profile: str, image_path: str) -> dict[str, Any]:
             )
             bounds = rectangle_from_box(source_box)
             if bounds is None:
+                discarded_bounds += 1
                 continue
             lines.append(
                 {
@@ -172,6 +200,95 @@ def recognise(pipeline: Any, profile: str, image_path: str) -> dict[str, Any]:
                     "bounds": bounds,
                 }
             )
+    return lines, {
+        "predictionCount": len(predictions),
+        "rawTextCount": raw_texts,
+        "discardedEmpty": discarded_empty,
+        "discardedBounds": discarded_bounds,
+    }
+
+
+def line_quality(lines: list[dict[str, Any]]) -> float:
+    return sum(
+        max(1, len(str(line["text"]))) * max(0.2, float(line["confidence"]))
+        for line in lines
+    )
+
+
+def bounded_detection_min_side(
+    width: int,
+    height: int,
+    target_min_side: int,
+    maximum_width: int,
+    maximum_height: int,
+) -> int:
+    minimum_side = max(1, min(width, height))
+    scale = min(
+        target_min_side / minimum_side,
+        maximum_width / max(1, width),
+        maximum_height / max(1, height),
+    )
+    if scale <= 1:
+        return min(target_min_side, minimum_side)
+    return max(64, round(minimum_side * scale))
+
+
+def recognise(pipeline: Any, profile: str, image_path: str) -> dict[str, Any]:
+    started = time.perf_counter()
+    resolved_path = str(Path(image_path).resolve())
+    with contextlib.redirect_stdout(sys.stderr):
+        import cv2
+
+        source = cv2.imread(resolved_path, cv2.IMREAD_COLOR)
+    if source is None or source.shape[0] <= 0 or source.shape[1] <= 0:
+        raise ValueError(f"Could not read OCR image: {resolved_path}")
+    source_height, source_width = source.shape[:2]
+    minimum_side = min(source_width, source_height)
+    base_detection_min_side = bounded_detection_min_side(
+        source_width,
+        source_height,
+        BASE_DETECTION_MIN_SIDE,
+        BASE_DETECTION_MAX_WIDTH,
+        BASE_DETECTION_MAX_HEIGHT,
+    )
+    predictions = predict(pipeline, source, base_detection_min_side)
+    lines, diagnostics = extract_lines(predictions)
+    analysis_scale = max(1.0, base_detection_min_side / minimum_side)
+    retried_high_resolution = False
+    diagnostics["baseDetectionMinSide"] = base_detection_min_side
+
+    if len(lines) < MIN_LINES_BEFORE_HIGH_RES_RETRY:
+        retry_detection_min_side = bounded_detection_min_side(
+            source_width,
+            source_height,
+            RETRY_DETECTION_MIN_SIDE,
+            RETRY_DETECTION_MAX_WIDTH,
+            RETRY_DETECTION_MAX_HEIGHT,
+        )
+        if retry_detection_min_side > base_detection_min_side:
+            retry_predictions = predict(
+                pipeline,
+                source,
+                retry_detection_min_side,
+            )
+            retry_lines, retry_diagnostics = extract_lines(retry_predictions)
+            retried_high_resolution = True
+            diagnostics = {
+                **diagnostics,
+                "retryDetectionMinSide": retry_detection_min_side,
+                "retryPredictionCount": retry_diagnostics["predictionCount"],
+                "retryRawTextCount": retry_diagnostics["rawTextCount"],
+                "retryDiscardedEmpty": retry_diagnostics["discardedEmpty"],
+                "retryDiscardedBounds": retry_diagnostics["discardedBounds"],
+            }
+            if line_quality(retry_lines) > line_quality(lines):
+                lines = retry_lines
+                analysis_scale = max(
+                    1.0,
+                    retry_detection_min_side / minimum_side,
+                )
+
+    inference_ms = round((time.perf_counter() - started) * 1000)
     model = PROFILES[profile]
     return {
         "profile": profile,
@@ -179,6 +296,9 @@ def recognise(pipeline: Any, profile: str, image_path: str) -> dict[str, Any]:
         "recognizer": model["recognizer"],
         "lines": lines,
         "inferenceMs": inference_ms,
+        "analysisScale": round(analysis_scale, 3),
+        "retriedHighResolution": retried_high_resolution,
+        "diagnostics": diagnostics,
     }
 
 

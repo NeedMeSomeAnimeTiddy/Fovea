@@ -100,13 +100,18 @@ models into ignored repository folders. The three Fovea profiles are:
 - `medium`: small detector and medium recognizer.
 - `large`: medium detector and medium recognizer, the largest PP-OCRv6 pair.
 
-Generate a controlled 1920 × 1080 UI fixture or benchmark real captures with:
+Generate controlled 1920 × 1080, dense small-text, and high-resolution retry
+fixtures, or benchmark real captures with:
 
 ```powershell
 npm run ocr:fixture
-npm run ocr:benchmark:paddle -- .\.paddle-ocr-cache\fixtures\screen-text.png
+npm run ocr:benchmark:paddle -- .\.paddle-ocr-cache\fixtures\screen-text.png .\.paddle-ocr-cache\fixtures\screen-dense.png .\.paddle-ocr-cache\fixtures\screen-retry.png
 npm run ocr:benchmark:paddle -- --profiles small,medium .\samples\capture.png
 ```
+
+Frozen-screen OCR uses a bounded 1080p detector pass after the overlay is
+visible. Sparse results receive one 4K-bounded retry, so higher-resolution
+analysis does not delay the capture window opening.
 
 The app defaults to the small profile. Set
 `FOVEA_PADDLE_OCR_PROFILE=medium` or `large` before `npm run dev` to test

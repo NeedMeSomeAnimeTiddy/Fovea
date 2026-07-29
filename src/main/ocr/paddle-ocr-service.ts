@@ -55,6 +55,20 @@ export interface PaddleOcrPayload {
   recognizer: string
   lines: PaddleOcrLine[]
   inferenceMs?: number
+  analysisScale?: number
+  retriedHighResolution?: boolean
+  diagnostics?: {
+    predictionCount?: number
+    rawTextCount?: number
+    discardedEmpty?: number
+    discardedBounds?: number
+    baseDetectionMinSide?: number
+    retryDetectionMinSide?: number
+    retryPredictionCount?: number
+    retryRawTextCount?: number
+    retryDiscardedEmpty?: number
+    retryDiscardedBounds?: number
+  }
 }
 
 interface PaddleOcrServiceOptions {
@@ -81,6 +95,10 @@ interface SidecarMessage {
   recognizer?: string
   lines?: PaddleOcrLine[]
   inferenceMs?: number
+  loadMs?: number
+  analysisScale?: number
+  retriedHighResolution?: boolean
+  diagnostics?: PaddleOcrPayload['diagnostics']
 }
 
 export class PaddleOcrService implements OcrService {
@@ -237,17 +255,16 @@ export class PaddleOcrService implements OcrService {
           PYTHONIOENCODING: 'utf-8',
           PYTHONUTF8: '1',
           PADDLE_PDX_CACHE_HOME: this.options.runtimePath,
-          PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK: '1'
+          PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK: '1',
+          GLOG_minloglevel: '2',
+          FLAGS_minloglevel: '2'
         }
       })
       this.startingProcess = child
       child.stdout.setEncoding('utf8')
       child.stderr.setEncoding('utf8')
       child.stdout.on('data', (chunk: string) => this.consumeOutput(chunk))
-      child.stderr.on('data', (chunk: string) => {
-        const message = chunk.trim()
-        if (message) console.info(`[paddle-ocr] ${message.slice(-2_000)}`)
-      })
+      child.stderr.on('data', (chunk: string) => this.reportSidecarStderr(chunk))
       child.once('error', (error) => {
         if (this.process !== child && this.startingProcess !== child) return
         this.stopProcess(new OcrServiceError(
@@ -298,6 +315,10 @@ export class PaddleOcrService implements OcrService {
       this.processReadyResolve?.(ready)
       this.processReadyResolve = null
       this.processReadyReject = null
+      console.info(
+        `[paddle-ocr] ${message.profile ?? this.profile} ready in ${message.loadMs ?? 0}ms ` +
+        `(${message.detector ?? 'unknown detector'} + ${message.recognizer ?? 'unknown recognizer'}).`
+      )
       return
     }
     if (!message.requestId) return
@@ -319,13 +340,42 @@ export class PaddleOcrService implements OcrService {
       request.reject(new OcrServiceError('ocr-failed', 'PaddleOCR returned an invalid result.'))
       return
     }
+    const rawCount = message.diagnostics?.rawTextCount ?? message.lines.length
+    const retryCount = message.diagnostics?.retryRawTextCount
+    console.info(
+      `[paddle-ocr] ${message.profile} recognised ${message.lines.length} lines ` +
+      `(raw ${rawCount}${retryCount === undefined ? '' : `, high-res raw ${retryCount}`}) ` +
+      `at ${message.analysisScale ?? 1}x in ${message.inferenceMs ?? 0}ms.`
+    )
     request.resolve({
       profile: message.profile,
       detector: message.detector,
       recognizer: message.recognizer,
       lines: message.lines,
-      inferenceMs: message.inferenceMs
+      inferenceMs: message.inferenceMs,
+      analysisScale: message.analysisScale,
+      retriedHighResolution: message.retriedHighResolution,
+      diagnostics: message.diagnostics
     })
+  }
+
+  private reportSidecarStderr(chunk: string): void {
+    const ignored = [
+      /Creating model:/i,
+      /Model files already exist/i,
+      /Using cached files/i,
+      /INFO: Could not find files/i,
+      /No ccache found/i,
+      /warnings\.warn\(warning_message\)/i,
+      /Logging before InitGoogleLogging/i,
+      /onednn_context\.cc/i,
+      /ReduceMeanCheckIfOneDNNSupport/i
+    ]
+    const messages = chunk
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line && !ignored.some((pattern) => pattern.test(line)))
+    if (messages.length) console.warn(`[paddle-ocr] ${messages.join(' ').slice(-2_000)}`)
   }
 
   private stopProcess(error: Error): void {

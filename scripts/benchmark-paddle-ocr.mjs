@@ -52,6 +52,8 @@ if (arguments_.includes('--help') || !imagePaths.length || !profiles.length) {
         file: path.relative(repositoryRoot, path.resolve(message.file)),
         loadMs: ready?.loadMs ?? 0,
         inferenceMs: message.inferenceMs,
+        analysisScale: message.analysisScale ?? 1,
+        retried: message.retriedHighResolution === true,
         confidence,
         lines: message.lines.length,
         characters: text.length,

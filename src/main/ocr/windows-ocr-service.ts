@@ -262,10 +262,21 @@ export class NativeFirstOcrService implements OcrService {
         const nativeResult = nativeAttempt.status === 'fulfilled' ? applyCorrection(nativeAttempt.value) : null
         const fallbackResult = fallbackAttempt.status === 'fulfilled' ? applyCorrection(fallbackAttempt.value) : null
         if (nativeResult && fallbackResult) {
-          return resultQualityScore(fallbackResult) > resultQualityScore(nativeResult) ? fallbackResult : nativeResult
+          const merged = mergeScreenOcrResults(nativeResult, fallbackResult)
+          console.info(
+            `[ocr] Frozen-screen comparison: ${resultSummary(nativeResult)}; ` +
+            `${resultSummary(fallbackResult)}; merged ${merged.regions.length} lines using ${merged.engine ?? 'unknown'}.`
+          )
+          return merged
         }
-        if (fallbackResult) return fallbackResult
-        if (nativeResult) return nativeResult
+        if (fallbackResult) {
+          console.info(`[ocr] Frozen-screen comparison: Windows unavailable; ${resultSummary(fallbackResult)}.`)
+          return fallbackResult
+        }
+        if (nativeResult) {
+          console.info(`[ocr] Frozen-screen comparison: ${resultSummary(nativeResult)}; fallback unavailable.`)
+          return nativeResult
+        }
         if (fallbackAttempt.status === 'rejected') throw fallbackAttempt.reason
         if (nativeAttempt.status === 'rejected') throw nativeAttempt.reason
         throw new OcrServiceError('ocr-unavailable', 'No local OCR engine returned a result.')
@@ -348,6 +359,26 @@ export function resultQualityScore(result: OcrResult): number {
   const lengthScore = Math.min(2_000, compact.length) * cleanliness
   const confidenceScore = result.engine === 'windows' ? 225 : result.confidence * 3
   return Math.round(lengthScore + confidenceScore - (result.quality === 'low-confidence' ? 100 : 0))
+}
+
+export function mergeScreenOcrResults(nativeResult: OcrResult, fallbackResult: OcrResult): OcrResult {
+  const preferred = resultQualityScore(fallbackResult) > resultQualityScore(nativeResult)
+    ? fallbackResult
+    : nativeResult
+  const secondary = preferred === fallbackResult ? nativeResult : fallbackResult
+  const regions = mergeOcrRegions(preferred.regions, secondary.regions, 'line')
+  const words = mergeOcrRegions(preferred.words ?? [], secondary.words ?? [], 'word')
+  const text = regions.map(({ text }) => text).join('\n').slice(0, MAX_TEXT_LENGTH)
+  return {
+    ...preferred,
+    text,
+    regions,
+    words: words.length ? words : undefined,
+    entities: mergeEntities(preferred.entities ?? [], secondary.entities ?? []),
+    truncated: preferred.truncated || secondary.truncated || text.length >= MAX_TEXT_LENGTH,
+    cached: preferred.cached === true && secondary.cached === true,
+    durationMs: Math.max(preferred.durationMs ?? 0, secondary.durationMs ?? 0)
+  }
 }
 
 export function mapWindowsOcrPayload(
@@ -437,6 +468,80 @@ function mergeEntities(...groups: OcrEntity[][]): OcrEntity[] {
     })
     .slice(0, 20)
     .map((entity, index) => ({ ...entity, id: `entity-${index + 1}` }))
+}
+
+function mergeOcrRegions(
+  preferred: OcrResult['regions'],
+  secondary: OcrResult['regions'],
+  idPrefix: 'line' | 'word'
+): OcrResult['regions'] {
+  const merged: OcrResult['regions'] = []
+  for (const candidate of [...preferred, ...secondary]) {
+    if (!candidate.text.trim() || candidate.bounds.width <= 0 || candidate.bounds.height <= 0) continue
+    const duplicateIndex = merged.findIndex((existing) => duplicateOcrRegion(existing, candidate))
+    if (duplicateIndex < 0) {
+      merged.push(structuredClone(candidate))
+      continue
+    }
+    merged[duplicateIndex] = preferOcrRegion(merged[duplicateIndex]!, candidate)
+  }
+  return merged
+    .sort((left, right) => left.bounds.y - right.bounds.y || left.bounds.x - right.bounds.x)
+    .slice(0, MAX_REGIONS)
+    .map((region, index) => ({ ...region, id: `${idPrefix}-${index + 1}` }))
+}
+
+function duplicateOcrRegion(left: OcrResult['regions'][number], right: OcrResult['regions'][number]): boolean {
+  const intersection = boundsIntersection(left.bounds, right.bounds)
+  if (intersection <= 0) return false
+  const leftArea = left.bounds.width * left.bounds.height
+  const rightArea = right.bounds.width * right.bounds.height
+  const containment = intersection / Math.max(0.000001, Math.min(leftArea, rightArea))
+  const union = leftArea + rightArea - intersection
+  const intersectionOverUnion = intersection / Math.max(0.000001, union)
+  const leftText = normaliseComparisonText(left.text)
+  const rightText = normaliseComparisonText(right.text)
+  const labelsOverlap = Boolean(
+    leftText &&
+    rightText &&
+    (leftText.includes(rightText) || rightText.includes(leftText))
+  )
+  return (labelsOverlap && (containment >= 0.72 || intersectionOverUnion >= 0.55)) ||
+    containment >= 0.92 ||
+    intersectionOverUnion >= 0.82
+}
+
+function preferOcrRegion(
+  preferred: OcrResult['regions'][number],
+  candidate: OcrResult['regions'][number]
+): OcrResult['regions'][number] {
+  const preferredText = normaliseComparisonText(preferred.text)
+  const candidateText = normaliseComparisonText(candidate.text)
+  if (preferredText.includes(candidateText) && preferredText.length > candidateText.length) return preferred
+  if (candidateText.includes(preferredText) && candidateText.length > preferredText.length) return structuredClone(candidate)
+  const preferredConfidence = preferred.confidence === 0 ? 75 : preferred.confidence
+  const candidateConfidence = candidate.confidence === 0 ? 75 : candidate.confidence
+  return candidateConfidence > preferredConfidence + 8 ? structuredClone(candidate) : preferred
+}
+
+function boundsIntersection(left: OcrResult['regions'][number]['bounds'], right: OcrResult['regions'][number]['bounds']): number {
+  const width = Math.max(
+    0,
+    Math.min(left.x + left.width, right.x + right.width) - Math.max(left.x, right.x)
+  )
+  const height = Math.max(
+    0,
+    Math.min(left.y + left.height, right.y + right.height) - Math.max(left.y, right.y)
+  )
+  return width * height
+}
+
+function normaliseComparisonText(value: string): string {
+  return value.normalize('NFKC').toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim()
+}
+
+function resultSummary(result: OcrResult): string {
+  return `${result.engine ?? 'unknown'} ${result.regions.length} lines/${result.text.length} chars/${result.confidence}%`
 }
 
 function clamp(value: number, minimum: number, maximum: number): number {

@@ -7,6 +7,10 @@ import sharp from 'sharp'
 const outputDirectory = path.resolve(process.argv[2] || '.paddle-ocr-cache', 'fixtures')
 const imagePath = path.join(outputDirectory, 'screen-text.png')
 const truthPath = path.join(outputDirectory, 'screen-text.txt')
+const denseImagePath = path.join(outputDirectory, 'screen-dense.png')
+const denseTruthPath = path.join(outputDirectory, 'screen-dense.txt')
+const retryImagePath = path.join(outputDirectory, 'screen-retry.png')
+const retryTruthPath = path.join(outputDirectory, 'screen-retry.txt')
 const lines = [
   'Fovea Analyze Mode',
   'Identify visible controls and complete sentences on the frozen screen.',
@@ -39,8 +43,60 @@ const svg = `
     <text x="76" y="608" fill="#a5d6ff" font-family="Segoe UI, Arial, sans-serif" font-size="15">${lines[9]}</text>
   </svg>
 `
+const denseLines = [
+  'Analyze the current frozen screen',
+  'Every visible sentence should be selectable.',
+  'Account settings',
+  'Privacy and security',
+  'Notifications',
+  'Appearance',
+  'Keyboard shortcuts',
+  'Language and region',
+  'Downloads',
+  'Accessibility',
+  'Advanced options',
+  'Open documentation',
+  'Report an issue',
+  'Version 0.1.0',
+  'Status: Ready',
+  'Local OCR processing enabled'
+]
+const denseSvg = `
+  <svg xmlns="http://www.w3.org/2000/svg" width="640" height="360">
+    <rect width="640" height="360" fill="#f6f8fa"/>
+    <rect x="0" y="0" width="640" height="24" fill="#24292f"/>
+    <text x="12" y="16" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif" font-size="7" font-weight="600">${denseLines[0]}</text>
+    ${denseLines.slice(1).map((line, index) => `
+      <text x="${index % 2 === 0 ? 24 : 340}" y="${42 + Math.floor(index / 2) * 38}"
+        fill="${index % 3 === 0 ? '#57606a' : '#24292f'}"
+        font-family="Segoe UI, Arial, sans-serif" font-size="${index % 4 === 0 ? 5 : 6}">${line}</text>
+    `).join('')}
+  </svg>
+`
+const retryLines = [
+  'Tiny toolbar label',
+  'Secondary navigation',
+  'Low contrast caption',
+  'Visible status message'
+]
+const retrySvg = `
+  <svg xmlns="http://www.w3.org/2000/svg" width="960" height="540">
+    <rect width="960" height="540" fill="#f6f8fa"/>
+    ${retryLines.map((line, index) => `
+      <text x="${48 + index * 180}" y="${55 + index * 105}"
+        fill="${index === 2 ? '#8c959f' : '#24292f'}"
+        font-family="Segoe UI, Arial, sans-serif" font-size="${index === 2 ? 6 : 7}">${line}</text>
+    `).join('')}
+  </svg>
+`
 
 await mkdir(outputDirectory, { recursive: true })
 await sharp(Buffer.from(svg)).png().toFile(imagePath)
 await writeFile(truthPath, `${lines.join('\n')}\n`, 'utf8')
+await sharp(Buffer.from(denseSvg)).png().toFile(denseImagePath)
+await writeFile(denseTruthPath, `${denseLines.join('\n')}\n`, 'utf8')
+await sharp(Buffer.from(retrySvg)).png().toFile(retryImagePath)
+await writeFile(retryTruthPath, `${retryLines.join('\n')}\n`, 'utf8')
 console.log(imagePath)
+console.log(denseImagePath)
+console.log(retryImagePath)

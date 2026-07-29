@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { OcrServiceError, type OcrService } from '../src/main/ocr/ocr-service'
 import {
   mapWindowsOcrPayload,
+  mergeScreenOcrResults,
   NativeFirstOcrService,
   resultQualityScore,
   shouldCompareWithFallback,
@@ -127,6 +128,66 @@ describe('Windows OCR integration', () => {
       }))
       .resolves.toMatchObject({ text: 'Accurate Paddle text with enough characters', engine: 'paddle' })
     expect(fallback.recognise).toHaveBeenCalledOnce()
+  })
+
+  it('keeps complementary lines from both frozen-screen OCR engines', () => {
+    const nativeResult = {
+      ...emptyResult,
+      text: 'Native heading\nNative footer',
+      regions: [
+        { id: 'line-1', text: 'Native heading', confidence: 0, bounds: { x: 0.1, y: 0.1, width: 0.3, height: 0.05 } },
+        { id: 'line-2', text: 'Native footer', confidence: 0, bounds: { x: 0.1, y: 0.7, width: 0.3, height: 0.05 } }
+      ]
+    }
+    const paddleResult = {
+      ...emptyResult,
+      text: 'Paddle middle line',
+      confidence: 96,
+      engine: 'paddle' as const,
+      regions: [
+        { id: 'line-1', text: 'Paddle middle line', confidence: 96, bounds: { x: 0.1, y: 0.4, width: 0.35, height: 0.05 } }
+      ]
+    }
+
+    const merged = mergeScreenOcrResults(nativeResult, paddleResult)
+
+    expect(merged.regions.map(({ text }) => text)).toEqual([
+      'Native heading',
+      'Paddle middle line',
+      'Native footer'
+    ])
+    expect(merged.text).toBe('Native heading\nPaddle middle line\nNative footer')
+  })
+
+  it('collapses overlapping partial text into the fuller OCR line', () => {
+    const nativeResult = {
+      ...emptyResult,
+      text: 'Settings and privacy',
+      regions: [{
+        id: 'line-1',
+        text: 'Settings and privacy',
+        confidence: 0,
+        bounds: { x: 0.1, y: 0.2, width: 0.4, height: 0.05 }
+      }]
+    }
+    const paddleResult = {
+      ...emptyResult,
+      text: 'Settings',
+      confidence: 99,
+      engine: 'paddle' as const,
+      regions: [{
+        id: 'line-1',
+        text: 'Settings',
+        confidence: 99,
+        bounds: { x: 0.1, y: 0.2, width: 0.18, height: 0.05 }
+      }]
+    }
+
+    const merged = mergeScreenOcrResults(nativeResult, paddleResult)
+
+    expect(merged.regions).toHaveLength(1)
+    expect(merged.regions[0]).toMatchObject({ text: 'Settings and privacy' })
+    expect(merged.text).toBe('Settings and privacy')
   })
 
   it('starts the frozen-screen engines concurrently', async () => {
