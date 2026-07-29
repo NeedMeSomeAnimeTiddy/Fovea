@@ -2,7 +2,8 @@ import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child
 import { createHash, randomUUID } from 'node:crypto'
 import { unlink, writeFile } from 'node:fs/promises'
 import { promisify } from 'node:util'
-import type { OcrEntity, OcrResult } from '@shared/types/app'
+import sharp from 'sharp'
+import type { OcrEntity, OcrRegion, OcrResult } from '@shared/types/app'
 import {
   detectOcrEntities,
   detectVisualCodes,
@@ -219,6 +220,7 @@ export class NativeFirstOcrService implements OcrService {
   ): Promise<OcrResult> {
     this.active.add(attachmentId)
     let correctedPath: string | undefined
+    let maskedPath: string | undefined
     try {
       onProgress?.({ progress: 0, stage: options.preserveGeometry ? 'Preparing screen recognition' : 'Checking document alignment' })
       const corrected = options.preserveGeometry
@@ -241,26 +243,64 @@ export class NativeFirstOcrService implements OcrService {
         ? result
         : { ...result, geometryCorrection: corrected.correction }
       if (options.preserveGeometry) {
-        onProgress?.({ progress: 0, stage: 'Comparing screen text recognition' })
-        const [nativeAttempt, fallbackAttempt] = await Promise.allSettled([
-          this.native.recognise(
+        onProgress?.({ progress: 0, stage: 'Reading frozen-screen text' })
+        const fallbackPreparation = this.fallback.prepare?.().catch(() => undefined) ?? Promise.resolve()
+        let nativeResult: OcrResult | null = null
+        let nativeFailure: unknown
+        try {
+          nativeResult = applyCorrection(await this.native.recognise(
             attachmentId,
             corrected.image,
             corrected.size,
             onProgress,
             correctedOptions
-          ),
-          this.fallback.recognise(
-            attachmentId,
-            corrected.image,
-            corrected.size,
-            onProgress,
-            correctedOptions
-          )
-        ])
+          ))
+          this.throwIfCancelled(attachmentId)
+          if (nativeResult.regions.length) {
+            onProgress?.({
+              progress: 0.45,
+              stage: 'Fast screen text ready',
+              result: structuredClone(nativeResult)
+            })
+          }
+        } catch (error) {
+          if (error instanceof OcrServiceError && error.code === 'ocr-cancelled') throw error
+          nativeFailure = error
+        }
+
+        await fallbackPreparation
         this.throwIfCancelled(attachmentId)
-        const nativeResult = nativeAttempt.status === 'fulfilled' ? applyCorrection(nativeAttempt.value) : null
-        const fallbackResult = fallbackAttempt.status === 'fulfilled' ? applyCorrection(fallbackAttempt.value) : null
+        let fallbackImage = corrected.image
+        let fallbackOptions = correctedOptions
+        if (nativeResult?.regions.length) {
+          try {
+            fallbackImage = await maskRecognisedScreenText(corrected.image, nativeResult.regions, corrected.size)
+            if (correctedOptions.sourcePath) {
+              maskedPath = `${correctedOptions.sourcePath}.ocr-mask-${randomUUID()}.png`
+              await writeFile(maskedPath, fallbackImage)
+              fallbackOptions = { ...correctedOptions, sourcePath: maskedPath }
+            }
+            console.info(`[ocr] Masked ${nativeResult.regions.length} Windows lines before Paddle refinement.`)
+          } catch (error) {
+            console.warn(`[ocr] Could not mask Windows OCR lines: ${error instanceof Error ? error.message : String(error)}`)
+          }
+        }
+
+        let fallbackResult: OcrResult | null = null
+        let fallbackFailure: unknown
+        try {
+          fallbackResult = applyCorrection(await this.fallback.recognise(
+            attachmentId,
+            fallbackImage,
+            corrected.size,
+            onProgress,
+            fallbackOptions
+          ))
+        } catch (error) {
+          if (error instanceof OcrServiceError && error.code === 'ocr-cancelled') throw error
+          fallbackFailure = error
+        }
+        this.throwIfCancelled(attachmentId)
         if (nativeResult && fallbackResult) {
           const merged = mergeScreenOcrResults(nativeResult, fallbackResult)
           console.info(
@@ -277,8 +317,8 @@ export class NativeFirstOcrService implements OcrService {
           console.info(`[ocr] Frozen-screen comparison: ${resultSummary(nativeResult)}; fallback unavailable.`)
           return nativeResult
         }
-        if (fallbackAttempt.status === 'rejected') throw fallbackAttempt.reason
-        if (nativeAttempt.status === 'rejected') throw nativeAttempt.reason
+        if (fallbackFailure) throw fallbackFailure
+        if (nativeFailure) throw nativeFailure
         throw new OcrServiceError('ocr-unavailable', 'No local OCR engine returned a result.')
       }
       let nativeResult: OcrResult | null = null
@@ -310,6 +350,7 @@ export class NativeFirstOcrService implements OcrService {
         throw error
       }
     } finally {
+      if (maskedPath) await unlink(maskedPath).catch(() => undefined)
       if (correctedPath) await unlink(correctedPath).catch(() => undefined)
       this.active.delete(attachmentId)
       this.cancelled.delete(attachmentId)
@@ -362,23 +403,109 @@ export function resultQualityScore(result: OcrResult): number {
 }
 
 export function mergeScreenOcrResults(nativeResult: OcrResult, fallbackResult: OcrResult): OcrResult {
-  const preferred = resultQualityScore(fallbackResult) > resultQualityScore(nativeResult)
-    ? fallbackResult
-    : nativeResult
-  const secondary = preferred === fallbackResult ? nativeResult : fallbackResult
-  const regions = mergeOcrRegions(preferred.regions, secondary.regions, 'line')
-  const words = mergeOcrRegions(preferred.words ?? [], secondary.words ?? [], 'word')
+  if (!nativeResult.regions.length) return structuredClone(fallbackResult)
+  if (!fallbackResult.regions.length) return structuredClone(nativeResult)
+  const regions = mergeOcrRegions(nativeResult.regions, fallbackResult.regions, 'line')
+  const words = mergeOcrRegions(nativeResult.words ?? [], fallbackResult.words ?? [], 'word')
   const text = regions.map(({ text }) => text).join('\n').slice(0, MAX_TEXT_LENGTH)
   return {
-    ...preferred,
+    ...nativeResult,
     text,
     regions,
     words: words.length ? words : undefined,
-    entities: mergeEntities(preferred.entities ?? [], secondary.entities ?? []),
-    truncated: preferred.truncated || secondary.truncated || text.length >= MAX_TEXT_LENGTH,
-    cached: preferred.cached === true && secondary.cached === true,
-    durationMs: Math.max(preferred.durationMs ?? 0, secondary.durationMs ?? 0)
+    entities: mergeEntities(nativeResult.entities ?? [], fallbackResult.entities ?? []),
+    truncated: nativeResult.truncated || fallbackResult.truncated || text.length >= MAX_TEXT_LENGTH,
+    cached: nativeResult.cached === true && fallbackResult.cached === true,
+    durationMs: Math.max(nativeResult.durationMs ?? 0, fallbackResult.durationMs ?? 0)
   }
+}
+
+export async function maskRecognisedScreenText(
+  image: Buffer,
+  regions: OcrRegion[],
+  size: OcrImageSize
+): Promise<Buffer> {
+  const decoded = await sharp(image).removeAlpha().raw().toBuffer({ resolveWithObject: true })
+  const width = Math.max(1, Math.min(Math.round(size.width), decoded.info.width))
+  const height = Math.max(1, Math.min(Math.round(size.height), decoded.info.height))
+  const rectangles = regions
+    .slice(0, MAX_REGIONS)
+    .map(({ bounds }) => {
+      const rawLeft = Math.floor(bounds.x * width)
+      const rawTop = Math.floor(bounds.y * height)
+      const rawRight = Math.ceil((bounds.x + bounds.width) * width)
+      const rawBottom = Math.ceil((bounds.y + bounds.height) * height)
+      const paddingX = Math.max(3, Math.min(16, Math.ceil((rawRight - rawLeft) * 0.04)))
+      const paddingY = Math.max(2, Math.min(10, Math.ceil((rawBottom - rawTop) * 0.2)))
+      const left = Math.max(0, rawLeft - paddingX)
+      const top = Math.max(0, rawTop - paddingY)
+      const right = Math.min(width, rawRight + paddingX)
+      const bottom = Math.min(height, rawBottom + paddingY)
+      return {
+        left,
+        top,
+        width: right - left,
+        height: bottom - top,
+        fill: sampledBackgroundColour(
+          decoded.data,
+          decoded.info.width,
+          decoded.info.height,
+          decoded.info.channels,
+          left,
+          top,
+          right,
+          bottom
+        )
+      }
+    })
+    .filter((bounds) => bounds.width > 0 && bounds.height > 0)
+  if (!rectangles.length) return image
+  const mask = Buffer.from(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">` +
+    rectangles.map(({ left, top, width: rectangleWidth, height: rectangleHeight, fill }) =>
+      `<rect x="${left}" y="${top}" width="${rectangleWidth}" height="${rectangleHeight}" fill="${fill}"/>`
+    ).join('') +
+    '</svg>'
+  )
+  return sharp(image).composite([{ input: mask }]).png().toBuffer()
+}
+
+function sampledBackgroundColour(
+  data: Buffer,
+  width: number,
+  height: number,
+  channels: number,
+  left: number,
+  top: number,
+  right: number,
+  bottom: number
+): string {
+  let red = 0
+  let green = 0
+  let blue = 0
+  let samples = 0
+  const addSample = (x: number, y: number): void => {
+    if (x < 0 || y < 0 || x >= width || y >= height) return
+    const index = (y * width + x) * channels
+    red += data[index] ?? 128
+    green += data[index + 1] ?? data[index] ?? 128
+    blue += data[index + 2] ?? data[index] ?? 128
+    samples += 1
+  }
+  const horizontalStep = Math.max(1, Math.ceil((right - left) / 64))
+  const verticalStep = Math.max(1, Math.ceil((bottom - top) / 32))
+  for (let x = left; x < right; x += horizontalStep) {
+    addSample(x, top - 1)
+    addSample(x, bottom)
+  }
+  for (let y = top; y < bottom; y += verticalStep) {
+    addSample(left - 1, y)
+    addSample(right, y)
+  }
+  const colour = (value: number): string => Math.round(samples ? value / samples : 128)
+    .toString(16)
+    .padStart(2, '0')
+  return `#${colour(red)}${colour(green)}${colour(blue)}`
 }
 
 export function mapWindowsOcrPayload(
@@ -517,6 +644,8 @@ function preferOcrRegion(
 ): OcrResult['regions'][number] {
   const preferredText = normaliseComparisonText(preferred.text)
   const candidateText = normaliseComparisonText(candidate.text)
+  const labelsOverlap = preferredText.includes(candidateText) || candidateText.includes(preferredText)
+  if (!labelsOverlap) return preferred
   if (preferredText.includes(candidateText) && preferredText.length > candidateText.length) return preferred
   if (candidateText.includes(preferredText) && candidateText.length > preferredText.length) return structuredClone(candidate)
   const preferredConfidence = preferred.confidence === 0 ? 75 : preferred.confidence

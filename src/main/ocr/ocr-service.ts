@@ -28,6 +28,7 @@ export interface OcrImageSize {
 export interface OcrProgress {
   progress: number
   stage: string
+  result?: OcrResult
 }
 
 export interface OcrRecognitionOptions {
@@ -37,6 +38,7 @@ export interface OcrRecognitionOptions {
 }
 
 export interface OcrService {
+  prepare?(): Promise<void>
   recognise(
     attachmentId: string,
     image: Buffer,

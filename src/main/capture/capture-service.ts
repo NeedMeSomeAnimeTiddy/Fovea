@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { promisify } from 'node:util'
 import { BrowserWindow, desktopCapturer, screen, type DesktopCapturerSource, type Display, type NativeImage } from 'electron'
 import type { CaptureContext } from '@shared/contracts/ipc'
-import type { CaptureAnalysis, CaptureFeature, CaptureMode, ImageEditOperation, OcrEntity, OcrRegion } from '@shared/types/app'
+import type { CaptureAnalysis, CaptureFeature, CaptureMode, ImageEditOperation, OcrEntity, OcrRegion, OcrResult } from '@shared/types/app'
 import type { Rectangle } from '@shared/types/geometry'
 import { clampCropRectangle, logicalToPhysical } from './geometry'
 import type { ImageEditorService } from './image-editor-service'
@@ -113,11 +113,37 @@ export class CaptureService {
       let regions: OcrRegion[] = []
       let words: OcrRegion[] = []
       let entities: OcrEntity[] = []
+      let visualFeatures: CaptureFeature[] = []
+      let partialOcrResult: OcrResult | null = null
+      let progressTail = Promise.resolve()
+      const queueProgress = (progress: CaptureAnalysis): void => {
+        if (!onProgress) return
+        progressTail = progressTail.then(async () => {
+          if (this.analysisIds.get(ownerId) !== analysisId || this.pending !== pending) return
+          onProgress(await validateCaptureAnalysis(png, progress))
+        })
+      }
       const visualFeaturesReady = detectVisualControlFeatures(png, { lines: [], uiFeatures })
       const ocrReady = (async (): Promise<void> => {
         if (this.ocr) {
           try {
-            const result = await this.ocr.recognise(analysisId, png, candidate.image!.getSize(), undefined, { sourcePath: imagePath, preserveGeometry: true })
+            const result = await this.ocr.recognise(
+              analysisId,
+              png,
+              candidate.image!.getSize(),
+              (progress) => {
+                if (!progress.result) return
+                partialOcrResult = structuredClone(progress.result)
+                queueProgress(buildCaptureAnalysisStage({
+                  lines: partialOcrResult.regions,
+                  words: partialOcrResult.words ?? [],
+                  entities: partialOcrResult.entities ?? [],
+                  uiFeatures,
+                  visualFeatures
+                }, 'text'))
+              },
+              { sourcePath: imagePath, preserveGeometry: true }
+            )
             regions = result.regions
             words = result.words ?? []
             entities = result.entities ?? []
@@ -131,14 +157,21 @@ export class CaptureService {
           }
         }
       })()
-      const visualFeatures = await visualFeaturesReady
+      visualFeatures = await visualFeaturesReady
       if (visualFeatures.length) {
-        onProgress?.(await validateCaptureAnalysis(
-          png,
-          buildCaptureAnalysisStage({ lines: [], uiFeatures, visualFeatures }, 'semantic')
-        ))
+        const availablePartial = partialOcrResult as OcrResult | null
+        queueProgress(availablePartial
+          ? buildCaptureAnalysisStage({
+              lines: availablePartial.regions,
+              words: availablePartial.words ?? [],
+              entities: availablePartial.entities ?? [],
+              uiFeatures,
+              visualFeatures
+            }, 'text')
+          : buildCaptureAnalysisStage({ lines: [], uiFeatures, visualFeatures }, 'semantic'))
       }
       await ocrReady
+      await progressTail
       onProgress?.(await validateCaptureAnalysis(png, buildCaptureAnalysisStage({ lines: regions, words, entities, uiFeatures, visualFeatures }, 'text')))
       const analysis = await buildCaptureAnalysis(png, { lines: regions, words, entities, uiFeatures, visualFeatures })
       if (this.pending !== pending || !pending?.candidates.has(ownerId)) throw new Error('Screen analysis was cancelled.')

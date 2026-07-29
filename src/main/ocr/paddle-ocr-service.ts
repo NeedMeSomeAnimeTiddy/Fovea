@@ -19,6 +19,17 @@ const MAX_REGIONS = 2_000
 const MAX_TEXT_LENGTH = 100_000
 const DEFAULT_TIMEOUT_MS = 120_000
 const LOW_CONFIDENCE_THRESHOLD = 60
+const IGNORED_PADDLE_LOGS = [
+  /Creating model:/i,
+  /Model files already exist/i,
+  /Using cached files/i,
+  /INFO: Could not find files/i,
+  /No ccache found/i,
+  /warnings\.warn\(warning_message\)/i,
+  /Logging before InitGoogleLogging/i,
+  /onednn_context\.cc/i,
+  /ReduceMeanCheckIfOneDNNSupport/i
+]
 const MULTILINGUAL: OcrLanguage = {
   code: 'mul',
   label: 'PP-OCRv6 multilingual',
@@ -120,6 +131,10 @@ export class PaddleOcrService implements OcrService {
   constructor(private readonly options: PaddleOcrServiceOptions) {
     this.profile = options.profile ?? 'small'
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
+  }
+
+  async prepare(): Promise<void> {
+    await this.getProcess()
   }
 
   recognise(
@@ -304,7 +319,9 @@ export class PaddleOcrService implements OcrService {
     try {
       message = JSON.parse(line) as SidecarMessage
     } catch {
-      console.info(`[paddle-ocr] ${line.slice(-1_000)}`)
+      if (!IGNORED_PADDLE_LOGS.some((pattern) => pattern.test(line))) {
+        console.info(`[paddle-ocr] ${line.slice(-1_000)}`)
+      }
       return
     }
     if (message.type === 'ready') {
@@ -360,21 +377,10 @@ export class PaddleOcrService implements OcrService {
   }
 
   private reportSidecarStderr(chunk: string): void {
-    const ignored = [
-      /Creating model:/i,
-      /Model files already exist/i,
-      /Using cached files/i,
-      /INFO: Could not find files/i,
-      /No ccache found/i,
-      /warnings\.warn\(warning_message\)/i,
-      /Logging before InitGoogleLogging/i,
-      /onednn_context\.cc/i,
-      /ReduceMeanCheckIfOneDNNSupport/i
-    ]
     const messages = chunk
       .split(/\r?\n/)
       .map((line) => line.trim())
-      .filter((line) => line && !ignored.some((pattern) => pattern.test(line)))
+      .filter((line) => line && !IGNORED_PADDLE_LOGS.some((pattern) => pattern.test(line)))
     if (messages.length) console.warn(`[paddle-ocr] ${messages.join(' ').slice(-2_000)}`)
   }
 
@@ -414,6 +420,10 @@ export class PaddleFirstOcrService implements OcrService {
     private readonly paddle: OcrService,
     private readonly fallback: OcrService
   ) {}
+
+  async prepare(): Promise<void> {
+    await this.paddle.prepare?.()
+  }
 
   async recognise(
     attachmentId: string,

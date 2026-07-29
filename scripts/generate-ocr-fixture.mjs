@@ -11,6 +11,10 @@ const denseImagePath = path.join(outputDirectory, 'screen-dense.png')
 const denseTruthPath = path.join(outputDirectory, 'screen-dense.txt')
 const retryImagePath = path.join(outputDirectory, 'screen-retry.png')
 const retryTruthPath = path.join(outputDirectory, 'screen-retry.txt')
+const manyImagePath = path.join(outputDirectory, 'screen-many.png')
+const manyTruthPath = path.join(outputDirectory, 'screen-many.txt')
+const manyMaskedImagePath = path.join(outputDirectory, 'screen-many-masked.png')
+const manyMaskedTruthPath = path.join(outputDirectory, 'screen-many-masked.txt')
 const lines = [
   'Fovea Analyze Mode',
   'Identify visible controls and complete sentences on the frozen screen.',
@@ -89,6 +93,34 @@ const retrySvg = `
     `).join('')}
   </svg>
 `
+const manyLines = Array.from({ length: 96 }, (_, index) => {
+  const row = Math.floor(index / 4) + 1
+  const column = String.fromCharCode(65 + index % 4)
+  return `Row ${String(row).padStart(2, '0')} column ${column} setting`
+})
+const manySvg = `
+  <svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080">
+    <rect width="1920" height="1080" fill="#f6f8fa"/>
+    ${manyLines.map((line, index) => `
+      <text x="${42 + (index % 4) * 470}" y="${50 + Math.floor(index / 4) * 42}"
+        fill="${index % 5 === 0 ? '#57606a' : '#24292f'}"
+        font-family="Segoe UI, Arial, sans-serif" font-size="13">${line}</text>
+    `).join('')}
+  </svg>
+`
+const manyMaskedSvg = `
+  <svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080">
+    <rect width="1920" height="1080" fill="#f6f8fa"/>
+    ${manyLines.map((line, index) => `
+      <text x="${42 + (index % 4) * 470}" y="${50 + Math.floor(index / 4) * 42}"
+        fill="${index % 5 === 0 ? '#57606a' : '#24292f'}"
+        font-family="Segoe UI, Arial, sans-serif" font-size="13">${line}</text>
+    `).join('')}
+    ${manyLines.slice(0, 58).map((_, index) =>
+      `<rect x="${36 + (index % 4) * 470}" y="${34 + Math.floor(index / 4) * 42}" width="210" height="22" fill="#f6f8fa"/>`
+    ).join('')}
+  </svg>
+`
 
 await mkdir(outputDirectory, { recursive: true })
 await sharp(Buffer.from(svg)).png().toFile(imagePath)
@@ -97,6 +129,12 @@ await sharp(Buffer.from(denseSvg)).png().toFile(denseImagePath)
 await writeFile(denseTruthPath, `${denseLines.join('\n')}\n`, 'utf8')
 await sharp(Buffer.from(retrySvg)).png().toFile(retryImagePath)
 await writeFile(retryTruthPath, `${retryLines.join('\n')}\n`, 'utf8')
+await sharp(Buffer.from(manySvg)).png().toFile(manyImagePath)
+await writeFile(manyTruthPath, `${manyLines.join('\n')}\n`, 'utf8')
+await sharp(Buffer.from(manyMaskedSvg)).png().toFile(manyMaskedImagePath)
+await writeFile(manyMaskedTruthPath, `${manyLines.slice(58).join('\n')}\n`, 'utf8')
 console.log(imagePath)
 console.log(denseImagePath)
 console.log(retryImagePath)
+console.log(manyImagePath)
+console.log(manyMaskedImagePath)

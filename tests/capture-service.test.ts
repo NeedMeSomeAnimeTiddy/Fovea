@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { OcrService } from '../src/main/ocr/ocr-service'
 
 const mocks = vi.hoisted(() => {
   type Listener = (...arguments_: unknown[]) => void
@@ -143,7 +144,7 @@ describe('frozen region capture', () => {
   it('analyzes the full frozen bitmap locally and removes its temporary source', async () => {
     const save = vi.fn(async () => 'C:\\temp\\analysis.png')
     const remove = vi.fn(async () => undefined)
-    const recognise = vi.fn(async () => ({
+    const ocrResult = {
       attachmentId: 'analysis',
       text: 'Save',
       confidence: 100,
@@ -152,7 +153,11 @@ describe('frozen region capture', () => {
       regions: [{ id: 'line-1', text: 'Save', confidence: 100, bounds: { x: 0.1, y: 0.2, width: 0.12, height: 0.08 } }],
       words: [{ id: 'word-1', text: 'Save', confidence: 100, bounds: { x: 0.1, y: 0.2, width: 0.12, height: 0.08 } }],
       truncated: false
-    }))
+    }
+    const recognise = vi.fn<OcrService['recognise']>(async (_attachmentId, _image, _size, onProgress) => {
+      onProgress?.({ progress: 0.45, stage: 'Fast screen text ready', result: ocrResult })
+      return ocrResult
+    })
     const snapshot = vi.fn(async () => [{
       name: 'Save',
       controlType: 'Button',
@@ -200,6 +205,11 @@ describe('frozen region capture', () => {
       complete: false,
       features: expect.arrayContaining([expect.objectContaining({ label: 'Save', source: 'hybrid' })])
     }))
+    expect(onProgress).toHaveBeenNthCalledWith(3, expect.objectContaining({
+      stage: 'text',
+      complete: false,
+      features: expect.arrayContaining([expect.objectContaining({ label: 'Save', source: 'hybrid' })])
+    }))
     expect(snapshot).toHaveBeenCalledWith([], true, true)
     expect(mocks.getSources).toHaveBeenCalledTimes(1)
     expect(mocks.getSources).toHaveBeenCalledWith(expect.objectContaining({ types: ['screen'] }))
@@ -207,7 +217,7 @@ describe('frozen region capture', () => {
       expect.stringMatching(/^capture-analysis-/),
       Buffer.from('whole-display'),
       { width: 200, height: 100 },
-      undefined,
+      expect.any(Function),
       { sourcePath: 'C:\\temp\\analysis.png', preserveGeometry: true }
     )
     expect(remove).toHaveBeenCalledWith('C:\\temp\\analysis.png')
