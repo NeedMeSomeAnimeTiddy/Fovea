@@ -21,6 +21,8 @@ const GENERIC_LABELS = new Set([
 
 export function evaluateAnalyzeFixture(expected, actual, options = {}) {
   const iouThreshold = finiteNumber(options.iouThreshold, DEFAULT_IOU_THRESHOLD)
+  const partialAnnotations = expected.partialAnnotations === true
+  const targetCenterMode = expected.matchMode === 'target-center'
   const expectedFeatures = validateFeatures(expected.features, 'expected.features')
     .filter((feature) => feature.visible !== false && feature.ignore !== true)
   const actualFeatures = validateFeatures(actual.features, 'actual.features')
@@ -30,9 +32,9 @@ export function evaluateAnalyzeFixture(expected, actual, options = {}) {
   for (const [expectedIndex, wanted] of expectedFeatures.entries()) {
     for (const [actualIndex, found] of actualFeatures.entries()) {
       if (!compatibleKinds(wanted.kind, found.kind)) continue
-      const iou = intersectionOverUnion(wanted.bounds, found.bounds)
-      if (iou < iouThreshold) continue
-      candidates.push({ expectedIndex, actualIndex, iou })
+      const score = matchScore(wanted.bounds, found.bounds, iouThreshold, targetCenterMode)
+      if (score === null) continue
+      candidates.push({ expectedIndex, actualIndex, iou: score })
     }
   }
   candidates.sort((left, right) => right.iou - left.iou)
@@ -54,7 +56,7 @@ export function evaluateAnalyzeFixture(expected, actual, options = {}) {
     expectedFeatures.some((wanted, expectedIndex) =>
       matchedExpected.has(expectedIndex) &&
       compatibleKinds(wanted.kind, feature.kind) &&
-      intersectionOverUnion(wanted.bounds, feature.bounds) >= iouThreshold
+      matchScore(wanted.bounds, feature.bounds, iouThreshold, targetCenterMode) !== null
     )
   )
   const forbiddenFalsePositives = unmatchedActual.filter(({ feature }) =>
@@ -69,9 +71,10 @@ export function evaluateAnalyzeFixture(expected, actual, options = {}) {
   )
   const invalidLabels = actualFeatures.filter(({ label }) => isInvalidLabel(label))
   const truePositives = matches.length
-  const falsePositives = actualFeatures.length - truePositives
+  const scoredActual = partialAnnotations ? truePositives : actualFeatures.length
+  const falsePositives = scoredActual - truePositives
   const falseNegatives = expectedFeatures.length - truePositives
-  const precision = ratio(truePositives, truePositives + falsePositives)
+  const precision = ratio(truePositives, scoredActual)
   const recall = ratio(truePositives, truePositives + falseNegatives)
 
   return {
@@ -79,6 +82,7 @@ export function evaluateAnalyzeFixture(expected, actual, options = {}) {
     counts: {
       expected: expectedFeatures.length,
       actual: actualFeatures.length,
+      scoredActual,
       matched: truePositives,
       missed: falseNegatives,
       falsePositives,
@@ -106,7 +110,8 @@ export function evaluateAnalyzeFixture(expected, actual, options = {}) {
       .map((feature, index) => ({ feature, index }))
       .filter(({ index }) => !matchedExpected.has(index))
       .map(({ feature }) => feature.id),
-    falsePositives: unmatchedActual.map(({ feature }) => feature.id)
+    partialAnnotations,
+    falsePositives: partialAnnotations ? [] : unmatchedActual.map(({ feature }) => feature.id)
   }
 }
 
@@ -116,8 +121,9 @@ export function aggregateAnalyzeReports(reports) {
     if (typeof report.timingMs === 'number') sum.timingMs = (sum.timingMs ?? 0) + report.timingMs
     return sum
   }, {})
-  const precision = ratio(totals.matched, totals.actual)
+  const precision = ratio(totals.matched, totals.scoredActual)
   const recall = ratio(totals.matched, totals.expected)
+  const emptyFixtures = reports.filter(({ counts }) => counts.actual === 0).length
   return {
     fixtures: reports.length,
     counts: totals,
@@ -128,10 +134,27 @@ export function aggregateAnalyzeReports(reports) {
       tinyRecall: ratio(totals.tinyMatched, totals.tinyExpected),
       duplicateRate: ratio(totals.duplicates, totals.actual),
       forbiddenFalsePositiveRate: ratio(totals.forbiddenFalsePositives, totals.actual),
-      invalidLabelRate: ratio(totals.invalidLabels, totals.actual)
+      invalidLabelRate: ratio(totals.invalidLabels, totals.actual),
+      emptyFixtureRate: ratio(emptyFixtures, reports.length)
     },
     averageTimingMs: ratio(totals.timingMs, reports.filter(({ timingMs }) => typeof timingMs === 'number').length)
   }
+}
+
+export function evaluateAnalyzeThresholds(aggregate, thresholds) {
+  const checks = [
+    ['minimumRecall', aggregate.metrics.recall, (actual, threshold) => actual >= threshold],
+    ['maximumDuplicateRate', aggregate.metrics.duplicateRate, (actual, threshold) => actual <= threshold],
+    ['maximumInvalidLabelRate', aggregate.metrics.invalidLabelRate, (actual, threshold) => actual <= threshold],
+    ['maximumEmptyFixtureRate', aggregate.metrics.emptyFixtureRate, (actual, threshold) => actual <= threshold],
+    ['maximumAverageTimingMs', aggregate.averageTimingMs, (actual, threshold) => actual <= threshold]
+  ]
+  return checks.flatMap(([name, actual, passes]) => {
+    const threshold = thresholds[name]
+    if (typeof threshold !== 'number') return []
+    if (typeof actual === 'number' && passes(actual, threshold)) return []
+    return [{ name, actual, threshold }]
+  })
 }
 
 async function loadReports(directory) {
@@ -162,12 +185,16 @@ async function readJson(path) {
 async function main() {
   const arguments_ = process.argv.slice(2)
   const json = arguments_.includes('--json')
+  const check = arguments_.includes('--check')
   const directoryArgument = arguments_.find((argument) => !argument.startsWith('--'))
   const directory = resolve(directoryArgument ?? join('tests', 'fixtures', 'analyze'))
   const reports = await loadReports(directory)
   const aggregate = aggregateAnalyzeReports(reports)
+  const thresholds = check ? await readJson(join(directory, 'thresholds.json')) : null
+  const thresholdFailures = thresholds ? evaluateAnalyzeThresholds(aggregate, thresholds) : []
   if (json) {
-    console.log(JSON.stringify({ aggregate, fixtures: reports }, null, 2))
+    console.log(JSON.stringify({ aggregate, thresholds, thresholdFailures, fixtures: reports }, null, 2))
+    if (thresholdFailures.length) process.exitCode = 1
     return
   }
   console.log(`Analyze evaluation: ${reports.length} fixture(s)`)
@@ -185,6 +212,16 @@ async function main() {
       `- ${report.fixture}: ${report.counts.matched}/${report.counts.expected} found, ` +
       `${report.counts.falsePositives} false positive(s), ${report.counts.duplicates} duplicate(s)`
     )
+  }
+  if (thresholds) {
+    if (thresholdFailures.length) {
+      for (const failure of thresholdFailures) {
+        console.error(`Threshold failed: ${failure.name} expected ${failure.threshold}, received ${failure.actual ?? 'n/a'}`)
+      }
+      process.exitCode = 1
+    } else {
+      console.log('Regression thresholds passed.')
+    }
   }
 }
 
@@ -229,8 +266,23 @@ function validateBounds(value, path) {
 }
 
 function compatibleKinds(expected, actual) {
+  if (expected === 'any') return true
   const category = (kind) => kind === 'control' || kind === 'link' ? 'control' : kind === 'visual' ? 'visual' : 'text'
   return category(expected) === category(actual)
+}
+
+function matchScore(expected, actual, iouThreshold, targetCenterMode) {
+  const iou = intersectionOverUnion(expected, actual)
+  if (targetCenterMode) {
+    const centerX = actual.x + actual.width / 2
+    const centerY = actual.y + actual.height / 2
+    return pointInside(expected, centerX, centerY) ? Math.max(iou, iouThreshold) : null
+  }
+  return iou >= iouThreshold ? iou : null
+}
+
+function pointInside(bounds, x, y) {
+  return x >= bounds.x && x <= bounds.x + bounds.width && y >= bounds.y && y <= bounds.y + bounds.height
 }
 
 function labelsOverlap(left, right) {

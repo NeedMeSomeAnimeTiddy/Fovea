@@ -1,0 +1,30 @@
+{
+  "partialAnnotations": true,
+  "matchMode": "target-center",
+  "source": {
+    "dataset": "bevaya/ScreenSpot",
+    "datasetUrl": "https://huggingface.co/datasets/bevaya/ScreenSpot",
+    "split": "test",
+    "rowIndex": 90,
+    "sourceFileName": "pc_1f3eb0eb-2ab2-4e48-b278-de334846ee0d.png",
+    "instruction": "choose the pig",
+    "dataType": "icon",
+    "dataSource": "windows",
+    "license": "Apache-2.0"
+  },
+  "image": "images/screenspot-090.png",
+  "features": [
+    {
+      "id": "screenspot-090-target",
+      "kind": "any",
+      "label": "choose the pig",
+      "bounds": {
+        "x": 0.42291666666666666,
+        "y": 0.15,
+        "width": 0.36562500000000003,
+        "height": 0.5388888888888889
+      }
+    }
+  ],
+  "forbiddenRegions": []
+}

@@ -1,0 +1,1063 @@
+{
+  "timingMs": 1718,
+  "image": "images/screenspot-004.png",
+  "ocrEngine": "windows",
+  "ocrLines": 28,
+  "visualTargets": 63,
+  "features": [
+    {
+      "id": "omniparser-66183-66722-3",
+      "kind": "control",
+      "label": "Style",
+      "bounds": {
+        "x": 0.66183268,
+        "y": 0.66721644,
+        "width": 0.04513346,
+        "height": 0.11449653
+      },
+      "source": "hybrid",
+      "rank": 105.2,
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.699219
+    },
+    {
+      "id": "ocr-line-6",
+      "kind": "control",
+      "label": "O",
+      "bounds": {
+        "x": 0.28141645833333334,
+        "y": 0.04214787037037038,
+        "width": 0.023625,
+        "height": 0.03237064814814816
+      },
+      "source": "hybrid",
+      "rank": 104.5,
+      "role": "button",
+      "description": "Visible label in a detected toolbar row"
+    },
+    {
+      "id": "ocr-line-13",
+      "kind": "control",
+      "label": "Quick",
+      "bounds": {
+        "x": 0.3762083333333333,
+        "y": 0.10325925925925926,
+        "width": 0.04029166666666666,
+        "height": 0.030518518518518504
+      },
+      "source": "hybrid",
+      "rank": 104.5,
+      "role": "button",
+      "description": "Visible label in a detected toolbar row"
+    },
+    {
+      "id": "ocr-line-20",
+      "kind": "control",
+      "label": "ects",
+      "bounds": {
+        "x": 0.4751666666666667,
+        "y": 0.12548148148148147,
+        "width": 0.05175000000000001,
+        "height": 0.028666666666666663
+      },
+      "source": "hybrid",
+      "rank": 104.4,
+      "role": "button",
+      "description": "Visible label in a detected toolbar row"
+    },
+    {
+      "id": "ocr-line-4",
+      "kind": "control",
+      "label": "Shape Fill",
+      "bounds": {
+        "x": 0.43766666666666665,
+        "y": 0.040296296296296295,
+        "width": 0.06841666666666668,
+        "height": 0.03422222222222222
+      },
+      "source": "hybrid",
+      "rank": 104.4,
+      "role": "button",
+      "description": "Visible label in a detected toolbar row"
+    },
+    {
+      "id": "ocr-line-7",
+      "kind": "control",
+      "label": "Align Text •",
+      "bounds": {
+        "x": 0.03870833333333333,
+        "y": 0.08288888888888889,
+        "width": 0.07050000000000001,
+        "height": 0.03422222222222222
+      },
+      "source": "hybrid",
+      "rank": 104.4,
+      "role": "button",
+      "description": "Visible label in a detected toolbar row"
+    },
+    {
+      "id": "ocr-line-3",
+      "kind": "control",
+      "label": "Text Dir«tlon •",
+      "bounds": {
+        "x": 0.03870833333333333,
+        "y": 0.040296296296296295,
+        "width": 0.09133333333333332,
+        "height": 0.028666666666666663
+      },
+      "source": "hybrid",
+      "rank": 104.4,
+      "role": "button",
+      "description": "Visible label in a detected toolbar row"
+    },
+    {
+      "id": "ocr-line-8",
+      "kind": "control",
+      "label": "Shape Outlir",
+      "bounds": {
+        "x": 0.43766666666666665,
+        "y": 0.08288888888888889,
+        "width": 0.0850833333333334,
+        "height": 0.03422222222222222
+      },
+      "source": "hybrid",
+      "rank": 104.3,
+      "role": "button",
+      "description": "Visible label in a detected toolbar row"
+    },
+    {
+      "id": "ocr-line-17",
+      "kind": "control",
+      "label": "Styles",
+      "bounds": {
+        "x": 0.37204166666666666,
+        "y": 0.12177777777777776,
+        "width": 0.06945833333333334,
+        "height": 0.04533333333333335
+      },
+      "source": "hybrid",
+      "rank": 104.3,
+      "role": "button",
+      "description": "Visible label in a detected toolbar row"
+    },
+    {
+      "id": "ocr-line-9",
+      "kind": "control",
+      "label": "Shape Outline •",
+      "bounds": {
+        "x": 0.43766666666666665,
+        "y": 0.08288888888888889,
+        "width": 0.0934166666666667,
+        "height": 0.03422222222222222
+      },
+      "source": "hybrid",
+      "rank": 104.3,
+      "role": "button",
+      "description": "Visible label in a detected toolbar row"
+    },
+    {
+      "id": "ocr-line-18",
+      "kind": "control",
+      "label": "Q Shape Eff«ts •",
+      "bounds": {
+        "x": 0.40641666666666665,
+        "y": 0.12177777777777776,
+        "width": 0.12050000000000005,
+        "height": 0.03792592592592593
+      },
+      "source": "hybrid",
+      "rank": 104.2,
+      "role": "button",
+      "description": "Visible label in a detected toolbar row"
+    },
+    {
+      "id": "ocr-line-19",
+      "kind": "control",
+      "label": "D Convert to SmartArt •",
+      "bounds": {
+        "x": 0.024125,
+        "y": 0.12548148148148147,
+        "width": 0.14133333333333334,
+        "height": 0.03422222222222222
+      },
+      "source": "hybrid",
+      "rank": 104.2,
+      "role": "button",
+      "description": "Visible label in a detected toolbar row"
+    },
+    {
+      "id": "omniparser-20314-4695-50",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.20314128,
+        "y": 0.04694734,
+        "width": 0.01500651,
+        "height": 0.02332176
+      },
+      "source": "hybrid",
+      "rank": 101.2,
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.150024
+    },
+    {
+      "id": "omniparser-18255-4709-57",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.18254801,
+        "y": 0.04709201,
+        "width": 0.01528727,
+        "height": 0.02297092
+      },
+      "source": "hybrid",
+      "rank": 100.8,
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.109314
+    },
+    {
+      "id": "ocr-line-14",
+      "kind": "value",
+      "label": "2",
+      "bounds": {
+        "x": 0.18245833333333333,
+        "y": 0.11251861111111111,
+        "width": 0.018416874999999992,
+        "height": 0.03237064814814815
+      },
+      "source": "ocr-line",
+      "rank": 86.7
+    },
+    {
+      "id": "ocr-line-11",
+      "kind": "text",
+      "label": "ab",
+      "bounds": {
+        "x": 0.5407916666666667,
+        "y": 0.09214814814814815,
+        "width": 0.02466666666666672,
+        "height": 0.023111111111111114
+      },
+      "source": "ocr-line",
+      "rank": 83
+    },
+    {
+      "id": "ocr-line-23",
+      "kind": "text",
+      "label": "Editing",
+      "bounds": {
+        "x": 0.5626666666666666,
+        "y": 0.16992592592592592,
+        "width": 0.04445833333333337,
+        "height": 0.030518518518518518
+      },
+      "source": "ocr-line",
+      "rank": 82.9
+    },
+    {
+      "id": "ocr-line-22",
+      "kind": "text",
+      "label": "Drawing",
+      "bounds": {
+        "x": 0.321,
+        "y": 0.16992592592592592,
+        "width": 0.05175000000000001,
+        "height": 0.030518518518518518
+      },
+      "source": "ocr-line",
+      "rank": 82.9
+    },
+    {
+      "id": "ocr-line-16",
+      "kind": "text",
+      "label": "Select",
+      "bounds": {
+        "x": 0.553291875,
+        "y": 0.1199256481481481,
+        "width": 0.057999999999999934,
+        "height": 0.03792592592592593
+      },
+      "source": "ocr-line",
+      "rank": 82.8
+    },
+    {
+      "id": "ocr-line-27",
+      "kind": "text",
+      "label": "Theme Colors",
+      "bounds": {
+        "x": 0.7126666666666667,
+        "y": 0.7865925925925926,
+        "width": 0.08716666666666661,
+        "height": 0.02866666666666672
+      },
+      "source": "ocr-line",
+      "rank": 82.7
+    },
+    {
+      "id": "ocr-line-15",
+      "kind": "text",
+      "label": "W",
+      "bounds": {
+        "x": 0.541833125,
+        "y": 0.1199256481481481,
+        "width": 0.023625,
+        "height": 0.04162944444444448
+      },
+      "source": "ocr-line",
+      "rank": 81.1
+    },
+    {
+      "id": "ocr-line-24",
+      "kind": "text",
+      "label": "Q",
+      "bounds": {
+        "x": 0.4126666666666667,
+        "y": 0.5514072222222223,
+        "width": 0.037166874999999926,
+        "height": 0.06385185185185181
+      },
+      "source": "ocr-line",
+      "rank": 81
+    },
+    {
+      "id": "ocr-line-21",
+      "kind": "text",
+      "label": "'raph",
+      "bounds": {
+        "x": 0,
+        "y": 0.16992592592592592,
+        "width": 0.035083333333333334,
+        "height": 0.030518518518518518
+      },
+      "source": "ocr-line",
+      "rank": 80.9
+    },
+    {
+      "id": "ocr-line-1",
+      "kind": "text",
+      "label": "p Find",
+      "bounds": {
+        "x": 0.5418333333333333,
+        "y": 0.03659259259259259,
+        "width": 0.05070833333333346,
+        "height": 0.03422222222222222
+      },
+      "source": "ocr-line",
+      "rank": 80.9
+    },
+    {
+      "id": "ocr-line-10",
+      "kind": "text",
+      "label": "•ac Replace •",
+      "bounds": {
+        "x": 0.5407916666666667,
+        "y": 0.08288888888888889,
+        "width": 0.08612500000000001,
+        "height": 0.03422222222222222
+      },
+      "source": "ocr-line",
+      "rank": 80.8
+    },
+    {
+      "id": "ocr-line-26",
+      "kind": "text",
+      "label": "Style Fill Outline",
+      "bounds": {
+        "x": 0.6699583333333333,
+        "y": 0.7347407407407407,
+        "width": 0.1257083333333333,
+        "height": 0.03051851851851849
+      },
+      "source": "ocr-line",
+      "rank": 80.7
+    },
+    {
+      "id": "ocr-line-28",
+      "kind": "text",
+      "label": "PowerPoint",
+      "bounds": {
+        "x": 0.20641666666666666,
+        "y": 0.8384444444444444,
+        "width": 0.44862499999999994,
+        "height": 0.1305185185185186
+      },
+      "source": "ocr-line",
+      "rank": 76.3
+    },
+    {
+      "id": "omniparser-74694-66736-1",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.7469401,
+        "y": 0.66736111,
+        "width": 0.05384115,
+        "height": 0.10810185
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.849121,
+      "rank": 56.3
+    },
+    {
+      "id": "omniparser-70660-67309-2",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.70659993,
+        "y": 0.67309028,
+        "width": 0.04037272,
+        "height": 0.10364583
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.740234,
+      "rank": 55.6
+    },
+    {
+      "id": "omniparser-0-0-5",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0,
+        "y": 0,
+        "width": 0.05882161,
+        "height": 0.0276765
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.562012,
+      "rank": 54.4
+    },
+    {
+      "id": "omniparser-71078-82673-8",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.71078288,
+        "y": 0.82672526,
+        "width": 0.01299642,
+        "height": 0.02263817
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.475586,
+      "rank": 53.8
+    },
+    {
+      "id": "omniparser-70922-63700-9",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.70921834,
+        "y": 0.63700087,
+        "width": 0.01195679,
+        "height": 0.0208261
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.467773,
+      "rank": 53.7
+    },
+    {
+      "id": "omniparser-85282-82785-12",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.85282389,
+        "y": 0.82785012,
+        "width": 0.01191406,
+        "height": 0.02096354
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.419678,
+      "rank": 53.3
+    },
+    {
+      "id": "omniparser-83495-82787-13",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.83494873,
+        "y": 0.82787182,
+        "width": 0.01217041,
+        "height": 0.02089844
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.418701,
+      "rank": 53.3
+    },
+    {
+      "id": "omniparser-87029-82782-11",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.87028809,
+        "y": 0.82781756,
+        "width": 0.01240438,
+        "height": 0.02132885
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.419678,
+      "rank": 53.3
+    },
+    {
+      "id": "omniparser-5874-0-10",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.05874023,
+        "y": 0,
+        "width": 0.19816081,
+        "height": 0.02686632
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.466797,
+      "rank": 53.3
+    },
+    {
+      "id": "omniparser-81738-82762-14",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.81737671,
+        "y": 0.82762225,
+        "width": 0.01231079,
+        "height": 0.02137948
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.361084,
+      "rank": 52.9
+    },
+    {
+      "id": "omniparser-13757-82066-15",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.1375651,
+        "y": 0.82065972,
+        "width": 0.01139933,
+        "height": 0.01957465
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.358398,
+      "rank": 52.8
+    },
+    {
+      "id": "omniparser-30675-7903-19",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.30675456,
+        "y": 0.07902922,
+        "width": 0.01474253,
+        "height": 0.03461372
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.321777,
+      "rank": 52.5
+    },
+    {
+      "id": "omniparser-79966-82692-23",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.79966227,
+        "y": 0.82692057,
+        "width": 0.01200358,
+        "height": 0.02258753
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.299072,
+      "rank": 52.4
+    },
+    {
+      "id": "omniparser-71090-86009-22",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.71090088,
+        "y": 0.86009115,
+        "width": 0.01288656,
+        "height": 0.02364728
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.304932,
+      "rank": 51.8
+    },
+    {
+      "id": "omniparser-72895-82656-25",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.72894694,
+        "y": 0.82655888,
+        "width": 0.012205,
+        "height": 0.02281901
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.276611,
+      "rank": 52.2
+    },
+    {
+      "id": "omniparser-16067-17443-28",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.16066793,
+        "y": 0.17443215,
+        "width": 0.01119893,
+        "height": 0.01810258
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.259033,
+      "rank": 52.1
+    },
+    {
+      "id": "omniparser-13767-63708-29",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.13767497,
+        "y": 0.63708225,
+        "width": 0.01158447,
+        "height": 0.0199056
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.253174,
+      "rank": 52
+    },
+    {
+      "id": "omniparser-78145-82633-27",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.78144531,
+        "y": 0.8263274,
+        "width": 0.01304525,
+        "height": 0.02339771
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.259033,
+      "rank": 52
+    },
+    {
+      "id": "omniparser-30691-4029-30",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.30691325,
+        "y": 0.04029225,
+        "width": 0.0145223,
+        "height": 0.03715278
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.248047,
+      "rank": 51.9
+    },
+    {
+      "id": "omniparser-76421-82660-35",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.76420898,
+        "y": 0.82659867,
+        "width": 0.01206868,
+        "height": 0.02273582
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.222046,
+      "rank": 51.8
+    },
+    {
+      "id": "omniparser-0-11638-34",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0,
+        "y": 0.11638455,
+        "width": 0.01332601,
+        "height": 0.04051649
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.228149,
+      "rank": 50
+    },
+    {
+      "id": "omniparser-30684-11406-32",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.30684408,
+        "y": 0.1140625,
+        "width": 0.01447754,
+        "height": 0.03747106
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.233032,
+      "rank": 51.8
+    },
+    {
+      "id": "omniparser-42196-63546-39",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.42196045,
+        "y": 0.63546369,
+        "width": 0.01231689,
+        "height": 0.02229094
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.190063,
+      "rank": 51.5
+    },
+    {
+      "id": "omniparser-18293-8559-40",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.18292643,
+        "y": 0.08559389,
+        "width": 0.01529948,
+        "height": 0.0220884
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.189575,
+      "rank": 51.5
+    },
+    {
+      "id": "omniparser-0-4204-38",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0,
+        "y": 0.04204282,
+        "width": 0.02016602,
+        "height": 0.03680556
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.190674,
+      "rank": 51.5
+    },
+    {
+      "id": "omniparser-41879-56441-37",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.41879476,
+        "y": 0.56440972,
+        "width": 0.02726644,
+        "height": 0.0401114
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.199951,
+      "rank": 51.5
+    },
+    {
+      "id": "omniparser-85251-86004-43",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.85250753,
+        "y": 0.86004051,
+        "width": 0.01253967,
+        "height": 0.03425926
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.176147,
+      "rank": 51.4
+    },
+    {
+      "id": "omniparser-33476-4348-45",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.33476156,
+        "y": 0.04347512,
+        "width": 0.0118693,
+        "height": 0.02060185
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.168335,
+      "rank": 51.3
+    },
+    {
+      "id": "omniparser-85255-87451-53",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.85254924,
+        "y": 0.8745081,
+        "width": 0.01290487,
+        "height": 0.10454282
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.136108,
+      "rank": 51
+    },
+    {
+      "id": "omniparser-37819-4132-51",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.3781901,
+        "y": 0.04131944,
+        "width": 0.03577474,
+        "height": 0.0771412
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.148071,
+      "rank": 51
+    },
+    {
+      "id": "omniparser-52470-17492-55",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.52469889,
+        "y": 0.17492043,
+        "width": 0.01000163,
+        "height": 0.01749855
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.119995,
+      "rank": 50.9
+    },
+    {
+      "id": "omniparser-72897-86045-56",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.72897135,
+        "y": 0.8604456,
+        "width": 0.01219889,
+        "height": 0.02381727
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.118774,
+      "rank": 50.9
+    },
+    {
+      "id": "omniparser-74626-86034-58",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.74626058,
+        "y": 0.86034433,
+        "width": 0.01245117,
+        "height": 0.0229673
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.108948,
+      "rank": 50.8
+    },
+    {
+      "id": "omniparser-71094-88437-59",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.7109375,
+        "y": 0.88436777,
+        "width": 0.01291911,
+        "height": 0.05926649
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.107422,
+      "rank": 50.8
+    },
+    {
+      "id": "omniparser-20544-11837-63",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.2054362,
+        "y": 0.11837384,
+        "width": 0.01133626,
+        "height": 0.02683738
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.081238,
+      "rank": 50.6
+    },
+    {
+      "id": "omniparser-76409-88441-61",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.76409098,
+        "y": 0.88441117,
+        "width": 0.01252035,
+        "height": 0.06110388
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.082397,
+      "rank": 50.6
+    },
+    {
+      "id": "omniparser-74649-88430-60",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.74649251,
+        "y": 0.88429543,
+        "width": 0.01217855,
+        "height": 0.07525318
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.086914,
+      "rank": 50.6
+    }
+  ]
+}

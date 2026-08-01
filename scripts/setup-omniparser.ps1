@@ -14,6 +14,8 @@ $sourcePath = Join-Path $runtimePath 'source'
 $modelPath = Join-Path $sourcePath 'weights\icon_detect_v3\model.pt'
 $faceModelDirectory = Join-Path $sourcePath 'weights\face_detection_yunet'
 $faceModelPath = Join-Path $faceModelDirectory 'face_detection_yunet_2023mar.onnx'
+$expectedIconModelSha256 = '11C6CBB77F22569FAB22D86C76407A83EC81AB89DBFE28279854822D6E3FB00C'
+$expectedFaceModelSha256 = '8F2383E4DD3CFBB4553EA8718107FC0423210DC964F9F4280604804ED2552FA4'
 $bridgePath = Join-Path $repositoryRoot 'resources\analysis\omniparser-detector.py'
 $requirementsPath = Join-Path $repositoryRoot 'resources\analysis\omniparser-requirements.txt'
 
@@ -49,6 +51,9 @@ if (-not (Test-Path -LiteralPath (Join-Path $sourcePath '.git'))) {
 if (-not (Test-Path -LiteralPath $modelPath)) {
   throw "OmniParser model download did not create $modelPath"
 }
+if ((Get-FileHash -LiteralPath $modelPath -Algorithm SHA256).Hash -ne $expectedIconModelSha256) {
+  throw "OmniParser model checksum did not match the pinned revision: $modelPath"
+}
 
 if (-not (Test-Path -LiteralPath $faceModelPath)) {
   New-Item -ItemType Directory -Force -Path $faceModelDirectory | Out-Null
@@ -58,6 +63,9 @@ if (-not (Test-Path -LiteralPath $faceModelPath)) {
 }
 if ((Get-Item -LiteralPath $faceModelPath).Length -lt 100000) {
   throw "YuNet face model download did not create a valid model at $faceModelPath"
+}
+if ((Get-FileHash -LiteralPath $faceModelPath -Algorithm SHA256).Hash -ne $expectedFaceModelSha256) {
+  throw "YuNet face model checksum did not match the pinned OpenCV model: $faceModelPath"
 }
 
 & $environmentPython $bridgePath --check --root $sourcePath --model $modelPath --face-model $faceModelPath

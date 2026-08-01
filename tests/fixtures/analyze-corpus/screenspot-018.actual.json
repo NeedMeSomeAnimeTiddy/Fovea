@@ -1,0 +1,130 @@
+{
+  "timingMs": 976,
+  "image": "images/screenspot-018.png",
+  "ocrEngine": "windows",
+  "ocrLines": 11,
+  "visualTargets": 6,
+  "features": [
+    {
+      "id": "omniparser-456-2263-1",
+      "kind": "control",
+      "label": "Home",
+      "bounds": {
+        "x": 0.00455729,
+        "y": 0.02262731,
+        "width": 0.32513021,
+        "height": 0.06614583
+      },
+      "source": "hybrid",
+      "rank": 103,
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.649414
+    },
+    {
+      "id": "omniparser-547-9447-2",
+      "kind": "control",
+      "label": "Music library",
+      "bounds": {
+        "x": 0.00546875,
+        "y": 0.09447338,
+        "width": 0.32330729,
+        "height": 0.07375579
+      },
+      "source": "hybrid",
+      "rank": 103,
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.618652
+    },
+    {
+      "id": "omniparser-664-16940-3",
+      "kind": "control",
+      "label": "Video library",
+      "bounds": {
+        "x": 0.00664062,
+        "y": 0.16940104,
+        "width": 0.32278646,
+        "height": 0.07625868
+      },
+      "source": "hybrid",
+      "rank": 102.5,
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.556641
+    },
+    {
+      "id": "omniparser-742-25402-5",
+      "kind": "control",
+      "label": "play queue",
+      "bounds": {
+        "x": 0.00742187,
+        "y": 0.25402199,
+        "width": 0.32083333,
+        "height": 0.07850116
+      },
+      "source": "hybrid",
+      "rank": 101.2,
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.399902
+    },
+    {
+      "id": "ocr-line-10",
+      "kind": "text",
+      "label": "Playlists",
+      "bounds": {
+        "x": 0.044958333333333336,
+        "y": 0.37548148148148147,
+        "width": 0.05695833333333333,
+        "height": 0.037925925925925905
+      },
+      "source": "ocr-line",
+      "rank": 82.8
+    },
+    {
+      "id": "omniparser-924-33513-4",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.00924479,
+        "y": 0.33512731,
+        "width": 0.30950521,
+        "height": 0.06319444
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.492188,
+      "rank": 52.4
+    },
+    {
+      "id": "omniparser-0-33391-6",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0,
+        "y": 0.33391204,
+        "width": 0.01828918,
+        "height": 0.06103877
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.116333,
+      "rank": 50.3
+    }
+  ]
+}

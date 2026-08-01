@@ -1,0 +1,30 @@
+{
+  "partialAnnotations": true,
+  "matchMode": "target-center",
+  "source": {
+    "dataset": "bevaya/ScreenSpot",
+    "datasetUrl": "https://huggingface.co/datasets/bevaya/ScreenSpot",
+    "split": "test",
+    "rowIndex": 2,
+    "sourceFileName": "pc_2c6dc6ea-fd6f-4cbb-9954-2d6a68610a48.png",
+    "instruction": "play the solitaire collection",
+    "dataType": "text",
+    "dataSource": "windows",
+    "license": "Apache-2.0"
+  },
+  "image": "images/screenspot-002.png",
+  "features": [
+    {
+      "id": "screenspot-002-target",
+      "kind": "any",
+      "label": "play the solitaire collection",
+      "bounds": {
+        "x": 0.134375,
+        "y": 0.1287037037037037,
+        "width": 0.7291666666666666,
+        "height": 0.2148148148148148
+      }
+    }
+  ],
+  "forbiddenRegions": []
+}

@@ -28,6 +28,7 @@ npm run ocr:benchmark -- capture.png
 npm run paddle:setup
 npm run ocr:benchmark:paddle -- capture.png
 npm run build
+npm run release:check
 npm run package:win
 ```
 
@@ -134,9 +135,13 @@ npm run dev
 ```
 
 Setup pins the current Microsoft OmniParser source adapter and downloads the
-MIT-licensed YOLOv9-E `icon_detect_v3` inference weight from the model's pending
-Hugging Face revision. It also installs OpenCV and the MIT-licensed YuNet face
-detector from the official OpenCV model zoo. It uses a separate `.venv-omniparser` environment and
+`icon_detect_v3` inference weight from the model's pinned Hugging Face revision.
+Microsoft documents this icon-detection checkpoint as AGPL-licensed because it
+inherits the original YOLO model's license; it is therefore an opt-in development
+runtime and is not redistributed in the installer. Setup also installs OpenCV
+and the MIT-licensed YuNet face detector from the official OpenCV model zoo.
+Both downloaded model files are checked against pinned SHA-256 digests. It uses
+a separate `.venv-omniparser` environment and
 ignored `.omniparser-runtime` model directory. Once installed, Analyze enables
 it automatically. Setup installs a CUDA-enabled PyTorch wheel when
 `nvidia-smi` is available and otherwise installs the CPU wheel; pass
@@ -177,6 +182,23 @@ npm run analyze:evaluate -- --json
 The report separates overall and tiny-control recall, precision, duplicate
 boxes, forbidden/occluded-region false positives, invalid labels, and detector
 time. See `tests/fixtures/analyze/README.md` for the annotation schema.
+
+The repository also carries a deterministic 20-screenshot subset of the
+Apache-2.0 ScreenSpot test split. Each screenshot has one source-provided target
+annotation, provenance, dimensions, and a SHA-256 digest. To reproduce the
+downloads and exercise the real screenshot-native Analyze pipeline, run:
+
+```powershell
+npm run analyze:corpus:fetch
+npm run analyze:regression
+```
+
+`npm run analyze:doctor` checks the optional local Python runtimes, bridge
+self-tests, and pinned model hashes. Add `-- --strict-dev` to require all local
+development models, or `-- --strict-package` to verify that a future installer
+has staged full Python runtimes. `npm run release:check` runs type checking,
+linting, unit tests, asset validation, the production build, stored Analyze
+evaluations, and the runtime doctor before packaging.
 
 ## Manual test
 

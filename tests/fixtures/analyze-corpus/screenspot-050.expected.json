@@ -1,0 +1,30 @@
+{
+  "partialAnnotations": true,
+  "matchMode": "target-center",
+  "source": {
+    "dataset": "bevaya/ScreenSpot",
+    "datasetUrl": "https://huggingface.co/datasets/bevaya/ScreenSpot",
+    "split": "test",
+    "rowIndex": 50,
+    "sourceFileName": "pc_4ba904da-bd51-42ea-a96f-c5681c630058.png",
+    "instruction": "check hourly weather",
+    "dataType": "text",
+    "dataSource": "windows",
+    "license": "Apache-2.0"
+  },
+  "image": "images/screenspot-050.png",
+  "features": [
+    {
+      "id": "screenspot-050-target",
+      "kind": "any",
+      "label": "check hourly weather",
+      "bounds": {
+        "x": 0.24166666666666667,
+        "y": 0.7722222222222223,
+        "width": 0.09166666666666665,
+        "height": 0.07777777777777772
+      }
+    }
+  ],
+  "forbiddenRegions": []
+}

@@ -1,0 +1,99 @@
+{
+  "timingMs": 4978,
+  "image": "images/screenspot-022.png",
+  "ocrEngine": "windows",
+  "ocrLines": 3,
+  "visualTargets": 5,
+  "features": [
+    {
+      "id": "omniparser-59202-2292-2",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.5920166,
+        "y": 0.02291667,
+        "width": 0.03155111,
+        "height": 0.05387731
+      },
+      "source": "hybrid",
+      "rank": 106.6,
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.841797
+    },
+    {
+      "id": "omniparser-63711-2305-1",
+      "kind": "control",
+      "label": "Search Th is PC",
+      "bounds": {
+        "x": 0.63710937,
+        "y": 0.02304688,
+        "width": 0.35520833,
+        "height": 0.05392072
+      },
+      "source": "hybrid",
+      "rank": 105.5,
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.884277
+    },
+    {
+      "id": "omniparser-0-2328-3",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.565792,
+        "y": 0.031037000000000002,
+        "width": 0.020499999999999956,
+        "height": 0.034222
+      },
+      "source": "hybrid",
+      "rank": 105.4,
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.682617
+    },
+    {
+      "id": "omniparser-98297-2298-4",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.9829689,
+        "y": 0.02298358,
+        "width": 0.0170311,
+        "height": 0.04188911
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.2323,
+      "rank": 51.8
+    },
+    {
+      "id": "omniparser-99138-0-5",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.99138234,
+        "y": 0,
+        "width": 0.00861766,
+        "height": 0.01118808
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.127197,
+      "rank": 51
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "minimumRecall": 0.85,
+  "maximumInvalidLabelRate": 0.5,
+  "maximumEmptyFixtureRate": 0.1,
+  "maximumAverageTimingMs": 7000
+}

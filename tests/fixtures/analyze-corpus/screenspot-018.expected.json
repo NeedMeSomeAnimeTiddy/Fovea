@@ -1,0 +1,30 @@
+{
+  "partialAnnotations": true,
+  "matchMode": "target-center",
+  "source": {
+    "dataset": "bevaya/ScreenSpot",
+    "datasetUrl": "https://huggingface.co/datasets/bevaya/ScreenSpot",
+    "split": "test",
+    "rowIndex": 18,
+    "sourceFileName": "pc_7f0b3e40-e5f5-462b-96c3-e8a97a3a504b.png",
+    "instruction": "open the music library",
+    "dataType": "text",
+    "dataSource": "windows",
+    "license": "Apache-2.0"
+  },
+  "image": "images/screenspot-018.png",
+  "features": [
+    {
+      "id": "screenspot-018-target",
+      "kind": "any",
+      "label": "open the music library",
+      "bounds": {
+        "x": 0.0020833333333333333,
+        "y": 0.08888888888888889,
+        "width": 0.33229166666666665,
+        "height": 0.07407407407407408
+      }
+    }
+  ],
+  "forbiddenRegions": []
+}

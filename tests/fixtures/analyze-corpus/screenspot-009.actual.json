@@ -1,0 +1,151 @@
+{
+  "timingMs": 1073,
+  "image": "images/screenspot-009.png",
+  "ocrEngine": "windows",
+  "ocrLines": 6,
+  "visualTargets": 5,
+  "features": [
+    {
+      "id": "omniparser-33255-611-2",
+      "kind": "control",
+      "label": "Search apps, games, movies, and more",
+      "bounds": {
+        "x": 0.33255208,
+        "y": 0.00610532,
+        "width": 0.6203125,
+        "height": 0.06284722
+      },
+      "source": "hybrid",
+      "rank": 102.9,
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.749023
+    },
+    {
+      "id": "omniparser-30703-45775-3",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.30703125,
+        "y": 0.45775463,
+        "width": 0.1311849,
+        "height": 0.23148148
+      },
+      "source": "hybrid",
+      "rank": 101.6,
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.5
+    },
+    {
+      "id": "ocr-line-2",
+      "kind": "text",
+      "label": "可享受",
+      "bounds": {
+        "x": 0,
+        "y": 0.3977038888888889,
+        "width": 0.10591645833333338,
+        "height": 0.08607425925925925
+      },
+      "source": "ocr-line",
+      "rank": 82.3
+    },
+    {
+      "id": "ocr-line-4",
+      "kind": "text",
+      "label": "*398M",
+      "bounds": {
+        "x": 0.705375,
+        "y": 0.49955555555555553,
+        "width": 0.05070833333333335,
+        "height": 0.02866666666666672
+      },
+      "source": "ocr-line",
+      "rank": 80.9
+    },
+    {
+      "id": "ocr-line-6",
+      "kind": "text",
+      "label": "> See details",
+      "bounds": {
+        "x": 0.724125,
+        "y": 0.6921481481481482,
+        "width": 0.09341666666666659,
+        "height": 0.03422222222222225
+      },
+      "source": "ocr-line",
+      "rank": 80.7
+    },
+    {
+      "id": "ocr-line-5",
+      "kind": "text",
+      "label": "Microsoft 365",
+      "bounds": {
+        "x": 0.6980833333333333,
+        "y": 0.5514074074074075,
+        "width": 0.1465416666666668,
+        "height": 0.04162962962962967
+      },
+      "source": "ocr-line",
+      "rank": 80.5
+    },
+    {
+      "id": "omniparser-70137-68142-1",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.70136719,
+        "y": 0.68142361,
+        "width": 0.1351888,
+        "height": 0.05763889
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.771973,
+      "rank": 55.6
+    },
+    {
+      "id": "omniparser-15762-45706-4",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.15761719,
+        "y": 0.45706019,
+        "width": 0.13121745,
+        "height": 0.23125
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.259766,
+      "rank": 49.7
+    },
+    {
+      "id": "omniparser-45638-45718-5",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.45638021,
+        "y": 0.45717593,
+        "width": 0.13261719,
+        "height": 0.23298611
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.169922,
+      "rank": 48.9
+    }
+  ]
+}

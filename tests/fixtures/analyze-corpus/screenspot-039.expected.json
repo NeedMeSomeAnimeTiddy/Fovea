@@ -1,0 +1,30 @@
+{
+  "partialAnnotations": true,
+  "matchMode": "target-center",
+  "source": {
+    "dataset": "bevaya/ScreenSpot",
+    "datasetUrl": "https://huggingface.co/datasets/bevaya/ScreenSpot",
+    "split": "test",
+    "rowIndex": 39,
+    "sourceFileName": "pc_80ab83db-da70-4a1d-b10e-a438a59b2197.png",
+    "instruction": "set the screen timeout.",
+    "dataType": "icon",
+    "dataSource": "windows",
+    "license": "Apache-2.0"
+  },
+  "image": "images/screenspot-039.png",
+  "features": [
+    {
+      "id": "screenspot-039-target",
+      "kind": "any",
+      "label": "set the screen timeout.",
+      "bounds": {
+        "x": 0.31145833333333334,
+        "y": 0.32407407407407407,
+        "width": 0.18958333333333338,
+        "height": 0.06296296296296294
+      }
+    }
+  ],
+  "forbiddenRegions": []
+}

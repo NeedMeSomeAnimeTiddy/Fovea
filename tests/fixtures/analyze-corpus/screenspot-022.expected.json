@@ -1,0 +1,30 @@
+{
+  "partialAnnotations": true,
+  "matchMode": "target-center",
+  "source": {
+    "dataset": "bevaya/ScreenSpot",
+    "datasetUrl": "https://huggingface.co/datasets/bevaya/ScreenSpot",
+    "split": "test",
+    "rowIndex": 22,
+    "sourceFileName": "pc_133ac2cd-3eb3-4d45-be35-255a83831f97.png",
+    "instruction": "search for local files",
+    "dataType": "text",
+    "dataSource": "windows",
+    "license": "Apache-2.0"
+  },
+  "image": "images/screenspot-022.png",
+  "features": [
+    {
+      "id": "screenspot-022-target",
+      "kind": "any",
+      "label": "search for local files",
+      "bounds": {
+        "x": 0.6322916666666667,
+        "y": 0.014814814814814815,
+        "width": 0.36354166666666665,
+        "height": 0.06666666666666668
+      }
+    }
+  ],
+  "forbiddenRegions": []
+}

@@ -1,0 +1,30 @@
+{
+  "partialAnnotations": true,
+  "matchMode": "target-center",
+  "source": {
+    "dataset": "bevaya/ScreenSpot",
+    "datasetUrl": "https://huggingface.co/datasets/bevaya/ScreenSpot",
+    "split": "test",
+    "rowIndex": 31,
+    "sourceFileName": "pc_b1f1df2a-6c3d-40f9-ac70-dea7925c85dc.png",
+    "instruction": "set up onedrive",
+    "dataType": "text",
+    "dataSource": "windows",
+    "license": "Apache-2.0"
+  },
+  "image": "images/screenspot-031.png",
+  "features": [
+    {
+      "id": "screenspot-031-target",
+      "kind": "any",
+      "label": "set up onedrive",
+      "bounds": {
+        "x": 0.30833333333333335,
+        "y": 0.29074074074074074,
+        "width": 0.12916666666666665,
+        "height": 0.06851851851851853
+      }
+    }
+  ],
+  "forbiddenRegions": []
+}

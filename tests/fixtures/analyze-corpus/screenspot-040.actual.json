@@ -1,0 +1,156 @@
+{
+  "timingMs": 1936,
+  "image": "images/screenspot-040.png",
+  "ocrEngine": "windows",
+  "ocrLines": 3,
+  "visualTargets": 6,
+  "features": [
+    {
+      "id": "ocr-line-2",
+      "kind": "text",
+      "label": "personal libraries.",
+      "bounds": {
+        "x": 0.32204166666666667,
+        "y": 0.031037037037037037,
+        "width": 0.11633333333333334,
+        "height": 0.03607407407407408
+      },
+      "source": "ocr-line",
+      "rank": 82.7
+    },
+    {
+      "id": "ocr-line-3",
+      "kind": "text",
+      "label": "e Open file(s)",
+      "bounds": {
+        "x": 0.3335,
+        "y": 0.09029629629629629,
+        "width": 0.10174999999999995,
+        "height": 0.03792592592592593
+      },
+      "source": "ocr-line",
+      "rank": 80.7
+    },
+    {
+      "id": "ocr-line-1",
+      "kind": "text",
+      "label": "Use this app to play your audia and video files and explore your",
+      "bounds": {
+        "x": 0.32204166666666667,
+        "y": 0,
+        "width": 0.4059166666666666,
+        "height": 0.06755555555555555
+      },
+      "source": "ocr-line",
+      "rank": 78.8
+    },
+    {
+      "id": "omniparser-32598-7946-1",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.32597656,
+        "y": 0.07945602,
+        "width": 0.15501302,
+        "height": 0.0557147
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.90918,
+      "rank": 56.6
+    },
+    {
+      "id": "omniparser-17466-86933-2",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.1746582,
+        "y": 0.8693287,
+        "width": 0.05053711,
+        "height": 0.0901331
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.437744,
+      "rank": 53.1
+    },
+    {
+      "id": "omniparser-13511-89446-3",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.13510742,
+        "y": 0.89445891,
+        "width": 0.02315674,
+        "height": 0.04087095
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.331055,
+      "rank": 52.6
+    },
+    {
+      "id": "omniparser-28986-89683-4",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.28986003,
+        "y": 0.8968316,
+        "width": 0.018455,
+        "height": 0.03577112
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.287842,
+      "rank": 52.2
+    },
+    {
+      "id": "omniparser-24545-89810-5",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.24545085,
+        "y": 0.89810475,
+        "width": 0.0160319,
+        "height": 0.03291377
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.212036,
+      "rank": 51.7
+    },
+    {
+      "id": "omniparser-9204-90001-6",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.09204102,
+        "y": 0.90001447,
+        "width": 0.01907552,
+        "height": 0.03088831
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.188354,
+      "rank": 51.5
+    }
+  ]
+}

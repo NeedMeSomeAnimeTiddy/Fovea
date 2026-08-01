@@ -1,0 +1,30 @@
+{
+  "partialAnnotations": true,
+  "matchMode": "target-center",
+  "source": {
+    "dataset": "bevaya/ScreenSpot",
+    "datasetUrl": "https://huggingface.co/datasets/bevaya/ScreenSpot",
+    "split": "test",
+    "rowIndex": 49,
+    "sourceFileName": "pc_3b590e58-aab0-42c4-9b74-7d1a6b7f26fe.png",
+    "instruction": "enter the wegameapps folder",
+    "dataType": "text",
+    "dataSource": "windows",
+    "license": "Apache-2.0"
+  },
+  "image": "images/screenspot-049.png",
+  "features": [
+    {
+      "id": "screenspot-049-target",
+      "kind": "any",
+      "label": "enter the wegameapps folder",
+      "bounds": {
+        "x": 0.017708333333333333,
+        "y": 0.0962962962962963,
+        "width": 0.503125,
+        "height": 0.06666666666666668
+      }
+    }
+  ],
+  "forbiddenRegions": []
+}

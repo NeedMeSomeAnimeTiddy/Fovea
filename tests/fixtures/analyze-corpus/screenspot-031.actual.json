@@ -1,0 +1,281 @@
+{
+  "timingMs": 3463,
+  "image": "images/screenspot-031.png",
+  "ocrEngine": "windows",
+  "ocrLines": 30,
+  "visualTargets": 8,
+  "features": [
+    {
+      "id": "omniparser-55951-29447-2",
+      "kind": "control",
+      "label": "Sign in",
+      "bounds": {
+        "x": 0.55950521,
+        "y": 0.29447338,
+        "width": 0.12467448,
+        "height": 0.05908565
+      },
+      "source": "hybrid",
+      "rank": 105.6,
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.778809
+    },
+    {
+      "id": "omniparser-56042-38980-4",
+      "kind": "control",
+      "label": "Dismiss",
+      "bounds": {
+        "x": 0.56041667,
+        "y": 0.38980035,
+        "width": 0.12539063,
+        "height": 0.04110243
+      },
+      "source": "hybrid",
+      "rank": 100.8,
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.15564
+    },
+    {
+      "id": "ocr-line-15",
+      "kind": "value",
+      "label": "8",
+      "bounds": {
+        "x": 0.30225,
+        "y": 0.5199260185185185,
+        "width": 0.04341666666666665,
+        "height": 0.09903722222222243
+      },
+      "source": "ocr-line",
+      "rank": 86.3
+    },
+    {
+      "id": "ocr-line-2",
+      "kind": "value",
+      "label": "9",
+      "bounds": {
+        "x": 0.5512085416666667,
+        "y": 0,
+        "width": 0.06424999999999992,
+        "height": 0.10644444444444444
+      },
+      "source": "ocr-line",
+      "rank": 85.2
+    },
+    {
+      "id": "ocr-line-10",
+      "kind": "text",
+      "label": "Set up OneDrive",
+      "bounds": {
+        "x": 0.31579166666666664,
+        "y": 0.3088148148148148,
+        "width": 0.11320833333333336,
+        "height": 0.03607407407407408
+      },
+      "source": "ocr-line",
+      "rank": 82.4
+    },
+    {
+      "id": "ocr-line-1",
+      "kind": "text",
+      "label": "A",
+      "bounds": {
+        "x": 0.321,
+        "y": 0,
+        "width": 0.045500208333333396,
+        "height": 0.1045926851851852
+      },
+      "source": "ocr-line",
+      "rank": 82.3
+    },
+    {
+      "id": "ocr-line-6",
+      "kind": "text",
+      "label": "ye",
+      "bounds": {
+        "x": 0.48766666666666664,
+        "y": 0.16066694444444443,
+        "width": 0.02154187499999998,
+        "height": 0.06940712962962962
+      },
+      "source": "ocr-line",
+      "rank": 81.8
+    },
+    {
+      "id": "ocr-line-8",
+      "kind": "text",
+      "label": "attack.",
+      "bounds": {
+        "x": 0.305375,
+        "y": 0.22733333333333333,
+        "width": 0.04549999999999998,
+        "height": 0.030518518518518545
+      },
+      "source": "ocr-line",
+      "rank": 80.9
+    },
+    {
+      "id": "ocr-line-13",
+      "kind": "text",
+      "label": "Dismiss",
+      "bounds": {
+        "x": 0.30641666666666667,
+        "y": 0.394,
+        "width": 0.054875,
+        "height": 0.03051851851851849
+      },
+      "source": "ocr-line",
+      "rank": 80.9
+    },
+    {
+      "id": "ocr-line-12",
+      "kind": "text",
+      "label": "options",
+      "bounds": {
+        "x": 0.004333333333333333,
+        "y": 0.344,
+        "width": 0.05591666666666667,
+        "height": 0.03607407407407408
+      },
+      "source": "ocr-line",
+      "rank": 80.8
+    },
+    {
+      "id": "ocr-line-7",
+      "kind": "text",
+      "label": "e security",
+      "bounds": {
+        "x": 0,
+        "y": 0.19585185185185186,
+        "width": 0.06737499999999999,
+        "height": 0.03607407407407408
+      },
+      "source": "ocr-line",
+      "rank": 80.8
+    },
+    {
+      "id": "ocr-line-4",
+      "kind": "text",
+      "label": "browser control",
+      "bounds": {
+        "x": 0.006416666666666666,
+        "y": 0.12177777777777776,
+        "width": 0.10799999999999998,
+        "height": 0.030518518518518518
+      },
+      "source": "ocr-line",
+      "rank": 80.7
+    },
+    {
+      "id": "ocr-line-9",
+      "kind": "text",
+      "label": "e performance & health",
+      "bounds": {
+        "x": 0,
+        "y": 0.2699259259259259,
+        "width": 0.1590416666666667,
+        "height": 0.03607407407407408
+      },
+      "source": "ocr-line",
+      "rank": 80.5
+    },
+    {
+      "id": "ocr-line-3",
+      "kind": "text",
+      "label": "311 & network protection",
+      "bounds": {
+        "x": 0,
+        "y": 0.047703703703703706,
+        "width": 0.16216666666666668,
+        "height": 0.03607407407407408
+      },
+      "source": "ocr-line",
+      "rank": 80.5
+    },
+    {
+      "id": "ocr-line-5",
+      "kind": "text",
+      "label": "Firewall & network protection No action needed.",
+      "bounds": {
+        "x": 0.805375,
+        "y": 0.12733333333333333,
+        "width": 0.13612500000000005,
+        "height": 0.10459259259259258
+      },
+      "source": "ocr-line",
+      "rank": 79.9
+    },
+    {
+      "id": "ocr-line-16",
+      "kind": "text",
+      "label": "Fami Manage how your family uses their",
+      "bounds": {
+        "x": 0.305375,
+        "y": 0.6477037037037037,
+        "width": 0.18404166666666666,
+        "height": 0.09903703703703702
+      },
+      "source": "ocr-line",
+      "rank": 78.9
+    },
+    {
+      "id": "omniparser-30905-29430-1",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.30904948,
+        "y": 0.29429977,
+        "width": 0.12721354,
+        "height": 0.05944734
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.789062,
+      "rank": 55.7
+    },
+    {
+      "id": "omniparser-55923-0-6",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.55922852,
+        "y": 0,
+        "width": 0.0542806,
+        "height": 0.08657407
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.134277,
+      "rank": 50.7
+    },
+    {
+      "id": "omniparser-80798-0-8",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.80797526,
+        "y": 0,
+        "width": 0.05432129,
+        "height": 0.08952546
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.096008,
+      "rank": 50.4
+    }
+  ]
+}

@@ -1,0 +1,385 @@
+{
+  "timingMs": 3352,
+  "image": "images/screenspot-039.png",
+  "ocrEngine": "windows",
+  "ocrLines": 32,
+  "visualTargets": 7,
+  "features": [
+    {
+      "id": "omniparser-31172-61029-2",
+      "kind": "control",
+      "label": "30 minutes",
+      "bounds": {
+        "x": 0.31171875,
+        "y": 0.61028646,
+        "width": 0.18632813,
+        "height": 0.05710359
+      },
+      "source": "hybrid",
+      "rank": 106.5,
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.914062
+    },
+    {
+      "id": "omniparser-31198-32700-1",
+      "kind": "control",
+      "label": "10 minutes",
+      "bounds": {
+        "x": 0.31197917,
+        "y": 0.32699653,
+        "width": 0.18632813,
+        "height": 0.05726273
+      },
+      "source": "hybrid",
+      "rank": 106.5,
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.914062
+    },
+    {
+      "id": "omniparser-85814-60930-5",
+      "kind": "control",
+      "label": "Get hk",
+      "bounds": {
+        "x": 0.85813802,
+        "y": 0.60930266,
+        "width": 0.14186198,
+        "height": 0.0411603
+      },
+      "source": "hybrid",
+      "rank": 100.6,
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.132568
+    },
+    {
+      "id": "ocr-line-5",
+      "kind": "control",
+      "label": "Save energ",
+      "bounds": {
+        "x": 0.924125,
+        "y": 0.18474074074074073,
+        "width": 0.07587500000000003,
+        "height": 0.03607407407407408
+      },
+      "source": "ocr-line",
+      "rank": 88.8
+    },
+    {
+      "id": "ocr-line-1",
+      "kind": "text",
+      "label": "gs",
+      "bounds": {
+        "x": 0,
+        "y": 0.008814907407407403,
+        "width": 0.021541458333333326,
+        "height": 0.03792592592592593
+      },
+      "source": "ocr-line",
+      "rank": 82.9
+    },
+    {
+      "id": "ocr-line-29",
+      "kind": "text",
+      "label": "Give f",
+      "bounds": {
+        "x": 0.9574583333333333,
+        "y": 0.6699259259259259,
+        "width": 0.0425416666666667,
+        "height": 0.03051851851851849
+      },
+      "source": "ocr-line",
+      "rank": 82.9
+    },
+    {
+      "id": "ocr-line-4",
+      "kind": "text",
+      "label": "Home",
+      "bounds": {
+        "x": 0.00016666666666666653,
+        "y": 0.11437037037037036,
+        "width": 0.0455,
+        "height": 0.03051851851851853
+      },
+      "source": "ocr-line",
+      "rank": 82.9
+    },
+    {
+      "id": "ocr-line-21",
+      "kind": "text",
+      "label": "Additional",
+      "bounds": {
+        "x": 0.924125,
+        "y": 0.48844444444444446,
+        "width": 0.07362500000000005,
+        "height": 0.03051851851851849
+      },
+      "source": "ocr-line",
+      "rank": 82.8
+    },
+    {
+      "id": "ocr-line-8",
+      "kind": "text",
+      "label": "d a setting",
+      "bounds": {
+        "x": 0,
+        "y": 0.19955555555555554,
+        "width": 0.07466666666666666,
+        "height": 0.03607407407407408
+      },
+      "source": "ocr-line",
+      "rank": 82.8
+    },
+    {
+      "id": "ocr-line-22",
+      "kind": "text",
+      "label": "hen plugged in, PC goes to s",
+      "bounds": {
+        "x": 0.30745833333333333,
+        "y": 0.5625185185185185,
+        "width": 0.23300000000000004,
+        "height": 0.03607407407407402
+      },
+      "source": "ocr-line",
+      "rank": 82.2
+    },
+    {
+      "id": "ocr-line-32",
+      "kind": "text",
+      "label": "Tablet",
+      "bounds": {
+        "x": 0,
+        "y": 0.9291851851851852,
+        "width": 0.0455,
+        "height": 0.03051851851851849
+      },
+      "source": "ocr-line",
+      "rank": 80.9
+    },
+    {
+      "id": "ocr-line-20",
+      "kind": "text",
+      "label": "Sound",
+      "bounds": {
+        "x": 0,
+        "y": 0.48474074074074075,
+        "width": 0.048625,
+        "height": 0.030518518518518545
+      },
+      "source": "ocr-line",
+      "rank": 80.9
+    },
+    {
+      "id": "ocr-line-17",
+      "kind": "text",
+      "label": "Related",
+      "bounds": {
+        "x": 0.9251666666666667,
+        "y": 0.4384444444444444,
+        "width": 0.05383333333333328,
+        "height": 0.03051851851851849
+      },
+      "source": "ocr-line",
+      "rank": 80.9
+    },
+    {
+      "id": "ocr-line-16",
+      "kind": "text",
+      "label": "Display",
+      "bounds": {
+        "x": 0,
+        "y": 0.39585185185185184,
+        "width": 0.05383333333333333,
+        "height": 0.03607407407407408
+      },
+      "source": "ocr-line",
+      "rank": 80.8
+    },
+    {
+      "id": "ocr-line-31",
+      "kind": "text",
+      "label": "Storage",
+      "bounds": {
+        "x": 0,
+        "y": 0.8402962962962963,
+        "width": 0.05591666666666667,
+        "height": 0.03607407407407402
+      },
+      "source": "ocr-line",
+      "rank": 80.8
+    },
+    {
+      "id": "ocr-line-28",
+      "kind": "text",
+      "label": "Focus assist",
+      "bounds": {
+        "x": 0,
+        "y": 0.6625185185185185,
+        "width": 0.08195833333333333,
+        "height": 0.03051851851851849
+      },
+      "source": "ocr-line",
+      "rank": 80.8
+    },
+    {
+      "id": "ocr-line-7",
+      "kind": "text",
+      "label": "Screen",
+      "bounds": {
+        "x": 0.30745833333333333,
+        "y": 0.1977037037037037,
+        "width": 0.06737500000000002,
+        "height": 0.03792592592592593
+      },
+      "source": "ocr-line",
+      "rank": 80.8
+    },
+    {
+      "id": "ocr-line-10",
+      "kind": "text",
+      "label": "choosing sl",
+      "bounds": {
+        "x": 0.9251666666666667,
+        "y": 0.2699259259259259,
+        "width": 0.07483333333333331,
+        "height": 0.03607407407407408
+      },
+      "source": "ocr-line",
+      "rank": 80.8
+    },
+    {
+      "id": "ocr-line-13",
+      "kind": "text",
+      "label": "sleep settin",
+      "bounds": {
+        "x": 0.9251666666666667,
+        "y": 0.30325925925925923,
+        "width": 0.07483333333333331,
+        "height": 0.03607407407407408
+      },
+      "source": "ocr-line",
+      "rank": 80.8
+    },
+    {
+      "id": "ocr-line-9",
+      "kind": "text",
+      "label": "Make your",
+      "bounds": {
+        "x": 0.9251666666666667,
+        "y": 0.23474074074074072,
+        "width": 0.07483333333333331,
+        "height": 0.036074074074074106
+      },
+      "source": "ocr-line",
+      "rank": 80.8
+    },
+    {
+      "id": "ocr-line-19",
+      "kind": "text",
+      "label": "Sleep",
+      "bounds": {
+        "x": 0.30745833333333333,
+        "y": 0.47918518518518516,
+        "width": 0.05591666666666666,
+        "height": 0.049037037037036976
+      },
+      "source": "ocr-line",
+      "rank": 80.8
+    },
+    {
+      "id": "ocr-line-30",
+      "kind": "text",
+      "label": "Power & sleep",
+      "bounds": {
+        "x": 0,
+        "y": 0.7514074074074074,
+        "width": 0.09758333333333333,
+        "height": 0.03607407407407402
+      },
+      "source": "ocr-line",
+      "rank": 80.7
+    },
+    {
+      "id": "ocr-line-25",
+      "kind": "text",
+      "label": "Notifications & actions",
+      "bounds": {
+        "x": 0,
+        "y": 0.5736296296296296,
+        "width": 0.1527916666666667,
+        "height": 0.03051851851851849
+      },
+      "source": "ocr-line",
+      "rank": 80.6
+    },
+    {
+      "id": "ocr-line-12",
+      "kind": "text",
+      "label": "When plugged in, turn off after",
+      "bounds": {
+        "x": 0.30745833333333333,
+        "y": 0.2791851851851852,
+        "width": 0.20800000000000002,
+        "height": 0.03607407407407408
+      },
+      "source": "ocr-line",
+      "rank": 80.4
+    },
+    {
+      "id": "ocr-line-2",
+      "kind": "text",
+      "label": "Power & sleep",
+      "bounds": {
+        "x": 0.30745833333333333,
+        "y": 0.1014074074074074,
+        "width": 0.183,
+        "height": 0.062
+      },
+      "source": "ocr-line",
+      "rank": 80.1
+    },
+    {
+      "id": "omniparser-0-18841-3",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0,
+        "y": 0.18841146,
+        "width": 0.26953125,
+        "height": 0.05730613
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.6875,
+      "rank": 54.3
+    },
+    {
+      "id": "omniparser-84779-65964-6",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.84778646,
+        "y": 0.65963542,
+        "width": 0.15221354,
+        "height": 0.04318576
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.105957,
+      "rank": 50.3
+    }
+  ]
+}

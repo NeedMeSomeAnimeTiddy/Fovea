@@ -1,0 +1,819 @@
+{
+  "timingMs": 2209,
+  "image": "images/screenspot-050.png",
+  "ocrEngine": "windows",
+  "ocrLines": 41,
+  "visualTargets": 21,
+  "features": [
+    {
+      "id": "omniparser-35378-77364-1",
+      "kind": "control",
+      "label": "More details",
+      "bounds": {
+        "x": 0.35377604,
+        "y": 0.77364005,
+        "width": 0.06923828,
+        "height": 0.0745081
+      },
+      "source": "hybrid",
+      "rank": 106.2,
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.829102
+    },
+    {
+      "id": "omniparser-17168-77486-5",
+      "kind": "control",
+      "label": "ummary",
+      "bounds": {
+        "x": 0.17167969,
+        "y": 0.77485532,
+        "width": 0.05629883,
+        "height": 0.07377025
+      },
+      "source": "hybrid",
+      "rank": 105.8,
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.767578
+    },
+    {
+      "id": "omniparser-27065-77439-12",
+      "kind": "control",
+      "label": "Hourly",
+      "bounds": {
+        "x": 0.2706543,
+        "y": 0.77439236,
+        "width": 0.03810221,
+        "height": 0.07381366
+      },
+      "source": "hybrid",
+      "rank": 104.4,
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.57373
+    },
+    {
+      "id": "ocr-line-5",
+      "kind": "value",
+      "label": "09:50",
+      "bounds": {
+        "x": 0.1585,
+        "y": 0.03103731481481481,
+        "width": 0.038208124999999975,
+        "height": 0.03792592592592593
+      },
+      "source": "ocr-line",
+      "rank": 86.9
+    },
+    {
+      "id": "ocr-line-7",
+      "kind": "value",
+      "label": "11",
+      "bounds": {
+        "x": 0.244958125,
+        "y": 0.11807388888888888,
+        "width": 0.07258312500000011,
+        "height": 0.091629537037037
+      },
+      "source": "ocr-line",
+      "rank": 86.5
+    },
+    {
+      "id": "ocr-line-1",
+      "kind": "value",
+      "label": "0",
+      "bounds": {
+        "x": 0.8074585416666666,
+        "y": 0,
+        "width": 0.03820812500000003,
+        "height": 0.06755537037037036
+      },
+      "source": "ocr-line",
+      "rank": 85.8
+    },
+    {
+      "id": "ocr-line-36",
+      "kind": "value",
+      "label": "110",
+      "bounds": {
+        "x": 0.3189166666666667,
+        "y": 0.9514074074074074,
+        "width": 0.027791666666666652,
+        "height": 0.03051851851851849
+      },
+      "source": "ocr-line",
+      "rank": 84.9
+    },
+    {
+      "id": "ocr-line-37",
+      "kind": "value",
+      "label": "110",
+      "bounds": {
+        "x": 0.5251666666666667,
+        "y": 0.9514074074074074,
+        "width": 0.027791666666666652,
+        "height": 0.03051851851851849
+      },
+      "source": "ocr-line",
+      "rank": 84.9
+    },
+    {
+      "id": "ocr-line-38",
+      "kind": "value",
+      "label": "110",
+      "bounds": {
+        "x": 0.6282916666666667,
+        "y": 0.9514074074074074,
+        "width": 0.027791666666666652,
+        "height": 0.03051851851851849
+      },
+      "source": "ocr-line",
+      "rank": 84.9
+    },
+    {
+      "id": "ocr-line-35",
+      "kind": "value",
+      "label": "110",
+      "bounds": {
+        "x": 0.21579166666666666,
+        "y": 0.9514074074074074,
+        "width": 0.028833333333333343,
+        "height": 0.03051851851851849
+      },
+      "source": "ocr-line",
+      "rank": 84.9
+    },
+    {
+      "id": "ocr-line-39",
+      "kind": "value",
+      "label": "110",
+      "bounds": {
+        "x": 0.730375,
+        "y": 0.9514074074074074,
+        "width": 0.02883333333333337,
+        "height": 0.03051851851851849
+      },
+      "source": "ocr-line",
+      "rank": 84.9
+    },
+    {
+      "id": "ocr-line-40",
+      "kind": "value",
+      "label": "110",
+      "bounds": {
+        "x": 0.8335,
+        "y": 0.9514074074074074,
+        "width": 0.02883333333333337,
+        "height": 0.03051851851851849
+      },
+      "source": "ocr-line",
+      "rank": 84.9
+    },
+    {
+      "id": "ocr-line-41",
+      "kind": "value",
+      "label": "110",
+      "bounds": {
+        "x": 0.936625,
+        "y": 0.9514074074074074,
+        "width": 0.02883333333333337,
+        "height": 0.03051851851851849
+      },
+      "source": "ocr-line",
+      "rank": 84.9
+    },
+    {
+      "id": "ocr-line-25",
+      "kind": "value",
+      "label": "120",
+      "bounds": {
+        "x": 0.22829166666666667,
+        "y": 0.6236296296296296,
+        "width": 0.03300000000000002,
+        "height": 0.03607407407407402
+      },
+      "source": "ocr-line",
+      "rank": 84.9
+    },
+    {
+      "id": "ocr-line-27",
+      "kind": "value",
+      "label": "150",
+      "bounds": {
+        "x": 0.5564166666666667,
+        "y": 0.6236296296296296,
+        "width": 0.03300000000000002,
+        "height": 0.03607407407407402
+      },
+      "source": "ocr-line",
+      "rank": 84.9
+    },
+    {
+      "id": "ocr-line-28",
+      "kind": "value",
+      "label": "140",
+      "bounds": {
+        "x": 0.7189166666666666,
+        "y": 0.6236296296296296,
+        "width": 0.03300000000000002,
+        "height": 0.03607407407407402
+      },
+      "source": "ocr-line",
+      "rank": 84.9
+    },
+    {
+      "id": "ocr-line-29",
+      "kind": "value",
+      "label": "110",
+      "bounds": {
+        "x": 0.230375,
+        "y": 0.6791851851851852,
+        "width": 0.03300000000000002,
+        "height": 0.03607407407407402
+      },
+      "source": "ocr-line",
+      "rank": 84.9
+    },
+    {
+      "id": "ocr-line-30",
+      "kind": "value",
+      "label": "130",
+      "bounds": {
+        "x": 0.5585,
+        "y": 0.6791851851851852,
+        "width": 0.03300000000000002,
+        "height": 0.03607407407407402
+      },
+      "source": "ocr-line",
+      "rank": 84.9
+    },
+    {
+      "id": "ocr-line-2",
+      "kind": "text",
+      "label": "Current weather",
+      "bounds": {
+        "x": 0.1585,
+        "y": 0.0014074074074074076,
+        "width": 0.11529166666666665,
+        "height": 0.030518518518518518
+      },
+      "source": "ocr-line",
+      "rank": 82.7
+    },
+    {
+      "id": "ocr-line-11",
+      "kind": "text",
+      "label": "Iloc",
+      "bounds": {
+        "x": 0.9220416666666666,
+        "y": 0.2328888888888889,
+        "width": 0.03300000000000002,
+        "height": 0.02866666666666669
+      },
+      "source": "ocr-line",
+      "rank": 80.9
+    },
+    {
+      "id": "ocr-line-34",
+      "kind": "text",
+      "label": "Today",
+      "bounds": {
+        "x": 0.9501666666666667,
+        "y": 0.8643703703703703,
+        "width": 0.041333333333333326,
+        "height": 0.03422222222222225
+      },
+      "source": "ocr-line",
+      "rank": 80.9
+    },
+    {
+      "id": "ocr-line-10",
+      "kind": "text",
+      "label": "LOnd0L",
+      "bounds": {
+        "x": 0.9012083333333333,
+        "y": 0.2014074074074074,
+        "width": 0.04966666666666663,
+        "height": 0.030518518518518518
+      },
+      "source": "ocr-line",
+      "rank": 80.9
+    },
+    {
+      "id": "ocr-line-24",
+      "kind": "text",
+      "label": "Tue 26",
+      "bounds": {
+        "x": 0.817875,
+        "y": 0.5773333333333334,
+        "width": 0.051749999999999956,
+        "height": 0.03051851851851849
+      },
+      "source": "ocr-line",
+      "rank": 80.9
+    },
+    {
+      "id": "ocr-line-22",
+      "kind": "text",
+      "label": "Sun 24",
+      "bounds": {
+        "x": 0.49495833333333333,
+        "y": 0.5773333333333334,
+        "width": 0.05175000000000001,
+        "height": 0.03051851851851849
+      },
+      "source": "ocr-line",
+      "rank": 80.9
+    },
+    {
+      "id": "ocr-line-23",
+      "kind": "text",
+      "label": "Mon 25",
+      "bounds": {
+        "x": 0.6574583333333334,
+        "y": 0.5773333333333334,
+        "width": 0.05591666666666661,
+        "height": 0.03051851851851849
+      },
+      "source": "ocr-line",
+      "rank": 80.9
+    },
+    {
+      "id": "ocr-line-13",
+      "kind": "text",
+      "label": "Wind C)",
+      "bounds": {
+        "x": 0.1585,
+        "y": 0.3551111111111111,
+        "width": 0.05175000000000001,
+        "height": 0.034222222222222196
+      },
+      "source": "ocr-line",
+      "rank": 80.9
+    },
+    {
+      "id": "ocr-line-18",
+      "kind": "text",
+      "label": "10 km",
+      "bounds": {
+        "x": 0.4355833333333333,
+        "y": 0.39214814814814813,
+        "width": 0.05175000000000001,
+        "height": 0.03422222222222225
+      },
+      "source": "ocr-line",
+      "rank": 80.9
+    },
+    {
+      "id": "ocr-line-15",
+      "kind": "text",
+      "label": "Pressure C)",
+      "bounds": {
+        "x": 0.5605833333333333,
+        "y": 0.3551111111111111,
+        "width": 0.06945833333333329,
+        "height": 0.034222222222222196
+      },
+      "source": "ocr-line",
+      "rank": 80.8
+    },
+    {
+      "id": "ocr-line-19",
+      "kind": "text",
+      "label": "1013 mb",
+      "bounds": {
+        "x": 0.561625,
+        "y": 0.39214814814814813,
+        "width": 0.07154166666666661,
+        "height": 0.03422222222222225
+      },
+      "source": "ocr-line",
+      "rank": 80.8
+    },
+    {
+      "id": "ocr-line-17",
+      "kind": "text",
+      "label": "21 km/h",
+      "bounds": {
+        "x": 0.1585,
+        "y": 0.39214814814814813,
+        "width": 0.06841666666666668,
+        "height": 0.037925925925925905
+      },
+      "source": "ocr-line",
+      "rank": 80.8
+    },
+    {
+      "id": "ocr-line-8",
+      "kind": "text",
+      "label": "Feels like 50",
+      "bounds": {
+        "x": 0.38245833333333334,
+        "y": 0.16622222222222222,
+        "width": 0.09133333333333332,
+        "height": 0.030518518518518518
+      },
+      "source": "ocr-line",
+      "rank": 80.8
+    },
+    {
+      "id": "ocr-line-14",
+      "kind": "text",
+      "label": "Humidiw C)",
+      "bounds": {
+        "x": 0.30433333333333334,
+        "y": 0.3551111111111111,
+        "width": 0.073625,
+        "height": 0.03977777777777773
+      },
+      "source": "ocr-line",
+      "rank": 80.8
+    },
+    {
+      "id": "ocr-line-26",
+      "kind": "text",
+      "label": "Partly sunny",
+      "bounds": {
+        "x": 0.355375,
+        "y": 0.6236296296296296,
+        "width": 0.08508333333333329,
+        "height": 0.03607407407407402
+      },
+      "source": "ocr-line",
+      "rank": 80.8
+    },
+    {
+      "id": "ocr-line-16",
+      "kind": "text",
+      "label": "Dew point C)",
+      "bounds": {
+        "x": 0.68975,
+        "y": 0.3551111111111111,
+        "width": 0.07987500000000003,
+        "height": 0.03977777777777773
+      },
+      "source": "ocr-line",
+      "rank": 80.7
+    },
+    {
+      "id": "ocr-line-4",
+      "kind": "text",
+      "label": "different weather?",
+      "bounds": {
+        "x": 0.617875,
+        "y": 0.012518518518518517,
+        "width": 0.12570833333333342,
+        "height": 0.030518518518518518
+      },
+      "source": "ocr-line",
+      "rank": 80.7
+    },
+    {
+      "id": "ocr-line-21",
+      "kind": "text",
+      "label": "10 DAY FORECAST",
+      "bounds": {
+        "x": 0.14079166666666668,
+        "y": 0.494,
+        "width": 0.12883333333333333,
+        "height": 0.03051851851851849
+      },
+      "source": "ocr-line",
+      "rank": 80.7
+    },
+    {
+      "id": "ocr-line-6",
+      "kind": "text",
+      "label": "Mostly cloudy",
+      "bounds": {
+        "x": 0.38245833333333334,
+        "y": 0.11622222222222221,
+        "width": 0.12779166666666664,
+        "height": 0.04533333333333334
+      },
+      "source": "ocr-line",
+      "rank": 80.5
+    },
+    {
+      "id": "ocr-line-20",
+      "kind": "text",
+      "label": "No precipitation for at least 2",
+      "bounds": {
+        "x": 0.8043333333333333,
+        "y": 0.4106666666666667,
+        "width": 0.19566666666666666,
+        "height": 0.03607407407407408
+      },
+      "source": "ocr-line",
+      "rank": 80.4
+    },
+    {
+      "id": "ocr-line-12",
+      "kind": "text",
+      "label": "Expect partly sunny skies. The high will be 120.",
+      "bounds": {
+        "x": 0.1585,
+        "y": 0.2662222222222222,
+        "width": 0.34654166666666664,
+        "height": 0.04162962962962967
+      },
+      "source": "ocr-line",
+      "rank": 79.8
+    },
+    {
+      "id": "omniparser-80977-0-6",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.80976563,
+        "y": 0,
+        "width": 0.03823242,
+        "height": 0.05983796
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.733887,
+      "rank": 55.7
+    },
+    {
+      "id": "omniparser-84930-0-7",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.84930013,
+        "y": 0,
+        "width": 0.03791504,
+        "height": 0.06239873
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.712402,
+      "rank": 55.5
+    },
+    {
+      "id": "omniparser-88768-0-8",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.88767904,
+        "y": 0,
+        "width": 0.04148763,
+        "height": 0.06296296
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.694336,
+      "rank": 55.3
+    },
+    {
+      "id": "omniparser-93265-0-10",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.93264974,
+        "y": 0,
+        "width": 0.04253337,
+        "height": 0.06313657
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.672363,
+      "rank": 55.2
+    },
+    {
+      "id": "omniparser-95544-55197-11",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.95544434,
+        "y": 0.55196759,
+        "width": 0.04455566,
+        "height": 0.2
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.583008,
+      "rank": 53.6
+    },
+    {
+      "id": "omniparser-63125-55203-2",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.63125,
+        "y": 0.55202546,
+        "width": 0.15406901,
+        "height": 0.20017361
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.811523,
+      "rank": 54
+    },
+    {
+      "id": "omniparser-46999-55226-4",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.46998698,
+        "y": 0.55225694,
+        "width": 0.1530599,
+        "height": 0.2
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.775879,
+      "rank": 53.8
+    },
+    {
+      "id": "omniparser-79355-55231-3",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.79355469,
+        "y": 0.55231481,
+        "width": 0.1531901,
+        "height": 0.19994213
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.775879,
+      "rank": 53.8
+    },
+    {
+      "id": "omniparser-94576-20509-14",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.94576009,
+        "y": 0.20508536,
+        "width": 0.01225586,
+        "height": 0.0239511
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.457031,
+      "rank": 53.6
+    },
+    {
+      "id": "omniparser-57089-86465-15",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.57089437,
+        "y": 0.86464844,
+        "width": 0.01573486,
+        "height": 0.02824797
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.36377,
+      "rank": 52.9
+    },
+    {
+      "id": "omniparser-90535-23491-16",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.90534668,
+        "y": 0.2349103,
+        "width": 0.02074382,
+        "height": 0.03154659
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.240723,
+      "rank": 51.9
+    },
+    {
+      "id": "omniparser-75324-36173-17",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.75323893,
+        "y": 0.36173322,
+        "width": 0.01251017,
+        "height": 0.02368345
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.233032,
+      "rank": 51.8
+    },
+    {
+      "id": "omniparser-21924-95404-20",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.21923726,
+        "y": 0.95404369,
+        "width": 0.02055766,
+        "height": 0.02409578
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.101929,
+      "rank": 50.8
+    },
+    {
+      "id": "omniparser-59154-92867-19",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.59153646,
+        "y": 0.92867477,
+        "width": 0.10410156,
+        "height": 0.07028356
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.126831,
+      "rank": 50.4
+    },
+    {
+      "id": "omniparser-69495-93552-21",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.69495443,
+        "y": 0.93551794,
+        "width": 0.10211589,
+        "height": 0.06127025
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.085999,
+      "rank": 50.2
+    },
+    {
+      "id": "omniparser-14740-55255-13",
+      "kind": "control",
+      "label": "Unlabelled button",
+      "bounds": {
+        "x": 0.14739583,
+        "y": 0.5525463,
+        "width": 0.31276042,
+        "height": 0.19693287
+      },
+      "source": "visual",
+      "detector": "omniparser",
+      "role": "button",
+      "description": "Visible interactive control detected from the frozen screen",
+      "enabled": true,
+      "visibility": 0.548828,
+      "rank": 49.5
+    }
+  ]
+}

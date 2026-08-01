@@ -1,0 +1,30 @@
+{
+  "partialAnnotations": true,
+  "matchMode": "target-center",
+  "source": {
+    "dataset": "bevaya/ScreenSpot",
+    "datasetUrl": "https://huggingface.co/datasets/bevaya/ScreenSpot",
+    "split": "test",
+    "rowIndex": 43,
+    "sourceFileName": "pc_05f0185e-a291-4e4c-a777-ffb2c46037c6.png",
+    "instruction": "light rotation",
+    "dataType": "text",
+    "dataSource": "windows",
+    "license": "Apache-2.0"
+  },
+  "image": "images/screenspot-043.png",
+  "features": [
+    {
+      "id": "screenspot-043-target",
+      "kind": "any",
+      "label": "light rotation",
+      "bounds": {
+        "x": 0.40625,
+        "y": 0.3388888888888889,
+        "width": 0.31666666666666665,
+        "height": 0.45925925925925926
+      }
+    }
+  ],
+  "forbiddenRegions": []
+}
