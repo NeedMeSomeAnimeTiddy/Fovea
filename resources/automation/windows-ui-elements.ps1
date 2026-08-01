@@ -8,13 +8,41 @@ $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 Add-Type @'
 using System;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 
 public static class FoveaVisibleWindow {
+  private delegate bool EnumWindowsCallback(IntPtr window, IntPtr parameter);
+
   [StructLayout(LayoutKind.Sequential)]
   public struct Point {
     public int X;
     public int Y;
+  }
+
+  [StructLayout(LayoutKind.Sequential)]
+  public struct Rect {
+    public int Left;
+    public int Top;
+    public int Right;
+    public int Bottom;
+  }
+
+  public sealed class Snapshot {
+    public long Handle;
+    public int Left;
+    public int Top;
+    public int Right;
+    public int Bottom;
+  }
+
+  public sealed class HitGrid {
+    public int Left;
+    public int Top;
+    public int Step;
+    public int Columns;
+    public int Rows;
+    public long[] Handles;
   }
 
   [DllImport("user32.dll")]
@@ -25,9 +53,98 @@ public static class FoveaVisibleWindow {
 
   [DllImport("user32.dll")]
   public static extern IntPtr GetForegroundWindow();
+
+  [DllImport("user32.dll")]
+  private static extern int GetSystemMetrics(int index);
+
+  [DllImport("user32.dll")]
+  private static extern bool EnumWindows(EnumWindowsCallback callback, IntPtr parameter);
+
+  [DllImport("user32.dll")]
+  private static extern bool IsWindowVisible(IntPtr window);
+
+  [DllImport("user32.dll")]
+  private static extern bool IsIconic(IntPtr window);
+
+  [DllImport("user32.dll")]
+  private static extern bool GetWindowRect(IntPtr window, out Rect bounds);
+
+  [DllImport("dwmapi.dll")]
+  private static extern int DwmGetWindowAttribute(
+    IntPtr window,
+    int attribute,
+    out int value,
+    int valueSize
+  );
+
+  public static Snapshot[] CaptureVisibleWindows() {
+    var output = new List<Snapshot>();
+    EnumWindows(delegate(IntPtr window, IntPtr parameter) {
+      if (!IsWindowVisible(window) || IsIconic(window)) return true;
+      int cloaked = 0;
+      try {
+        if (DwmGetWindowAttribute(window, 14, out cloaked, sizeof(int)) == 0 && cloaked != 0) return true;
+      }
+      catch {
+        // DWM cloaking is unavailable on older Windows versions.
+      }
+      Rect bounds;
+      if (!GetWindowRect(window, out bounds)) return true;
+      if (bounds.Right - bounds.Left < 2 || bounds.Bottom - bounds.Top < 2) return true;
+      output.Add(new Snapshot {
+        Handle = window.ToInt64(),
+        Left = bounds.Left,
+        Top = bounds.Top,
+        Right = bounds.Right,
+        Bottom = bounds.Bottom
+      });
+      return true;
+    }, IntPtr.Zero);
+    return output.ToArray();
+  }
+
+  public static HitGrid CaptureHitGrid(int step) {
+    var left = GetSystemMetrics(76);
+    var top = GetSystemMetrics(77);
+    var width = Math.Max(1, GetSystemMetrics(78));
+    var height = Math.Max(1, GetSystemMetrics(79));
+    step = Math.Max(4, step);
+    var columns = Math.Max(1, (int)Math.Ceiling(width / (double)step));
+    var rows = Math.Max(1, (int)Math.Ceiling(height / (double)step));
+    var handles = new long[columns * rows];
+    for (var row = 0; row < rows; row++) {
+      var y = Math.Min(top + height - 1, top + row * step + step / 2);
+      for (var column = 0; column < columns; column++) {
+        var x = Math.Min(left + width - 1, left + column * step + step / 2);
+        var point = new Point { X = x, Y = y };
+        var hit = WindowFromPoint(point);
+        var root = hit == IntPtr.Zero ? IntPtr.Zero : GetAncestor(hit, 2);
+        handles[row * columns + column] = (root == IntPtr.Zero ? hit : root).ToInt64();
+      }
+    }
+    return new HitGrid {
+      Left = left,
+      Top = top,
+      Step = step,
+      Columns = columns,
+      Rows = rows,
+      Handles = handles
+    };
+  }
 }
 '@
 
+$capturedHitGrid = [FoveaVisibleWindow]::CaptureHitGrid(12)
+$capturedHitHandles = [System.Collections.Generic.HashSet[long]]::new()
+foreach ($handle in $capturedHitGrid.Handles) {
+  if ($handle -ne 0) {
+    [void] $capturedHitHandles.Add($handle)
+  }
+}
+$capturedWindows = @(
+  [FoveaVisibleWindow]::CaptureVisibleWindows() |
+    Where-Object { $capturedHitHandles.Contains($_.Handle) }
+)
 $capturedForegroundHandle = [IntPtr]::Zero
 if ($ForegroundOnly) {
   # Pin the source window before loading and walking its accessibility tree.
@@ -210,6 +327,32 @@ function Test-WindowAtPoint {
   }
 }
 
+function Test-FrozenWindowAtPoint {
+  param(
+    [IntPtr] $RootHandle,
+    [System.Windows.Point] $Point
+  )
+  if ($RootHandle -eq [IntPtr]::Zero) {
+    return $false
+  }
+  $normalizedRoot = [FoveaVisibleWindow]::GetAncestor($RootHandle, 2)
+  if ($normalizedRoot -eq [IntPtr]::Zero) {
+    $normalizedRoot = $RootHandle
+  }
+  $column = [int] [Math]::Floor(($Point.X - $capturedHitGrid.Left) / $capturedHitGrid.Step)
+  $row = [int] [Math]::Floor(($Point.Y - $capturedHitGrid.Top) / $capturedHitGrid.Step)
+  if (
+    $column -lt 0 -or
+    $row -lt 0 -or
+    $column -ge $capturedHitGrid.Columns -or
+    $row -ge $capturedHitGrid.Rows
+  ) {
+    return $false
+  }
+  $hitHandle = $capturedHitGrid.Handles[$row * $capturedHitGrid.Columns + $column]
+  return $hitHandle -eq $normalizedRoot.ToInt64()
+}
+
 function Get-VisibleRatio {
   param(
     [System.Windows.Automation.AutomationElement] $Element,
@@ -220,7 +363,30 @@ function Get-VisibleRatio {
     return @{ ratio = 0.0; centerVisible = $false }
   }
   if ($FrozenSnapshot) {
-    return @{ ratio = 1.0; centerVisible = $true }
+    $left = $Bounds.X
+    $top = $Bounds.Y
+    $right = $Bounds.X + $Bounds.Width
+    $bottom = $Bounds.Y + $Bounds.Height
+    $insetX = [Math]::Min([Math]::Max(1.0, $Bounds.Width * 0.2), $Bounds.Width / 2)
+    $insetY = [Math]::Min([Math]::Max(1.0, $Bounds.Height * 0.2), $Bounds.Height / 2)
+    $center = [System.Windows.Point]::new(($left + $right) / 2, ($top + $bottom) / 2)
+    $points = @(
+      $center,
+      [System.Windows.Point]::new($left + $insetX, $top + $insetY),
+      [System.Windows.Point]::new($right - $insetX, $top + $insetY),
+      [System.Windows.Point]::new($left + $insetX, $bottom - $insetY),
+      [System.Windows.Point]::new($right - $insetX, $bottom - $insetY)
+    )
+    $visible = 0
+    foreach ($point in $points) {
+      if (Test-FrozenWindowAtPoint $RootHandle $point) {
+        $visible += 1
+      }
+    }
+    return @{
+      ratio = [double] ($visible / $points.Count)
+      centerVisible = [bool] (Test-FrozenWindowAtPoint $RootHandle $center)
+    }
   }
   $centerX = $Bounds.X + $Bounds.Width / 2
   $centerY = $Bounds.Y + $Bounds.Height / 2
@@ -237,6 +403,11 @@ function Get-VisibleRatio {
 
 $output = [System.Collections.Generic.List[object]]::new()
 $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+$requestedHandleCount = 0
+$resolvedWindowCount = 0
+$candidateElementCount = 0
+$offscreenElementCount = 0
+$coveredElementCount = 0
 $activation = $cache.Activate()
 try {
   $windows = @()
@@ -246,6 +417,14 @@ try {
       $requestedHandles = @('{0:x}' -f $capturedForegroundHandle.ToInt64())
     }
   }
+  elseif ($FrozenSnapshot -and $requestedHandles.Count -eq 0) {
+    $requestedHandles = @(
+      $capturedWindows |
+        Select-Object -First 24 |
+        ForEach-Object { '{0:x}' -f $_.Handle }
+    )
+  }
+  $requestedHandleCount = $requestedHandles.Count
   foreach ($handle in $requestedHandles) {
     if ($handle -notmatch '^[0-9a-fA-F]+$') {
       continue
@@ -258,6 +437,7 @@ try {
           element = $targetWindow
           handle = $nativeHandle
         }
+        $resolvedWindowCount += 1
       }
     }
     catch {
@@ -322,6 +502,7 @@ try {
     }
     $orderedElements = @($compactPriorityElements) + @($priorityElements) + @($remainingElements)
     foreach ($element in $orderedElements) {
+      $candidateElementCount += 1
       if ($stopwatch.ElapsedMilliseconds -ge $analysisBudgetMs) {
         break windowLoop
       }
@@ -330,6 +511,7 @@ try {
       }
       try {
         if ($element.Cached.IsOffscreen) {
+          $offscreenElementCount += 1
           continue
         }
         $controlType = $element.Cached.ControlType.ProgrammaticName -replace '^ControlType\.', ''
@@ -356,6 +538,7 @@ try {
         }
         $visibility = Get-VisibleRatio $element $bounds $rootHandle
         if (-not $visibility.centerVisible) {
+          $coveredElementCount += 1
           continue
         }
         $legacyName = ''
@@ -415,6 +598,7 @@ try {
           visibleRatio = [double] $visibility.ratio
           centerVisible = [bool] $visibility.centerVisible
           topmostVerified = [bool] (-not $FrozenSnapshot)
+          windowVisibilityVerified = [bool] $FrozenSnapshot
           x = [double] $bounds.X
           y = [double] $bounds.Y
           width = [double] $bounds.Width
@@ -433,4 +617,14 @@ finally {
 
 @{
   elements = @($output)
+  diagnostics = @{
+    capturedWindows = $capturedWindows.Count
+    hitHandles = $capturedHitHandles.Count
+    requestedHandles = $requestedHandleCount
+    resolvedWindows = $resolvedWindowCount
+    elapsedMs = $stopwatch.ElapsedMilliseconds
+    candidateElements = $candidateElementCount
+    offscreenElements = $offscreenElementCount
+    coveredElements = $coveredElementCount
+  }
 } | ConvertTo-Json -Depth 4 -Compress

@@ -29,6 +29,7 @@ export interface UiAutomationElementSnapshot {
   visibleRatio: number
   centerVisible: boolean
   topmostVerified?: boolean
+  windowVisibilityVerified?: boolean
   bounds: Rectangle
 }
 
@@ -46,7 +47,7 @@ export class WindowsUiAutomationService implements UiAutomationSnapshotService {
     const handles = [...new Set(windowHandles.map((handle) => handle.replace(/^0+/, '').toLocaleLowerCase()))]
       .filter((handle) => /^[0-9a-f]+$/i.test(handle))
       .slice(0, 24)
-    if (this.platform !== 'win32' || (!handles.length && !foregroundOnly)) return []
+    if (this.platform !== 'win32' || (!handles.length && !foregroundOnly && !frozenSnapshot)) return []
     const arguments_ = [
       '-NoLogo',
       '-NoProfile',
@@ -103,6 +104,7 @@ export function parseUiAutomationPayload(value: string): UiAutomationElementSnap
       visibleRatio: clamp(visibleRatio ?? 0),
       centerVisible: item.centerVisible === true,
       topmostVerified: item.topmostVerified === true,
+      windowVisibilityVerified: item.windowVisibilityVerified === true,
       bounds: { x, y, width, height }
     })
   }

@@ -516,7 +516,8 @@ export function FeatureAskMenu({
   onExtractText(): void
   onSearchWeb(): void
 }): React.JSX.Element {
-  const canCopy = feature.kind !== 'visual'
+  const canCopy = feature.kind !== 'visual' && feature.kind !== 'face'
+  const isFace = feature.kind === 'face'
   const label = displayFeatureLabel(feature)
   return (
     <div
@@ -547,11 +548,23 @@ export function FeatureAskMenu({
             <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />
           </svg>
         </button>
-        <button aria-label="Search the web about this feature" title="Identify or verify with web search" type="button" onClick={onSearchWeb}>
-          <svg aria-hidden="true" viewBox="0 0 24 24">
-            <circle cx="11" cy="11" r="7" />
-            <path d="M4 11h14M11 4c1.7 1.9 2.5 4.2 2.5 7S12.7 16.1 11 18M11 4C9.3 5.9 8.5 8.2 8.5 11s.8 5.1 2.5 7m5.5-1.5L21 21" />
-          </svg>
+        <button
+          aria-label={isFace ? 'Search the web for this person' : 'Search the web about this feature'}
+          title={isFace ? 'Identify this person with web search' : 'Identify or verify with web search'}
+          type="button"
+          onClick={onSearchWeb}
+        >
+          {isFace
+            ? <svg aria-hidden="true" viewBox="0 0 24 24">
+                <circle cx="9" cy="7.5" r="3.5" />
+                <path d="M3.5 17c.6-3.2 2.4-4.8 5.5-4.8 2 0 3.5.7 4.5 2" />
+                <circle cx="16.5" cy="16.5" r="3.5" />
+                <path d="m19 19 2.5 2.5" />
+              </svg>
+            : <svg aria-hidden="true" viewBox="0 0 24 24">
+                <circle cx="11" cy="11" r="7" />
+                <path d="M4 11h14M11 4c1.7 1.9 2.5 4.2 2.5 7S12.7 16.1 11 18M11 4C9.3 5.9 8.5 8.2 8.5 11s.8 5.1 2.5 7m5.5-1.5L21 21" />
+              </svg>}
         </button>
       </div>
       <div aria-label="Preset questions" className="analyze-ask-menu__questions" role="menu">
@@ -573,6 +586,7 @@ export function AnalyzeLegend(): React.JSX.Element {
       <span className="analyze-legend__text" role="listitem"><i aria-hidden="true" />Text</span>
       <span className="analyze-legend__link" role="listitem"><i aria-hidden="true" />Links</span>
       <span className="analyze-legend__value" role="listitem"><i aria-hidden="true" />Values</span>
+      <span className="analyze-legend__face" role="listitem"><i aria-hidden="true" />Faces</span>
       <span className="analyze-legend__visual" role="listitem"><i aria-hidden="true" />Visuals</span>
       <span className="analyze-legend__error" role="listitem"><i aria-hidden="true" />Issues</span>
     </div>
@@ -584,6 +598,7 @@ export function questionsForFeature(feature: Pick<CaptureFeature, 'kind' | 'labe
   if (feature.kind === 'link') return ['What is this link for?', 'Is this link safe?', 'Summarise where this leads', 'Should I open this?']
   if (feature.kind === 'control') return ['What does this control do?', 'Should I use this?', 'What happens if I click it?', 'What should I do next?']
   if (feature.kind === 'value') return ['What does this value mean?', 'Is this value unusual?', 'Put this value in context', 'Check whether this looks right']
+  if (feature.kind === 'face') return ['Who is this person?', 'Where might I know them from?', 'Tell me about this person', 'Find related information']
   if (feature.kind === 'visual') return ['Identify this', 'Explain what this does', 'Is anything wrong here?', 'What should I do next?']
   return ['Explain this', 'Summarise this', 'Why is this important?', 'What should I do next?']
 }
@@ -595,18 +610,19 @@ export function webQuestionForFeature(feature: Pick<CaptureFeature, 'kind' | 'la
   if (feature.kind === 'control') return `Identify this interface control and explain what it does: ${label}`
   if (feature.kind === 'value') return `Verify and put this visible value in context: ${label}`
   if (feature.kind === 'text') return `Find relevant current context for this visible text: ${label}`
+  if (feature.kind === 'face') return 'Search the web to identify this person from the visible face. Explain the evidence and uncertainty, and do not guess when the match is weak.'
   return 'Identify this visible feature and explain what it is used for'
 }
 
 export function displayFeatureLabel(feature: Pick<CaptureFeature, 'kind' | 'label'>): string {
   const label = typeof feature.label === 'string' ? feature.label.replace(/\s+/g, ' ').trim() : ''
   if (label && !/^(?:undefined|null|none|unknown|n\/a)$/i.test(label)) return label
-  return feature.kind === 'control' ? 'Unlabelled button' : 'Unlabelled feature'
+  return feature.kind === 'control' ? 'Unlabelled button' : feature.kind === 'face' ? 'Face' : 'Unlabelled feature'
 }
 
 function featureKindLabel(feature: CaptureFeature): string {
   if (feature.role) return feature.role.replace(/^\p{L}/u, (character) => character.toLocaleUpperCase())
-  return ({ text: 'Text', control: 'Control', link: 'Link', error: 'Issue', value: 'Value', visual: 'Feature' })[feature.kind]
+  return ({ text: 'Text', control: 'Control', link: 'Link', error: 'Issue', value: 'Value', visual: 'Feature', face: 'Face' })[feature.kind]
 }
 
 function featureStyle(feature: CaptureFeature, selected = false): CSSProperties {

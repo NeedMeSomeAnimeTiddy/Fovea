@@ -12,6 +12,11 @@ resources/codex-schema/
 .sidecar-smoke/
 .venv-paddleocr/
 .paddle-ocr-cache/
+.venv-omniparser/
+.omniparser-runtime/
+.tmp-omniparser-reference/
+__pycache__/
+*.pyc
 temporary-screenshots/
 screenshots/
 snip-*.png

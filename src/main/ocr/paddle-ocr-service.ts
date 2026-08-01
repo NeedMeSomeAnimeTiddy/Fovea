@@ -179,7 +179,11 @@ export class PaddleOcrService implements OcrService {
     if (this.disposed) throw new OcrServiceError('ocr-unavailable', 'The PaddleOCR service has stopped.')
     this.throwIfCancelled(attachmentId)
     const startedAt = Date.now()
-    const cacheKey = createHash('sha256').update(this.profile).update(image).digest('hex')
+    const cacheKey = createHash('sha256')
+      .update(this.profile)
+      .update(options.selectiveScreenRefinement ? 'selective-screen' : 'full')
+      .update(image)
+      .digest('hex')
     const cached = this.cache.get(cacheKey)
     if (cached) {
       this.cache.delete(cacheKey)
@@ -198,7 +202,7 @@ export class PaddleOcrService implements OcrService {
     onProgress?.({ progress: 0, stage: `Loading PaddleOCR ${this.profile}` })
     this.activeAttachmentId = attachmentId
     try {
-      const payload = await this.request(attachmentId, imagePath)
+      const payload = await this.request(attachmentId, imagePath, options.selectiveScreenRefinement === true)
       this.throwIfCancelled(attachmentId)
       const result = mapPaddleOcrPayload(attachmentId, payload, size, Date.now() - startedAt)
       result.entities = mergeEntities(await detectVisualCodes(image), result.entities ?? [])
@@ -221,7 +225,11 @@ export class PaddleOcrService implements OcrService {
     }
   }
 
-  private async request(attachmentId: string, imagePath: string): Promise<PaddleOcrPayload> {
+  private async request(
+    attachmentId: string,
+    imagePath: string,
+    selectiveScreenRefinement: boolean
+  ): Promise<PaddleOcrPayload> {
     const process = await this.getProcess()
     const requestId = randomUUID()
     return new Promise<PaddleOcrPayload>((resolve, reject) => {
@@ -231,7 +239,12 @@ export class PaddleOcrService implements OcrService {
         reject(new OcrServiceError('ocr-unavailable', `PaddleOCR ${this.profile} timed out.`))
       }, this.timeoutMs)
       this.pending.set(requestId, { attachmentId, resolve, reject, timeout })
-      process.stdin.write(`${JSON.stringify({ type: 'recognise', requestId, imagePath })}\n`, (error) => {
+      process.stdin.write(`${JSON.stringify({
+        type: 'recognise',
+        requestId,
+        imagePath,
+        selectiveScreenRefinement
+      })}\n`, (error) => {
         if (!error) return
         clearTimeout(timeout)
         this.pending.delete(requestId)

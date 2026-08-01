@@ -47,14 +47,18 @@ fails, or finds no useful text. Enabling **Extract text locally** reveals
 an optional capture-language picker; **Automatic** uses the Windows preference.
 The last available language selected in the capture bar is remembered for the
 next capture.
-**Analyze full screen** records the foreground window before the capture overlay
-appears and limits its local Windows UI Automation snapshot to that window, so
-occluded apps cannot leak boxes onto the frozen screen. It then combines those
-semantic controls and roles with full-screen word-level OCR and bounded visual
-feature detection on the frozen bitmap.
+**Analyze full screen** captures the visible desktop before the overlay appears,
+then treats that frozen bitmap as the source of truth. When the optional
+OmniParser runtime is installed, its `icon_detect_v3` screenshot model finds
+interactive regions and OpenCV YuNet adds locally detected human faces as
+searchable targets; Windows UI Automation may add a role, accessible name, or
+tooltip only after matching one of those visible regions or visible OCR text.
+Accessibility data can no longer create a box on its own, so controls from
+occluded apps do not leak onto the frozen screen.
 Overlapping results are fused so a named button is one target rather than a
 control box plus duplicate text boxes. Results render progressively—semantic
-controls first, sentence-level OCR next, and only strong visual candidates last.
+anchors and sentence-level OCR first, followed by native-resolution visual
+refinement.
 Targets are ranked by source, meaning, confidence, and size; repeated clicks at
 an overlap cycle through every target under the pointer so a large container
 cannot hide a smaller box. Overlapping static text fragments are clustered by
@@ -119,6 +123,60 @@ The app defaults to the small profile. Set
 another profile. Set `FOVEA_PADDLE_MKLDNN=0` only when diagnosing the slower
 portable CPU path. PaddlePaddle 3.3.x is intentionally not used because its
 Windows oneDNN/PIR path currently crashes during PP-OCRv6 inference.
+
+### Screenshot-native control detection
+
+Install the isolated OmniParser runtime from PowerShell:
+
+```powershell
+npm run omniparser:setup
+npm run dev
+```
+
+Setup pins the current Microsoft OmniParser source adapter and downloads the
+MIT-licensed YOLOv9-E `icon_detect_v3` inference weight from the model's pending
+Hugging Face revision. It also installs OpenCV and the MIT-licensed YuNet face
+detector from the official OpenCV model zoo. It uses a separate `.venv-omniparser` environment and
+ignored `.omniparser-runtime` model directory. Once installed, Analyze enables
+it automatically. Setup installs a CUDA-enabled PyTorch wheel when
+`nvidia-smi` is available and otherwise installs the CPU wheel; pass
+`-TorchIndexUrl` directly to `scripts/setup-omniparser.ps1` to override that
+choice.
+
+The frozen bitmap is shown before the model starts loading. The resident worker
+first reports faces detected from the native frozen bitmap, then a whole-screen
+control pass (up to a 1920-pixel long edge by default),
+then scans overlapping 1280-pixel tiles at native pixel density. This improves
+small adjacent toolbar controls without returning to the old 960 × 540
+bottleneck or delaying capture-window startup.
+
+Useful test overrides are:
+
+```powershell
+$env:FOVEA_ANALYZE_BACKEND = 'omniparser' # require the new backend
+$env:FOVEA_OMNIPARSER_DEVICE = 'cuda'     # auto, cpu, or cuda
+$env:FOVEA_OMNIPARSER_FULL_NATIVE = '1'  # native full frame plus native tiles
+$env:FOVEA_OMNIPARSER_CONFIDENCE = '0.08'
+$env:FOVEA_FACE_CONFIDENCE = '0.82'       # lower finds more faces; higher rejects more false positives
+$env:FOVEA_OMNIPARSER_TILE_SIZE = '1280'
+npm run dev
+```
+
+Use `FOVEA_ANALYZE_BACKEND=heuristic` to compare the previous backend. Custom
+runtimes can be supplied with `FOVEA_OMNIPARSER_PYTHON`,
+`FOVEA_OMNIPARSER_ROOT`, `FOVEA_OMNIPARSER_MODEL`, and `FOVEA_FACE_MODEL`.
+
+For repeatable accuracy work, put paired `*.expected.json` and `*.actual.json`
+files under `tests/fixtures/analyze`, then run:
+
+```powershell
+npm run analyze:evaluate
+npm run analyze:evaluate -- --json
+```
+
+The report separates overall and tiny-control recall, precision, duplicate
+boxes, forbidden/occluded-region false positives, invalid labels, and detector
+time. See `tests/fixtures/analyze/README.md` for the annotation schema.
 
 ## Manual test
 
@@ -196,6 +254,10 @@ unredacted temporary source is deleted once the derivative replaces it.
 - PaddleOCR is currently a development evaluation sidecar. The Python runtime
   and models are not included in the NSIS installer yet; packaged builds safely
   continue to Tesseract when that sidecar is absent.
+- OmniParser control detection is also a development sidecar. Its Python
+  runtime, pinned source, and model weight are not included in the NSIS
+  installer yet; packaged builds safely retain the screenshot heuristics when
+  that runtime is absent.
 - A real ChatGPT/App Server request cannot be exercised in CI because it needs
   an interactive user login; protocol tests use an in-memory transport instead.
 

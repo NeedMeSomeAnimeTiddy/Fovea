@@ -1,0 +1,4 @@
+huggingface-hub>=0.34,<2
+numpy>=1.26,<3
+pillow>=10,<13
+opencv-python-headless>=4.10,<5

@@ -1,0 +1,17 @@
+{
+  "timingMs": 250,
+  "features": [
+    {
+      "id": "save-found",
+      "kind": "control",
+      "label": "Save",
+      "bounds": { "x": 0.1, "y": 0.1, "width": 0.1, "height": 0.08 }
+    },
+    {
+      "id": "paragraph-found",
+      "kind": "text",
+      "label": "Example paragraph",
+      "bounds": { "x": 0.1, "y": 0.3, "width": 0.4, "height": 0.12 }
+    }
+  ]
+}

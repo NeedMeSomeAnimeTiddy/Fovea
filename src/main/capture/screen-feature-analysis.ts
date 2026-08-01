@@ -37,6 +37,7 @@ export interface CaptureAnalysisSources {
   entities?: OcrEntity[]
   uiFeatures?: CaptureFeature[]
   visualFeatures?: CaptureFeature[]
+  screenshotAnchored?: boolean
 }
 
 export async function detectVisualControlFeatures(
@@ -120,12 +121,31 @@ function rankedSourceFeatures(sources: CaptureAnalysisSources): CaptureFeature[]
   const uiFeatures = (sources.uiFeatures ?? [])
     .filter(isVerifiedActionableUiFeature)
     .map((feature) => ({ ...feature, rank: featureRank(feature, feature.visibility ?? 0) }))
-  const visualControlFeatures = (sources.visualFeatures ?? [])
-    .filter((feature) => feature.source === 'visual' && isActionableRole(feature.role))
+  const faceFeatures = (sources.visualFeatures ?? [])
+    .filter((feature) => feature.source === 'visual' && feature.kind === 'face' && feature.detector === 'yunet')
     .map((feature) => ({ ...feature, rank: featureRank(feature, feature.visibility ?? 0) }))
-  const controlFeatures = [...uiFeatures, ...visualControlFeatures]
+  const visualControlFeatures = (sources.visualFeatures ?? [])
+    .filter((feature) => feature.source === 'visual' && feature.kind !== 'face' && isActionableRole(feature.role))
+    .map((feature) => ({ ...feature, rank: featureRank(feature, feature.visibility ?? 0) }))
+  const anchoredControls = sources.screenshotAnchored
+    ? fuseScreenshotControls(visualControlFeatures, uiFeatures)
+    : { features: [...uiFeatures, ...visualControlFeatures], matchedUiIds: new Set<string>() }
+  const visibleAnchoredControls = sources.screenshotAnchored
+    ? anchoredControls.features.filter((feature) =>
+        !isLikelyStaticTextDetection(feature, textFeatures) &&
+        !isGenericControlOverFace(feature, faceFeatures)
+      )
+    : anchoredControls.features
+  // Accessibility elements remain available as metadata candidates for visible
+  // OCR text. They are not independently rendered in screenshot-anchored mode.
+  const controlFeatures = sources.screenshotAnchored
+    ? [
+        ...visibleAnchoredControls,
+        ...uiFeatures.filter(({ id }) => !anchoredControls.matchedUiIds.has(id))
+      ]
+    : visibleAnchoredControls
   const matchedControlIds = new Set<string>()
-  const enrichedTextFeatures = textFeatures.map((text) => {
+  const enrichedTextFeatures = textFeatures.filter((text) => !isLikelyFaceOcrArtifact(text, faceFeatures)).map((text) => {
     const match = bestUiFeatureMatch(text, controlFeatures)
     if (match) {
       matchedControlIds.add(match.id)
@@ -134,8 +154,130 @@ function rankedSourceFeatures(sources: CaptureAnalysisSources): CaptureFeature[]
     const toolbarRole = inferredToolbarRole(text, controlFeatures)
     return toolbarRole ? promoteToolbarTextFeature(text, toolbarRole) : text
   })
-  const visibleControlOnlyFeatures = controlFeatures.filter(({ id }) => !matchedControlIds.has(id))
-  return rankAndResolveOverlaps([...enrichedTextFeatures, ...visualCodeFeatures, ...visibleControlOnlyFeatures])
+  const visibleControlOnlyFeatures = (sources.screenshotAnchored ? visibleAnchoredControls : controlFeatures)
+    .filter(({ id }) => !matchedControlIds.has(id))
+  return rankAndResolveOverlaps([
+    ...faceFeatures,
+    ...enrichedTextFeatures,
+    ...visualCodeFeatures,
+    ...visibleControlOnlyFeatures
+  ])
+}
+
+function isGenericControlOverFace(feature: CaptureFeature, faces: CaptureFeature[]): boolean {
+  if (!isGenericUiLabel(feature)) return false
+  return faces.some((face) =>
+    intersectionOverUnion(feature.bounds, face.bounds) >= 0.48 ||
+    overlapRatio(feature.bounds, face.bounds) >= 0.72 ||
+    overlapRatio(face.bounds, feature.bounds) >= 0.88
+  )
+}
+
+function isLikelyFaceOcrArtifact(feature: CaptureFeature, faces: CaptureFeature[]): boolean {
+  const label = feature.label.trim()
+  if (feature.kind !== 'text' || label.length > 10 || /\s/u.test(label)) return false
+  return faces.some((face) => overlapRatio(feature.bounds, face.bounds) >= 0.75)
+}
+
+function isLikelyStaticTextDetection(
+  feature: CaptureFeature,
+  textFeatures: CaptureFeature[]
+): boolean {
+  if (
+    feature.source !== 'visual' ||
+    feature.detector !== 'omniparser' ||
+    !isGenericUiLabel(feature)
+  ) return false
+  const overlappingText = textFeatures.filter((text) => {
+    const textWithinControl = overlapRatio(text.bounds, feature.bounds)
+    const controlWithinText = overlapRatio(feature.bounds, text.bounds)
+    return Math.max(textWithinControl, controlWithinText) >= 0.62 ||
+      intersectionOverUnion(text.bounds, feature.bounds) >= 0.35
+  })
+  if (!overlappingText.length) return false
+  if (overlappingText.some((text) => text.kind === 'control' || text.kind === 'link')) return false
+  if (overlappingText.some(isClearlyProseFeature)) return true
+  const confidence = feature.visibility ?? 0
+  return confidence < 0.55 && overlappingText.some((text) => {
+    const textArea = boundsArea(text.bounds)
+    const featureArea = boundsArea(feature.bounds)
+    const areaSimilarity = Math.min(textArea, featureArea) / Math.max(0.000001, Math.max(textArea, featureArea))
+    return overlapRatio(text.bounds, feature.bounds) >= 0.7 &&
+      (areaSimilarity >= 0.42 || overlapRatio(feature.bounds, text.bounds) >= 0.72)
+  })
+}
+
+function isClearlyProseFeature(feature: CaptureFeature): boolean {
+  if (feature.kind !== 'text') return false
+  const label = feature.label.trim()
+  const words = label.split(/\s+/).filter(Boolean)
+  return label.length > 42 ||
+    words.length > 6 ||
+    /[.!?](?:["'’)\]]*)$/u.test(label)
+}
+
+function fuseScreenshotControls(
+  visualFeatures: CaptureFeature[],
+  uiFeatures: CaptureFeature[]
+): { features: CaptureFeature[]; matchedUiIds: Set<string> } {
+  const matchedUiIds = new Set<string>()
+  const features = [...visualFeatures]
+    .sort((left, right) => (right.visibility ?? 0) - (left.visibility ?? 0))
+    .map((visual) => {
+      const semantic = bestScreenshotAnchorMatch(
+        visual,
+        uiFeatures.filter(({ id }) => !matchedUiIds.has(id))
+      )
+      if (!semantic) return visual
+      matchedUiIds.add(semantic.id)
+      const semanticLabel = isGenericUiLabel(semantic) ? visual.label : semantic.label
+      const feature: CaptureFeature = {
+        ...visual,
+        id: semantic.id,
+        kind: semantic.kind,
+        label: semanticLabel,
+        source: 'hybrid',
+        role: semantic.role,
+        description: semantic.description ?? visual.description,
+        enabled: semantic.enabled,
+        visibility: Math.max(visual.visibility ?? 0, semantic.visibility ?? 0),
+        // The detector provides the visible frozen-bitmap anchor. UIA contributes
+        // metadata only, so stale or occluded UIA geometry cannot create a box.
+        visibilityVerified: true
+      }
+      return { ...feature, rank: featureRank(feature, feature.visibility ?? 0) + 4 }
+    })
+  return { features, matchedUiIds }
+}
+
+function bestScreenshotAnchorMatch(
+  visual: CaptureFeature,
+  uiFeatures: CaptureFeature[]
+): CaptureFeature | null {
+  const visualArea = boundsArea(visual.bounds)
+  let best: { feature: CaptureFeature; score: number } | null = null
+  for (const uiFeature of uiFeatures) {
+    const uiArea = boundsArea(uiFeature.bounds)
+    if (visualArea <= 0 || uiArea <= 0) continue
+    const intersection = intersectionOverUnion(visual.bounds, uiFeature.bounds)
+    const visualWithinUi = overlapRatio(visual.bounds, uiFeature.bounds)
+    const uiWithinVisual = overlapRatio(uiFeature.bounds, visual.bounds)
+    const areaSimilarity = Math.min(visualArea, uiArea) / Math.max(visualArea, uiArea)
+    const centresMatch = centreWithin(visual.bounds, padBounds(uiFeature.bounds, 0.006, 0.006)) ||
+      centreWithin(uiFeature.bounds, padBounds(visual.bounds, 0.006, 0.006))
+    const geometryMatch = intersection >= 0.12 ||
+      (Math.max(visualWithinUi, uiWithinVisual) >= 0.72 && areaSimilarity >= 0.06) ||
+      (centresMatch && areaSimilarity >= 0.18)
+    if (!geometryMatch) continue
+    const score =
+      intersection * 5 +
+      Math.max(visualWithinUi, uiWithinVisual) * 2 +
+      areaSimilarity * 2 +
+      (uiFeature.visibility ?? 0) +
+      (uiFeature.visibilityVerified === true ? 4 : 0)
+    if (!best || score > best.score) best = { feature: uiFeature, score }
+  }
+  return best?.feature ?? null
 }
 
 function hasMeaningfulText(value: string): boolean {
@@ -164,10 +306,15 @@ function bestUiFeatureMatch(text: CaptureFeature, uiFeatures: CaptureFeature[]):
     const intersection = intersectionOverUnion(text.bounds, uiFeature.bounds)
     const tokenScore = tokenContainment(text.label, uiFeature.label)
     const genericLabel = isGenericUiLabel(uiFeature)
+    const genericVisualLabel = genericLabel &&
+      uiFeature.source === 'visual' &&
+      uiFeature.detector === 'omniparser'
+    const reliableTextLabel = reliableVisibleControlLabel(text.label)
     const role = normalizedLabel(uiFeature.role ?? '')
     const labelsMatch = labelsOverlap(text.label, uiFeature.label) || tokenScore >= 0.6
     const geometryMatch = Math.max(textWithinUi, uiWithinText) >= 0.55 || intersection >= 0.28
     const geometryOnlyMatch = genericLabel &&
+      (!genericVisualLabel || Boolean(reliableTextLabel)) &&
       textWithinUi >= 0.72 &&
       boundsArea(text.bounds) / Math.max(0.000001, boundsArea(uiFeature.bounds)) >= 0.06
     const iconGlyphMatch = isLikelyControlGlyph(text.label) &&
@@ -177,7 +324,12 @@ function bestUiFeatureMatch(text: CaptureFeature, uiFeatures: CaptureFeature[]):
       textWithinUi >= 0.55 &&
       centreWithin(text.bounds, padBounds(uiFeature.bounds, 0.006, 0.006))
     if ((!geometryMatch && !iconGlyphMatch) || (!labelsMatch && !geometryOnlyMatch && !iconGlyphMatch && !tabGeometryMatch)) continue
-    const score = Math.max(textWithinUi, uiWithinText) * 3 + intersection * 2 + tokenScore + (uiFeature.visibility ?? 0)
+    const score =
+      Math.max(textWithinUi, uiWithinText) * 3 +
+      intersection * 2 +
+      tokenScore +
+      (uiFeature.visibility ?? 0) +
+      (uiFeature.visibilityVerified === true ? 4 : 0)
     if (!best || score > best.score) best = { feature: uiFeature, score }
   }
   return best?.feature ?? null
@@ -203,6 +355,7 @@ function enrichTextFeature(text: CaptureFeature, semantic: CaptureFeature): Capt
     kind: semantic.kind,
     bounds: useSemanticBounds ? semantic.bounds : text.bounds,
     source: 'hybrid',
+    detector: semantic.detector,
     label,
     role: semantic.role,
     description: semantic.description,
@@ -214,7 +367,7 @@ function enrichTextFeature(text: CaptureFeature, semantic: CaptureFeature): Capt
 }
 
 function isLikelyControlGlyph(value: string): boolean {
-  return /^[\p{L}\p{N}]{1,12}$/u.test(value.trim())
+  return /^[\p{L}\p{N}]{1,2}$/u.test(value.trim())
 }
 
 function reliableVisibleControlLabel(value: string): string {
@@ -467,6 +620,7 @@ function detectVisualControlCandidates(
       label: 'Unlabelled button',
       bounds,
       source: 'visual',
+      detector: 'heuristic',
       role: 'button',
       description: 'Visually inferred beside a detected toolbar control',
       enabled: true,
@@ -497,6 +651,7 @@ function detectVisualControlCandidates(
       label: line.text.trim().slice(0, 100),
       bounds,
       source: 'visual',
+      detector: 'heuristic',
       role: 'button',
       description: 'Visible bordered control',
       enabled: true,
@@ -792,8 +947,9 @@ function validateFeature(
   const edgeRatio = edges / samples
   const visual = feature.source === 'visual'
   const visualControl = visual && isActionableRole(feature.role)
+  const detectedFace = visual && feature.kind === 'face' && feature.detector === 'yunet'
   const semanticOnly = feature.source === 'uia'
-  const hasVisibleContent = visualControl
+  const hasVisibleContent = visualControl || detectedFace
     ? edges >= 4 && edgeRatio >= 0.002 && deviation >= 1.5 && maximum - minimum >= 10
     : visual
       ? edges >= 8 && edgeRatio >= 0.018 && deviation >= 5 && maximum - minimum >= 24
@@ -808,7 +964,7 @@ function validateFeature(
 
   const evidenceScore = Math.min(1, edgeRatio * 12 + deviation / 48)
   const rank = Math.round(((feature.rank ?? 0) + evidenceScore * 5) * 10) / 10
-  if (!visual || visualControl || edgeRight <= edgeLeft || edgeBottom <= edgeTop) return { ...feature, rank }
+  if (!visual || visualControl || detectedFace || edgeRight <= edgeLeft || edgeBottom <= edgeTop) return { ...feature, rank }
   const paddingX = 3 / evidence.width
   const paddingY = 3 / evidence.height
   const contentBounds = padBounds({
@@ -849,7 +1005,7 @@ function rankAndResolveOverlaps(features: CaptureFeature[]): CaptureFeature[] {
         boundsArea(candidate.bounds) < boundsArea(feature.bounds) &&
         overlapRatio(candidate.bounds, feature.bounds) >= 0.9
       )
-      return containedTargets.length < 2 || boundsArea(feature.bounds) <= 0.035 || isActionableRole(feature.role)
+      return containedTargets.length < 2 || boundsArea(feature.bounds) <= 0.035 || isActionableRole(feature.role) || feature.kind === 'face'
     })
     .sort((left, right) =>
     (right.rank ?? 0) - (left.rank ?? 0) ||
@@ -861,6 +1017,12 @@ function areDuplicateFeatures(left: CaptureFeature, right: CaptureFeature): bool
   const intersection = intersectionOverUnion(left.bounds, right.bounds)
   const containment = Math.max(overlapRatio(left.bounds, right.bounds), overlapRatio(right.bounds, left.bounds))
   if (labelsOverlap(left.label, right.label) && (intersection >= 0.7 || containment >= 0.8)) return true
+  if (
+    isActionableRole(left.role) &&
+    isActionableRole(right.role) &&
+    (isGenericUiLabel(left) || isGenericUiLabel(right)) &&
+    (intersection >= 0.55 || containment >= 0.86)
+  ) return true
   if (
     left.source === 'ocr-line' &&
     right.source === 'ocr-line' &&
@@ -892,7 +1054,7 @@ function preferCompleteFeature(left: CaptureFeature, right: CaptureFeature): Cap
 }
 
 function isStaticTextFeature(feature: CaptureFeature): boolean {
-  return feature.kind !== 'control' && feature.kind !== 'visual' && !isActionableRole(feature.role)
+  return feature.kind !== 'control' && feature.kind !== 'visual' && feature.kind !== 'face' && !isActionableRole(feature.role)
 }
 
 function tokenContainment(left: string, right: string): number {
@@ -905,11 +1067,11 @@ function tokenContainment(left: string, right: string): number {
 }
 
 function featureRank(
-  feature: Pick<CaptureFeature, 'kind' | 'bounds' | 'source' | 'role' | 'enabled'>,
+  feature: Pick<CaptureFeature, 'kind' | 'bounds' | 'source' | 'detector' | 'role' | 'enabled'>,
   confidence = 1
 ): number {
-  const sourceScore = feature.source === 'hybrid' ? 74 : feature.source === 'ocr-line' ? 68 : feature.source === 'uia' ? 52 : 28
-  const kindScore = ({ error: 12, control: 10, link: 9, value: 6, text: 2, visual: 0 })[feature.kind]
+  const sourceScore = feature.detector === 'yunet' ? 72 : feature.source === 'hybrid' ? 74 : feature.source === 'ocr-line' ? 68 : feature.source === 'uia' ? 52 : 28
+  const kindScore = ({ error: 12, face: 11, control: 10, link: 9, value: 6, text: 2, visual: 0 })[feature.kind]
   const roleScore = isActionableRole(feature.role) ? 7 : 0
   const confidenceScore = Math.max(0, Math.min(1, confidence)) * 8
   const areaPenalty = Math.min(24, boundsArea(feature.bounds) * 80)

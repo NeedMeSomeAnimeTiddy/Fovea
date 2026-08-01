@@ -210,7 +210,7 @@ describe('frozen region capture', () => {
       complete: false,
       features: expect.arrayContaining([expect.objectContaining({ label: 'Save', source: 'hybrid' })])
     }))
-    expect(snapshot).toHaveBeenCalledWith([], true, true)
+    expect(snapshot).toHaveBeenCalledWith([], false, true)
     expect(mocks.getSources).toHaveBeenCalledTimes(1)
     expect(mocks.getSources).toHaveBeenCalledWith(expect.objectContaining({ types: ['screen'] }))
     expect(recognise).toHaveBeenCalledWith(
@@ -218,8 +218,95 @@ describe('frozen region capture', () => {
       Buffer.from('whole-display'),
       { width: 200, height: 100 },
       expect.any(Function),
-      { sourcePath: 'C:\\temp\\analysis.png', preserveGeometry: true }
+      {
+        sourcePath: 'C:\\temp\\analysis.png',
+        preserveGeometry: true,
+        refinementRegions: [{ x: 0.08, y: 0.16, width: 0.2, height: 0.2 }]
+      }
     )
+    expect(remove).toHaveBeenCalledWith('C:\\temp\\analysis.png')
+    service.dispose()
+  })
+
+  it('progressively anchors semantic metadata to frozen-screen detector boxes', async () => {
+    const save = vi.fn(async () => 'C:\\temp\\analysis.png')
+    const remove = vi.fn(async () => undefined)
+    const detectorFeature = {
+      id: 'omniparser-save',
+      kind: 'control' as const,
+      label: 'Unlabelled button',
+      source: 'visual' as const,
+      detector: 'omniparser' as const,
+      role: 'button',
+      visibility: 0.92,
+      bounds: { x: 0.08, y: 0.16, width: 0.2, height: 0.2 }
+    }
+    const prepare = vi.fn(async () => undefined)
+    const detect = vi.fn(async (
+      _analysisId: string,
+      _image: Buffer,
+      _size: { width: number; height: number },
+      onProgress?: (progress: {
+        features: typeof detectorFeature[]
+        stage: 'full-frame' | 'tiles'
+      }) => void
+    ) => {
+      onProgress?.({ features: [detectorFeature], stage: 'full-frame' })
+      return [detectorFeature]
+    })
+    const snapshot = vi.fn(async () => [{
+      name: 'Save',
+      controlType: 'Button',
+      localizedControlType: 'button',
+      automationId: 'save',
+      helpText: 'Save the current document',
+      enabled: true,
+      focusable: true,
+      visibleRatio: 1,
+      centerVisible: true,
+      topmostVerified: true,
+      bounds: { x: -92, y: 28, width: 20, height: 10 }
+    }])
+    const { CaptureService } = await import('../src/main/capture/capture-service')
+    const service = new CaptureService(
+      { save, delete: remove } as never,
+      vi.fn(),
+      vi.fn(),
+      undefined,
+      undefined,
+      { snapshot },
+      { prepare, detect }
+    )
+
+    await service.begin('region')
+    const onProgress = vi.fn()
+    const analysis = await service.analyze(42, onProgress)
+
+    expect(prepare).toHaveBeenCalledTimes(1)
+    expect(detect).toHaveBeenCalledWith(
+      expect.stringMatching(/^capture-analysis-/),
+      Buffer.from('whole-display'),
+      { width: 200, height: 100 },
+      expect.any(Function),
+      { sourcePath: 'C:\\temp\\analysis.png' }
+    )
+    expect(onProgress.mock.calls[0]?.[0]).toMatchObject({
+      stage: 'semantic',
+      features: []
+    })
+    expect(onProgress.mock.calls.some(([progress]) =>
+      progress.features.some((feature: { id: string }) => feature.id === 'uia-1')
+    )).toBe(true)
+    expect(analysis.features).toEqual([
+      expect.objectContaining({
+        id: 'uia-1',
+        label: 'Save',
+        source: 'hybrid',
+        detector: 'omniparser',
+        description: 'Save the current document',
+        bounds: detectorFeature.bounds
+      })
+    ])
     expect(remove).toHaveBeenCalledWith('C:\\temp\\analysis.png')
     service.dispose()
   })
@@ -292,7 +379,7 @@ describe('frozen region capture', () => {
 
     await service.begin('region')
 
-    expect(snapshot).toHaveBeenCalledWith([], true, true)
+    expect(snapshot).toHaveBeenCalledWith([], false, true)
     expect(mocks.window.showInactive).toHaveBeenCalledTimes(1)
     await expect(service.getContext(42)).resolves.toMatchObject({ displayId: '7' })
 

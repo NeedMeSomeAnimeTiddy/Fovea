@@ -36,6 +36,7 @@ describe('capture Analyze mode', () => {
       'Text',
       'Links',
       'Values',
+      'Faces',
       'Visuals',
       'Issues'
     ])
@@ -149,9 +150,42 @@ describe('capture Analyze mode', () => {
     expect((screen.getByRole('button', { name: 'Copy detected text' }) as HTMLButtonElement).disabled).toBe(true)
   })
 
+  it('offers person-specific questions and web search for a detected face', async () => {
+    const user = userEvent.setup()
+    const onAsk = vi.fn()
+    const onSearchWeb = vi.fn()
+    const feature: CaptureFeature = {
+      id: 'face-1',
+      kind: 'face',
+      label: 'Face 1',
+      role: 'face',
+      bounds: { x: 0.25, y: 0.15, width: 0.12, height: 0.2 }
+    }
+    render(
+      <FeatureAskMenu
+        context={context}
+        feature={feature}
+        onAsk={onAsk}
+        onClose={vi.fn()}
+        onCopy={vi.fn()}
+        onExtractText={vi.fn()}
+        onSearchWeb={onSearchWeb}
+      />
+    )
+
+    await user.click(screen.getByRole('menuitem', { name: 'Who is this person?' }))
+    await user.click(screen.getByRole('button', { name: 'Search the web for this person' }))
+
+    expect(onAsk).toHaveBeenCalledWith('Who is this person?')
+    expect(onSearchWeb).toHaveBeenCalledTimes(1)
+    expect((screen.getByRole('button', { name: 'Copy detected text' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(webQuestionForFeature(feature)).toContain('do not guess')
+  })
+
   it('never exposes undefined as a feature label', () => {
     expect(displayFeatureLabel({ kind: 'control', label: 'undefined' })).toBe('Unlabelled button')
     expect(displayFeatureLabel({ kind: 'visual', label: undefined as never })).toBe('Unlabelled feature')
+    expect(displayFeatureLabel({ kind: 'face', label: undefined as never })).toBe('Face')
   })
 
   it('expands small detected features to a valid capture around their centre', () => {

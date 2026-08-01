@@ -35,6 +35,8 @@ export interface OcrRecognitionOptions {
   sourcePath?: string
   languageCode?: string
   preserveGeometry?: boolean
+  refinementRegions?: OcrBounds[]
+  selectiveScreenRefinement?: boolean
 }
 
 export interface OcrService {

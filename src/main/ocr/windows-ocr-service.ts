@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { unlink, writeFile } from 'node:fs/promises'
 import { promisify } from 'node:util'
 import sharp from 'sharp'
-import type { OcrEntity, OcrRegion, OcrResult } from '@shared/types/app'
+import type { OcrBounds, OcrEntity, OcrRegion, OcrResult } from '@shared/types/app'
 import {
   detectOcrEntities,
   detectVisualCodes,
@@ -21,7 +21,42 @@ const MAX_REGIONS = 2_000
 const MAX_TEXT_LENGTH = 100_000
 const NATIVE_TIMEOUT_MS = 15_000
 const CACHE_LIMIT = 8
+const MIN_SCREEN_CHARACTERS_BEFORE_FULL_REFINEMENT = 24
+const MAX_NATIVE_FRAGMENT_RATIO = 0.8
+const MIN_REFINEMENT_LINES_FOR_DENSITY_GATE = 8
+const MIN_REFINEMENT_CHARACTERS_PER_LINE = 4
+const MIN_SUBSTANTIAL_REFINEMENT_CHARACTERS = 180
+const MAX_REFINEMENT_FRAGMENT_RATIO = 0.65
+const REFINEMENT_GRID_COLUMNS = 6
+const REFINEMENT_GRID_ROWS = 4
+const MAX_REFINEMENT_TILES = 6
+const REFINEMENT_PREVIEW_WIDTH = 960
+const REFINEMENT_PREVIEW_HEIGHT = 540
+const REFINEMENT_EDGE_THRESHOLD = 42
+const MIN_REFINEMENT_EDGE_DENSITY = 0.004
+const MIN_REFINEMENT_EDGE_CONCENTRATION = 0.3
+const REFINEMENT_GUTTER = 12
 const execFileAsync = promisify(execFile)
+
+export interface PixelBounds {
+  left: number
+  top: number
+  width: number
+  height: number
+}
+
+export interface FrozenScreenRefinementPanel {
+  source: PixelBounds
+  destination: PixelBounds
+}
+
+export interface FrozenScreenRefinementPlan {
+  image: Buffer
+  size: OcrImageSize
+  panels: FrozenScreenRefinementPanel[]
+  screenSize: OcrImageSize
+  coverage: number
+}
 
 interface WindowsOcrLine {
   text: string
@@ -220,7 +255,6 @@ export class NativeFirstOcrService implements OcrService {
   ): Promise<OcrResult> {
     this.active.add(attachmentId)
     let correctedPath: string | undefined
-    let maskedPath: string | undefined
     try {
       onProgress?.({ progress: 0, stage: options.preserveGeometry ? 'Preparing screen recognition' : 'Checking document alignment' })
       const corrected = options.preserveGeometry
@@ -244,7 +278,6 @@ export class NativeFirstOcrService implements OcrService {
         : { ...result, geometryCorrection: corrected.correction }
       if (options.preserveGeometry) {
         onProgress?.({ progress: 0, stage: 'Reading frozen-screen text' })
-        const fallbackPreparation = this.fallback.prepare?.().catch(() => undefined) ?? Promise.resolve()
         let nativeResult: OcrResult | null = null
         let nativeFailure: unknown
         try {
@@ -268,43 +301,91 @@ export class NativeFirstOcrService implements OcrService {
           nativeFailure = error
         }
 
-        await fallbackPreparation
         this.throwIfCancelled(attachmentId)
-        let fallbackImage = corrected.image
-        let fallbackOptions = correctedOptions
-        if (nativeResult?.regions.length) {
-          try {
-            fallbackImage = await maskRecognisedScreenText(corrected.image, nativeResult.regions, corrected.size)
-            if (correctedOptions.sourcePath) {
-              maskedPath = `${correctedOptions.sourcePath}.ocr-mask-${randomUUID()}.png`
-              await writeFile(maskedPath, fallbackImage)
-              fallbackOptions = { ...correctedOptions, sourcePath: maskedPath }
-            }
-            console.info(`[ocr] Masked ${nativeResult.regions.length} Windows lines before Paddle refinement.`)
-          } catch (error) {
-            console.warn(`[ocr] Could not mask Windows OCR lines: ${error instanceof Error ? error.message : String(error)}`)
-          }
+        const useFullScreenFallback = !nativeResult || shouldRefineFrozenScreenOcr(nativeResult)
+        const refinementPlan = nativeResult && !useFullScreenFallback
+          ? await prepareFrozenScreenRefinement(
+              corrected.image,
+              corrected.size,
+              nativeResult,
+              correctedOptions.refinementRegions ?? []
+            )
+          : null
+        this.throwIfCancelled(attachmentId)
+        if (nativeResult && !useFullScreenFallback && !refinementPlan) {
+          const metrics = screenOcrMetrics(nativeResult)
+          onProgress?.({ progress: 1, stage: 'Screen text ready' })
+          console.info(
+            `[ocr] Windows found ${metrics.lineCount} lines/${metrics.characterCount} chars and ` +
+            `no uncovered text-like regions required Paddle refinement.`
+          )
+          return nativeResult
         }
 
+        if (refinementPlan) {
+          console.info(
+            `[ocr] Refining ${refinementPlan.panels.length} uncovered screen regions ` +
+            `covering ${Math.round(refinementPlan.coverage * 100)}% of the frozen screen.`
+          )
+        }
+        onProgress?.({
+          progress: 0.5,
+          stage: refinementPlan
+            ? 'Refining uncovered screen text'
+            : nativeResult
+              ? 'Refining sparse screen text'
+              : 'Using bundled screen recognition'
+        })
+        await this.fallback.prepare?.().catch(() => undefined)
+        this.throwIfCancelled(attachmentId)
         let fallbackResult: OcrResult | null = null
         let fallbackFailure: unknown
         try {
-          fallbackResult = applyCorrection(await this.fallback.recognise(
+          const rawFallbackResult = await this.fallback.recognise(
             attachmentId,
-            fallbackImage,
-            corrected.size,
-            onProgress,
-            fallbackOptions
-          ))
+            refinementPlan?.image ?? corrected.image,
+            refinementPlan?.size ?? corrected.size,
+            refinementPlan
+              ? (progress) => onProgress?.({
+                  progress: 0.5 + progress.progress * 0.45,
+                  stage: progress.stage
+                })
+              : onProgress,
+            refinementPlan
+              ? {
+                  ...correctedOptions,
+                  sourcePath: undefined,
+                  refinementRegions: undefined,
+                  selectiveScreenRefinement: true
+                }
+              : correctedOptions
+          )
+          fallbackResult = refinementPlan
+            ? mapFrozenScreenRefinementResult(rawFallbackResult, refinementPlan)
+            : applyCorrection(rawFallbackResult)
         } catch (error) {
           if (error instanceof OcrServiceError && error.code === 'ocr-cancelled') throw error
           fallbackFailure = error
         }
         this.throwIfCancelled(attachmentId)
         if (nativeResult && fallbackResult) {
+          const rejection = screenRefinementRejectionReason(nativeResult, fallbackResult, Boolean(refinementPlan))
+          if (rejection) {
+            console.info(
+              `[ocr] Discarded ${resultSummary(fallbackResult)} refinement: ${rejection}; ` +
+              `kept ${resultSummary(nativeResult)}.`
+            )
+            return nativeResult
+          }
           const merged = mergeScreenOcrResults(nativeResult, fallbackResult)
+          onProgress?.({
+            progress: 1,
+            stage: refinementPlan ? 'Uncovered screen text added' : 'Screen text ready',
+            result: structuredClone(merged)
+          })
           console.info(
-            `[ocr] Frozen-screen comparison: ${resultSummary(nativeResult)}; ` +
+            `[ocr] ${refinementPlan ? 'Selective frozen-screen comparison' : 'Frozen-screen comparison'}: ` +
+            `${resultSummary(nativeResult)}; ` +
             `${resultSummary(fallbackResult)}; merged ${merged.regions.length} lines using ${merged.engine ?? 'unknown'}.`
           )
           return merged
@@ -350,7 +431,6 @@ export class NativeFirstOcrService implements OcrService {
         throw error
       }
     } finally {
-      if (maskedPath) await unlink(maskedPath).catch(() => undefined)
       if (correctedPath) await unlink(correctedPath).catch(() => undefined)
       this.active.delete(attachmentId)
       this.cancelled.delete(attachmentId)
@@ -402,6 +482,363 @@ export function resultQualityScore(result: OcrResult): number {
   return Math.round(lengthScore + confidenceScore - (result.quality === 'low-confidence' ? 100 : 0))
 }
 
+export async function prepareFrozenScreenRefinement(
+  image: Buffer,
+  size: OcrImageSize,
+  nativeResult: OcrResult,
+  refinementHints: OcrBounds[] = []
+): Promise<FrozenScreenRefinementPlan | null> {
+  const screenSize = {
+    width: Math.max(1, Math.round(size.width)),
+    height: Math.max(1, Math.round(size.height))
+  }
+  if (screenSize.width < 64 || screenSize.height < 64) return null
+
+  try {
+    const previewScale = Math.min(
+      1,
+      REFINEMENT_PREVIEW_WIDTH / screenSize.width,
+      REFINEMENT_PREVIEW_HEIGHT / screenSize.height
+    )
+    const previewWidth = Math.max(1, Math.round(screenSize.width * previewScale))
+    const previewHeight = Math.max(1, Math.round(screenSize.height * previewScale))
+    const preview = await sharp(image)
+      .resize(previewWidth, previewHeight, { fit: 'fill', kernel: sharp.kernel.lanczos3 })
+      .grayscale()
+      .raw()
+      .toBuffer()
+    const knownTextMask = new Uint8Array(previewWidth * previewHeight)
+    for (const { bounds } of nativeResult.regions) {
+      const left = Math.max(0, Math.floor(bounds.x * previewWidth) - 2)
+      const top = Math.max(0, Math.floor(bounds.y * previewHeight) - 2)
+      const right = Math.min(previewWidth, Math.ceil((bounds.x + bounds.width) * previewWidth) + 2)
+      const bottom = Math.min(previewHeight, Math.ceil((bounds.y + bounds.height) * previewHeight) + 2)
+      for (let y = top; y < bottom; y += 1) {
+        knownTextMask.fill(1, y * previewWidth + left, y * previewWidth + right)
+      }
+    }
+
+    const nativeTiles = new Set(nativeResult.regions.map(({ bounds }) =>
+      refinementTileKey(
+        Math.floor(clamp(bounds.x + bounds.width / 2, 0, 0.999_999) * REFINEMENT_GRID_COLUMNS),
+        Math.floor(clamp(bounds.y + bounds.height / 2, 0, 0.999_999) * REFINEMENT_GRID_ROWS)
+      )
+    ))
+    const uncoveredHintTiles = new Set(refinementHints
+      .filter((hint) =>
+        validNormalisedBounds(hint) &&
+        !nativeResult.regions.some(({ bounds }) =>
+          boundsIntersection(bounds, hint) / Math.max(0.000_001, hint.width * hint.height) >= 0.45
+        )
+      )
+      .map((hint) => refinementTileKey(
+        Math.floor(clamp(hint.x + hint.width / 2, 0, 0.999_999) * REFINEMENT_GRID_COLUMNS),
+        Math.floor(clamp(hint.y + hint.height / 2, 0, 0.999_999) * REFINEMENT_GRID_ROWS)
+      )))
+
+    const candidates: Array<{
+      column: number
+      row: number
+      score: number
+      hinted: boolean
+    }> = []
+    for (let row = 0; row < REFINEMENT_GRID_ROWS; row += 1) {
+      const previewTop = Math.floor(row * previewHeight / REFINEMENT_GRID_ROWS)
+      const previewBottom = Math.ceil((row + 1) * previewHeight / REFINEMENT_GRID_ROWS)
+      for (let column = 0; column < REFINEMENT_GRID_COLUMNS; column += 1) {
+        const previewLeft = Math.floor(column * previewWidth / REFINEMENT_GRID_COLUMNS)
+        const previewRight = Math.ceil((column + 1) * previewWidth / REFINEMENT_GRID_COLUMNS)
+        const rowEdges = new Array<number>(Math.max(1, previewBottom - previewTop)).fill(0)
+        let edgeCount = 0
+        for (let y = Math.max(1, previewTop); y < previewBottom; y += 1) {
+          for (let x = Math.max(1, previewLeft); x < previewRight; x += 1) {
+            const index = y * previewWidth + x
+            if (knownTextMask[index]) continue
+            const gradient = Math.abs(preview[index]! - preview[index - 1]!) +
+              Math.abs(preview[index]! - preview[index - previewWidth]!)
+            if (gradient < REFINEMENT_EDGE_THRESHOLD) continue
+            edgeCount += 1
+            rowEdges[y - previewTop] = (rowEdges[y - previewTop] ?? 0) + 1
+          }
+        }
+        const tileArea = Math.max(1, (previewRight - previewLeft) * (previewBottom - previewTop))
+        const edgeDensity = edgeCount / tileArea
+        const concentratedRows = Math.max(1, Math.ceil(rowEdges.length * 0.25))
+        const concentratedEdges = [...rowEdges]
+          .sort((left, right) => right - left)
+          .slice(0, concentratedRows)
+          .reduce((sum, count) => sum + count, 0)
+        const edgeConcentration = edgeCount ? concentratedEdges / edgeCount : 0
+        const key = refinementTileKey(column, row)
+        const hinted = uncoveredHintTiles.has(key)
+        const adjacentToNative = [
+          refinementTileKey(column - 1, row),
+          refinementTileKey(column + 1, row),
+          refinementTileKey(column, row - 1),
+          refinementTileKey(column, row + 1)
+        ].some((candidate) => nativeTiles.has(candidate))
+        if (
+          !hinted &&
+          (edgeDensity < MIN_REFINEMENT_EDGE_DENSITY ||
+            edgeConcentration < MIN_REFINEMENT_EDGE_CONCENTRATION)
+        ) {
+          continue
+        }
+        candidates.push({
+          column,
+          row,
+          hinted,
+          score: edgeDensity * (0.6 + edgeConcentration) +
+            (hinted ? 0.2 : 0) +
+            (adjacentToNative ? 0.025 : 0)
+        })
+      }
+    }
+
+    const selected = candidates
+      .sort((left, right) =>
+        Number(right.hinted) - Number(left.hinted) ||
+        right.score - left.score ||
+        left.row - right.row ||
+        left.column - right.column
+      )
+      .slice(0, MAX_REFINEMENT_TILES)
+    if (!selected.length) return null
+
+    const sourcePadding = Math.max(8, Math.round(Math.min(screenSize.width, screenSize.height) * 0.006))
+    const sources = selected.map(({ column, row }): PixelBounds => {
+      const rawLeft = Math.floor(column * screenSize.width / REFINEMENT_GRID_COLUMNS)
+      const rawTop = Math.floor(row * screenSize.height / REFINEMENT_GRID_ROWS)
+      const rawRight = Math.ceil((column + 1) * screenSize.width / REFINEMENT_GRID_COLUMNS)
+      const rawBottom = Math.ceil((row + 1) * screenSize.height / REFINEMENT_GRID_ROWS)
+      const left = Math.max(0, rawLeft - sourcePadding)
+      const top = Math.max(0, rawTop - sourcePadding)
+      const right = Math.min(screenSize.width, rawRight + sourcePadding)
+      const bottom = Math.min(screenSize.height, rawBottom + sourcePadding)
+      return { left, top, width: right - left, height: bottom - top }
+    })
+    const montageColumns = Math.min(3, sources.length)
+    const montageRows = Math.ceil(sources.length / montageColumns)
+    const cellWidth = Math.max(...sources.map(({ width }) => width)) + REFINEMENT_GUTTER * 2
+    const cellHeight = Math.max(...sources.map(({ height }) => height)) + REFINEMENT_GUTTER * 2
+    const panels: FrozenScreenRefinementPanel[] = sources.map((source, index) => ({
+      source,
+      destination: {
+        left: (index % montageColumns) * cellWidth + REFINEMENT_GUTTER,
+        top: Math.floor(index / montageColumns) * cellHeight + REFINEMENT_GUTTER,
+        width: source.width,
+        height: source.height
+      }
+    }))
+    const inputs = await Promise.all(panels.map(async ({ source, destination }) => ({
+      input: await sharp(image).extract(source).png().toBuffer(),
+      left: destination.left,
+      top: destination.top
+    })))
+    const montageSize = {
+      width: montageColumns * cellWidth,
+      height: montageRows * cellHeight
+    }
+    const montage = await sharp({
+      create: {
+        width: montageSize.width,
+        height: montageSize.height,
+        channels: 3,
+        background: { r: 127, g: 127, b: 127 }
+      }
+    }).composite(inputs).png().toBuffer()
+    return {
+      image: montage,
+      size: montageSize,
+      panels,
+      screenSize,
+      coverage: selected.length / (REFINEMENT_GRID_COLUMNS * REFINEMENT_GRID_ROWS)
+    }
+  } catch (error) {
+    console.warn(`[ocr] Could not prepare selective screen refinement: ${error instanceof Error ? error.message : String(error)}`)
+    return null
+  }
+}
+
+export function mapFrozenScreenRefinementResult(
+  result: OcrResult,
+  plan: FrozenScreenRefinementPlan
+): OcrResult {
+  const mapRegions = (regions: OcrRegion[] | undefined, prefix: 'line' | 'word'): OcrRegion[] =>
+    (regions ?? [])
+      .map((region) => mapFrozenScreenRefinementRegion(region, plan))
+      .filter((region): region is OcrRegion => Boolean(region))
+      .sort((left, right) => left.bounds.y - right.bounds.y || left.bounds.x - right.bounds.x)
+      .slice(0, MAX_REGIONS)
+      .map((region, index) => ({ ...region, id: `${prefix}-${index + 1}` }))
+  const regions = mapRegions(result.regions, 'line')
+  const words = mapRegions(result.words, 'word')
+  const text = regions.map(({ text }) => text).join('\n').slice(0, MAX_TEXT_LENGTH)
+  const confidence = regions.length
+    ? Math.round(regions.reduce((sum, { confidence: value }) => sum + value, 0) / regions.length)
+    : 0
+  return {
+    ...result,
+    text,
+    confidence,
+    quality: confidence < 60 ? 'low-confidence' : 'normal',
+    regions,
+    words: words.length ? words : undefined,
+    entities: detectOcrEntities(text),
+    truncated: result.truncated || text.length >= MAX_TEXT_LENGTH
+  }
+}
+
+function mapFrozenScreenRefinementRegion(
+  region: OcrRegion,
+  plan: FrozenScreenRefinementPlan
+): OcrRegion | null {
+  const text = region.text.replaceAll('\0', '').replace(/\s+/g, ' ').trim()
+  if (!text || !/[\p{L}\p{N}]/u.test(text)) return null
+  if (region.confidence > 0 && region.confidence < 50) return null
+  if ([...text.replace(/\s/g, '')].length <= 2 && region.confidence > 0 && region.confidence < 72) return null
+
+  const rawLeft = region.bounds.x * plan.size.width
+  const rawTop = region.bounds.y * plan.size.height
+  const rawRight = (region.bounds.x + region.bounds.width) * plan.size.width
+  const rawBottom = (region.bounds.y + region.bounds.height) * plan.size.height
+  const centerX = (rawLeft + rawRight) / 2
+  const centerY = (rawTop + rawBottom) / 2
+  const panel = plan.panels.find(({ destination }) =>
+    centerX >= destination.left &&
+    centerX <= destination.left + destination.width &&
+    centerY >= destination.top &&
+    centerY <= destination.top + destination.height
+  )
+  if (!panel) return null
+
+  const clippedLeft = Math.max(rawLeft, panel.destination.left)
+  const clippedTop = Math.max(rawTop, panel.destination.top)
+  const clippedRight = Math.min(rawRight, panel.destination.left + panel.destination.width)
+  const clippedBottom = Math.min(rawBottom, panel.destination.top + panel.destination.height)
+  if (clippedRight <= clippedLeft || clippedBottom <= clippedTop) return null
+  const retainedArea = (clippedRight - clippedLeft) * (clippedBottom - clippedTop)
+  const rawArea = Math.max(1, (rawRight - rawLeft) * (rawBottom - rawTop))
+  if (retainedArea / rawArea < 0.45) return null
+
+  const screenLeft = panel.source.left + clippedLeft - panel.destination.left
+  const screenTop = panel.source.top + clippedTop - panel.destination.top
+  const screenRight = panel.source.left + clippedRight - panel.destination.left
+  const screenBottom = panel.source.top + clippedBottom - panel.destination.top
+  const left = clamp(screenLeft / plan.screenSize.width, 0, 1)
+  const top = clamp(screenTop / plan.screenSize.height, 0, 1)
+  const right = clamp(screenRight / plan.screenSize.width, left, 1)
+  const bottom = clamp(screenBottom / plan.screenSize.height, top, 1)
+  if (right <= left || bottom <= top) return null
+  return {
+    ...region,
+    text,
+    bounds: {
+      x: left,
+      y: top,
+      width: right - left,
+      height: bottom - top
+    }
+  }
+}
+
+function refinementTileKey(column: number, row: number): string {
+  return `${column}:${row}`
+}
+
+function validNormalisedBounds(bounds: OcrBounds): boolean {
+  return Number.isFinite(bounds.x) &&
+    Number.isFinite(bounds.y) &&
+    Number.isFinite(bounds.width) &&
+    Number.isFinite(bounds.height) &&
+    bounds.width > 0 &&
+    bounds.height > 0 &&
+    bounds.x < 1 &&
+    bounds.y < 1 &&
+    bounds.x + bounds.width > 0 &&
+    bounds.y + bounds.height > 0
+}
+
+export function shouldRefineFrozenScreenOcr(result: OcrResult): boolean {
+  const metrics = screenOcrMetrics(result)
+  if (!metrics.lineCount || metrics.characterCount < MIN_SCREEN_CHARACTERS_BEFORE_FULL_REFINEMENT) return true
+  if (
+    metrics.fragmentRatio > MAX_NATIVE_FRAGMENT_RATIO &&
+    metrics.characterCount < MIN_SCREEN_CHARACTERS_BEFORE_FULL_REFINEMENT * 2
+  ) {
+    return true
+  }
+  return false
+}
+
+export function shouldAcceptFrozenScreenRefinement(
+  nativeResult: OcrResult,
+  fallbackResult: OcrResult
+): boolean {
+  return screenRefinementRejectionReason(nativeResult, fallbackResult) === null
+}
+
+interface ScreenOcrMetrics {
+  lineCount: number
+  characterCount: number
+  averageCharactersPerLine: number
+  fragmentRatio: number
+}
+
+function screenOcrMetrics(result: Pick<OcrResult, 'regions' | 'text'>): ScreenOcrMetrics {
+  const texts = result.regions
+    .map(({ text }) => text.replaceAll('\0', '').trim())
+    .filter(Boolean)
+  if (!texts.length && result.text.trim()) {
+    texts.push(...result.text.split(/\r?\n/).map((text) => text.trim()).filter(Boolean))
+  }
+  const characterCounts = texts.map((text) => [...text.replace(/\s/g, '')].length)
+  const characterCount = characterCounts.reduce((sum, count) => sum + count, 0)
+  const fragmentCount = characterCounts.filter((count) => count <= 3).length
+  return {
+    lineCount: texts.length,
+    characterCount,
+    averageCharactersPerLine: texts.length ? characterCount / texts.length : 0,
+    fragmentRatio: texts.length ? fragmentCount / texts.length : 0
+  }
+}
+
+function screenRefinementRejectionReason(
+  nativeResult: OcrResult,
+  fallbackResult: OcrResult,
+  selectiveRefinement = false
+): string | null {
+  const fallbackMetrics = screenOcrMetrics(fallbackResult)
+  if (!fallbackMetrics.lineCount || !fallbackMetrics.characterCount) return 'it returned no usable text'
+  if (selectiveRefinement) return null
+  if (
+    fallbackMetrics.lineCount >= MIN_REFINEMENT_LINES_FOR_DENSITY_GATE &&
+    fallbackMetrics.averageCharactersPerLine < MIN_REFINEMENT_CHARACTERS_PER_LINE
+  ) {
+    return `fragment density was too high (${fallbackMetrics.averageCharactersPerLine.toFixed(1)} chars/line)`
+  }
+
+  const nativeMetrics = screenOcrMetrics(nativeResult)
+  if (
+    fallbackMetrics.lineCount >= MIN_REFINEMENT_LINES_FOR_DENSITY_GATE &&
+    fallbackMetrics.fragmentRatio >= MAX_REFINEMENT_FRAGMENT_RATIO &&
+    fallbackMetrics.characterCount < Math.max(MIN_SUBSTANTIAL_REFINEMENT_CHARACTERS, nativeMetrics.characterCount * 0.5)
+  ) {
+    return `${Math.round(fallbackMetrics.fragmentRatio * 100)}% of its lines were short fragments`
+  }
+
+  const complementaryRegions = fallbackResult.regions.filter((candidate) =>
+    !nativeResult.regions.some((existing) => duplicateOcrRegion(existing, candidate))
+  )
+  if (complementaryRegions.length >= MIN_REFINEMENT_LINES_FOR_DENSITY_GATE) {
+    const complementaryMetrics = screenOcrMetrics({ regions: complementaryRegions, text: '' })
+    if (complementaryMetrics.averageCharactersPerLine < MIN_REFINEMENT_CHARACTERS_PER_LINE) {
+      return `new regions averaged only ${complementaryMetrics.averageCharactersPerLine.toFixed(1)} chars/line`
+    }
+  }
+  return null
+}
+
 export function mergeScreenOcrResults(nativeResult: OcrResult, fallbackResult: OcrResult): OcrResult {
   if (!nativeResult.regions.length) return structuredClone(fallbackResult)
   if (!fallbackResult.regions.length) return structuredClone(nativeResult)
@@ -418,94 +855,6 @@ export function mergeScreenOcrResults(nativeResult: OcrResult, fallbackResult: O
     cached: nativeResult.cached === true && fallbackResult.cached === true,
     durationMs: Math.max(nativeResult.durationMs ?? 0, fallbackResult.durationMs ?? 0)
   }
-}
-
-export async function maskRecognisedScreenText(
-  image: Buffer,
-  regions: OcrRegion[],
-  size: OcrImageSize
-): Promise<Buffer> {
-  const decoded = await sharp(image).removeAlpha().raw().toBuffer({ resolveWithObject: true })
-  const width = Math.max(1, Math.min(Math.round(size.width), decoded.info.width))
-  const height = Math.max(1, Math.min(Math.round(size.height), decoded.info.height))
-  const rectangles = regions
-    .slice(0, MAX_REGIONS)
-    .map(({ bounds }) => {
-      const rawLeft = Math.floor(bounds.x * width)
-      const rawTop = Math.floor(bounds.y * height)
-      const rawRight = Math.ceil((bounds.x + bounds.width) * width)
-      const rawBottom = Math.ceil((bounds.y + bounds.height) * height)
-      const paddingX = Math.max(3, Math.min(16, Math.ceil((rawRight - rawLeft) * 0.04)))
-      const paddingY = Math.max(2, Math.min(10, Math.ceil((rawBottom - rawTop) * 0.2)))
-      const left = Math.max(0, rawLeft - paddingX)
-      const top = Math.max(0, rawTop - paddingY)
-      const right = Math.min(width, rawRight + paddingX)
-      const bottom = Math.min(height, rawBottom + paddingY)
-      return {
-        left,
-        top,
-        width: right - left,
-        height: bottom - top,
-        fill: sampledBackgroundColour(
-          decoded.data,
-          decoded.info.width,
-          decoded.info.height,
-          decoded.info.channels,
-          left,
-          top,
-          right,
-          bottom
-        )
-      }
-    })
-    .filter((bounds) => bounds.width > 0 && bounds.height > 0)
-  if (!rectangles.length) return image
-  const mask = Buffer.from(
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">` +
-    rectangles.map(({ left, top, width: rectangleWidth, height: rectangleHeight, fill }) =>
-      `<rect x="${left}" y="${top}" width="${rectangleWidth}" height="${rectangleHeight}" fill="${fill}"/>`
-    ).join('') +
-    '</svg>'
-  )
-  return sharp(image).composite([{ input: mask }]).png().toBuffer()
-}
-
-function sampledBackgroundColour(
-  data: Buffer,
-  width: number,
-  height: number,
-  channels: number,
-  left: number,
-  top: number,
-  right: number,
-  bottom: number
-): string {
-  let red = 0
-  let green = 0
-  let blue = 0
-  let samples = 0
-  const addSample = (x: number, y: number): void => {
-    if (x < 0 || y < 0 || x >= width || y >= height) return
-    const index = (y * width + x) * channels
-    red += data[index] ?? 128
-    green += data[index + 1] ?? data[index] ?? 128
-    blue += data[index + 2] ?? data[index] ?? 128
-    samples += 1
-  }
-  const horizontalStep = Math.max(1, Math.ceil((right - left) / 64))
-  const verticalStep = Math.max(1, Math.ceil((bottom - top) / 32))
-  for (let x = left; x < right; x += horizontalStep) {
-    addSample(x, top - 1)
-    addSample(x, bottom)
-  }
-  for (let y = top; y < bottom; y += verticalStep) {
-    addSample(left - 1, y)
-    addSample(right, y)
-  }
-  const colour = (value: number): string => Math.round(samples ? value / samples : 128)
-    .toString(16)
-    .padStart(2, '0')
-  return `#${colour(red)}${colour(green)}${colour(blue)}`
 }
 
 export function mapWindowsOcrPayload(

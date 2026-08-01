@@ -193,7 +193,7 @@ export type SpectralEdgeState =
 export type CaptureMode = 'region' | 'display' | 'window' | 'repeat-last'
 export type ShortcutAction = CaptureMode | 'settings'
 
-export type CaptureFeatureKind = 'text' | 'control' | 'link' | 'error' | 'value' | 'visual'
+export type CaptureFeatureKind = 'text' | 'control' | 'link' | 'error' | 'value' | 'visual' | 'face'
 
 export interface CaptureFeature {
   id: string
@@ -202,6 +202,7 @@ export interface CaptureFeature {
   bounds: OcrBounds
   rank?: number
   source?: 'uia' | 'hybrid' | 'ocr-word' | 'ocr-line' | 'visual'
+  detector?: 'heuristic' | 'omniparser' | 'yunet'
   role?: string
   description?: string
   enabled?: boolean

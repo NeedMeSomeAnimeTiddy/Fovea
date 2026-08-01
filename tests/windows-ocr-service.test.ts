@@ -6,11 +6,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { OcrServiceError, type OcrService } from '../src/main/ocr/ocr-service'
 import {
   mapWindowsOcrPayload,
-  maskRecognisedScreenText,
+  mapFrozenScreenRefinementResult,
   mergeScreenOcrResults,
   NativeFirstOcrService,
+  prepareFrozenScreenRefinement,
   resultQualityScore,
+  shouldAcceptFrozenScreenRefinement,
   shouldCompareWithFallback,
+  shouldRefineFrozenScreenOcr,
   WindowsOcrService
 } from '../src/main/ocr/windows-ocr-service'
 
@@ -93,33 +96,6 @@ describe('Windows OCR integration', () => {
     ])
   })
 
-  it('masks text already found by Windows while leaving uncovered pixels for Paddle', async () => {
-    const image = await sharp({
-      create: {
-        width: 100,
-        height: 50,
-        channels: 3,
-        background: '#336699'
-      }
-    }).composite([
-      { input: Buffer.from('<svg width="100" height="50"><rect x="10" y="5" width="20" height="10" fill="#000"/></svg>') },
-      { input: Buffer.from('<svg width="100" height="50"><rect x="70" y="30" width="20" height="10" fill="#000"/></svg>') }
-    ]).png().toBuffer()
-
-    const masked = await maskRecognisedScreenText(image, [{
-      id: 'line-1',
-      text: 'Known text',
-      confidence: 0,
-      bounds: { x: 0.1, y: 0.1, width: 0.2, height: 0.2 }
-    }], { width: 100, height: 50 })
-    const { data, info } = await sharp(masked).raw().toBuffer({ resolveWithObject: true })
-    const valueAt = (x: number, y: number): number => data[(y * info.width + x) * info.channels]!
-
-    expect([valueAt(20, 10), data[(10 * info.width + 20) * info.channels + 1], data[(10 * info.width + 20) * info.channels + 2]])
-      .toEqual([51, 102, 153])
-    expect(valueAt(80, 35)).toBe(0)
-  })
-
   it('uses a useful native result without starting the bundled fallback', async () => {
     const native = service(vi.fn(async () => ({
       ...emptyResult,
@@ -137,8 +113,8 @@ describe('Windows OCR integration', () => {
   it('does not let conflicting Paddle confidence overwrite immediate Windows text', async () => {
     const native = service(vi.fn(async () => ({
       ...emptyResult,
-      text: 'Plausible Windows text with enough characters',
-      regions: [{ id: 'line-1', text: 'Plausible Windows text with enough characters', confidence: 0, bounds: { x: 0, y: 0, width: 1, height: 1 } }]
+      text: 'Plausible Windows',
+      regions: [{ id: 'line-1', text: 'Plausible Windows', confidence: 0, bounds: { x: 0, y: 0, width: 1, height: 1 } }]
     })))
     const fallback = service(vi.fn(async () => ({
       ...emptyResult,
@@ -155,10 +131,10 @@ describe('Windows OCR integration', () => {
         sourcePath: 'capture.png',
         preserveGeometry: true
       }))
-      .resolves.toMatchObject({ text: 'Plausible Windows text with enough characters', engine: 'windows' })
+      .resolves.toMatchObject({ text: 'Plausible Windows', engine: 'windows' })
     expect(onProgress).toHaveBeenCalledWith(expect.objectContaining({
       stage: 'Fast screen text ready',
-      result: expect.objectContaining({ text: 'Plausible Windows text with enough characters' })
+      result: expect.objectContaining({ text: 'Plausible Windows' })
     }))
     expect(fallback.recognise).toHaveBeenCalledOnce()
   })
@@ -223,14 +199,167 @@ describe('Windows OCR integration', () => {
     expect(merged.text).toBe('Settings and privacy')
   })
 
-  it('prepares Paddle while Windows runs, then starts masked refinement', async () => {
+  it('returns a substantial frozen-screen Windows result without preparing Paddle', async () => {
+    const lines = Array.from({ length: 6 }, (_, index) => ({
+      id: `line-${index + 1}`,
+      text: `Windows recognised complete screen sentence number ${index + 1}`,
+      confidence: 0,
+      bounds: { x: 0.05, y: 0.05 + index * 0.1, width: 0.5, height: 0.04 }
+    }))
+    const nativeResult = {
+      ...emptyResult,
+      text: lines.map(({ text }) => text).join('\n'),
+      regions: lines
+    }
+    const native = service(vi.fn(async () => nativeResult))
+    const fallback = {
+      ...service(vi.fn(async () => ({ ...emptyResult, engine: 'paddle' as const }))),
+      prepare: vi.fn(async () => undefined)
+    }
+
+    await expect(new NativeFirstOcrService(native, fallback)
+      .recognise('capture', Buffer.from('original pixels'), { width: 100, height: 100 }, undefined, {
+        sourcePath: 'capture.png',
+        preserveGeometry: true
+      }))
+      .resolves.toMatchObject({ engine: 'windows', text: nativeResult.text })
+
+    expect(shouldRefineFrozenScreenOcr(nativeResult)).toBe(false)
+    expect(fallback.prepare).not.toHaveBeenCalled()
+    expect(fallback.recognise).not.toHaveBeenCalled()
+  })
+
+  it('plans selective refinement for an uncovered value beside native text', async () => {
+    const image = await sharp(Buffer.from(`
+      <svg xmlns="http://www.w3.org/2000/svg" width="600" height="400">
+        <rect width="600" height="400" fill="#fff"/>
+        <text x="45" y="90" font-size="24" fill="#111">Recognised heading and description</text>
+        <text x="410" y="210" font-size="22" fill="#111">£149.00</text>
+      </svg>
+    `)).png().toBuffer()
+    const nativeResult = {
+      ...emptyResult,
+      text: 'Recognised heading and description',
+      regions: [{
+        id: 'line-1',
+        text: 'Recognised heading and description',
+        confidence: 0,
+        bounds: { x: 0.075, y: 0.15, width: 0.52, height: 0.08 }
+      }]
+    }
+    const hint = { x: 0.67, y: 0.44, width: 0.2, height: 0.08 }
+
+    const plan = await prepareFrozenScreenRefinement(
+      image,
+      { width: 600, height: 400 },
+      nativeResult,
+      [hint]
+    )
+
+    expect(plan).not.toBeNull()
+    expect(plan?.panels.length).toBeGreaterThan(0)
+    expect(plan?.panels.length).toBeLessThanOrEqual(6)
+    expect(plan?.coverage).toBeLessThanOrEqual(0.25)
+    expect(plan?.panels.some(({ source }) => {
+      const hintCenterX = (hint.x + hint.width / 2) * 600
+      const hintCenterY = (hint.y + hint.height / 2) * 400
+      return hintCenterX >= source.left &&
+        hintCenterX <= source.left + source.width &&
+        hintCenterY >= source.top &&
+        hintCenterY <= source.top + source.height
+    })).toBe(true)
+    await expect(sharp(plan!.image).metadata()).resolves.toMatchObject(plan!.size)
+  })
+
+  it('maps selective Paddle crop geometry back onto the frozen screen', () => {
+    const mapped = mapFrozenScreenRefinementResult({
+      ...emptyResult,
+      text: '42',
+      confidence: 92,
+      engine: 'paddle',
+      regions: [{
+        id: 'line-1',
+        text: '42',
+        confidence: 92,
+        bounds: { x: 0.1, y: 0.2, width: 0.3, height: 0.2 }
+      }]
+    }, {
+      image: Buffer.from('montage'),
+      size: { width: 200, height: 100 },
+      screenSize: { width: 1_000, height: 500 },
+      coverage: 0.04,
+      panels: [{
+        source: { left: 400, top: 100, width: 160, height: 80 },
+        destination: { left: 10, top: 10, width: 160, height: 80 }
+      }]
+    })
+
+    expect(mapped.regions).toHaveLength(1)
+    expect(mapped.regions[0]?.text).toBe('42')
+    expect(mapped.regions[0]?.bounds.x).toBeCloseTo(0.41)
+    expect(mapped.regions[0]?.bounds.y).toBeCloseTo(0.22)
+    expect(mapped.regions[0]?.bounds.width).toBeCloseTo(0.06)
+    expect(mapped.regions[0]?.bounds.height).toBeCloseTo(0.04)
+  })
+
+  it('runs one selective Paddle montage when dense Windows text misses a hinted value', async () => {
+    const image = await sharp(Buffer.from(`
+      <svg xmlns="http://www.w3.org/2000/svg" width="600" height="400">
+        <rect width="600" height="400" fill="#fff"/>
+        <text x="40" y="80" font-size="22" fill="#111">Windows recognised enough text elsewhere</text>
+        <text x="410" y="220" font-size="22" fill="#111">Missing value</text>
+      </svg>
+    `)).png().toBuffer()
+    const nativeResult = {
+      ...emptyResult,
+      text: 'Windows recognised enough text elsewhere',
+      regions: [{
+        id: 'line-1',
+        text: 'Windows recognised enough text elsewhere',
+        confidence: 0,
+        bounds: { x: 0.06, y: 0.13, width: 0.56, height: 0.08 }
+      }]
+    }
+    const native = service(vi.fn(async () => nativeResult))
+    const fallbackRecognise = vi.fn<OcrService['recognise']>(async () => ({
+      ...emptyResult,
+      engine: 'paddle',
+      paddleProfile: 'medium'
+    }))
+    const fallback = {
+      ...service(fallbackRecognise),
+      prepare: vi.fn(async () => undefined)
+    }
+
+    await expect(new NativeFirstOcrService(native, fallback)
+      .recognise('capture', image, { width: 600, height: 400 }, undefined, {
+        sourcePath: 'capture.png',
+        preserveGeometry: true,
+        refinementRegions: [{ x: 0.67, y: 0.45, width: 0.22, height: 0.08 }]
+      }))
+      .resolves.toMatchObject({ engine: 'windows', text: nativeResult.text })
+
+    expect(fallback.prepare).toHaveBeenCalledOnce()
+    expect(fallbackRecognise).toHaveBeenCalledOnce()
+    const [attachmentId, selectiveImage, selectiveSize, , selectiveOptions] = fallbackRecognise.mock.calls[0]!
+    expect(attachmentId).toBe('capture')
+    expect(selectiveImage.equals(image)).toBe(false)
+    expect(selectiveSize).not.toEqual({ width: 600, height: 400 })
+    expect(selectiveOptions).toMatchObject({
+      sourcePath: undefined,
+      refinementRegions: undefined,
+      selectiveScreenRefinement: true
+    })
+  })
+
+  it('waits for sparse Windows OCR before preparing Paddle and passes the untouched screen', async () => {
     let releaseNative: (() => void) | undefined
     const native = service(vi.fn(async () => {
       await new Promise<void>((resolve) => { releaseNative = resolve })
       return {
         ...emptyResult,
-        text: 'Windows screen result with enough characters',
-        regions: [{ id: 'line-1', text: 'Windows screen result with enough characters', confidence: 0, bounds: { x: 0, y: 0, width: 1, height: 1 } }]
+        text: 'Windows result',
+        regions: [{ id: 'line-1', text: 'Windows result', confidence: 0, bounds: { x: 0, y: 0, width: 1, height: 1 } }]
       }
     }))
     const fallback = {
@@ -244,17 +373,64 @@ describe('Windows OCR integration', () => {
       }))),
       prepare: vi.fn(async () => undefined)
     }
+    const image = Buffer.from('original frozen screen pixels')
     const recognition = new NativeFirstOcrService(native, fallback)
-      .recognise('capture', Buffer.from('image'), { width: 100, height: 100 }, undefined, {
+      .recognise('capture', image, { width: 100, height: 100 }, undefined, {
         sourcePath: 'capture.png',
         preserveGeometry: true
       })
 
-    await vi.waitFor(() => expect(fallback.prepare).toHaveBeenCalledOnce())
+    await vi.waitFor(() => expect(native.recognise).toHaveBeenCalledOnce())
+    expect(fallback.prepare).not.toHaveBeenCalled()
     expect(fallback.recognise).not.toHaveBeenCalled()
     releaseNative?.()
     await expect(recognition).resolves.toMatchObject({ engine: 'windows' })
+    expect(fallback.prepare).toHaveBeenCalledOnce()
     expect(fallback.recognise).toHaveBeenCalledOnce()
+    expect(fallback.recognise).toHaveBeenCalledWith(
+      'capture',
+      image,
+      { width: 100, height: 100 },
+      undefined,
+      expect.objectContaining({ sourcePath: 'capture.png' })
+    )
+  })
+
+  it('rejects a fragment-heavy Paddle refinement instead of doubling screen boxes', async () => {
+    const nativeResult = {
+      ...emptyResult,
+      text: 'Sparse heading',
+      regions: [{
+        id: 'line-1',
+        text: 'Sparse heading',
+        confidence: 0,
+        bounds: { x: 0.1, y: 0.1, width: 0.45, height: 0.05 }
+      }]
+    }
+    const fragmentRegions = Array.from({ length: 12 }, (_, index) => ({
+      id: `line-${index + 1}`,
+      text: `x${index % 10}`,
+      confidence: 91,
+      bounds: { x: 0.05 + (index % 4) * 0.2, y: 0.3 + Math.floor(index / 4) * 0.1, width: 0.04, height: 0.03 }
+    }))
+    const fallbackResult = {
+      ...emptyResult,
+      text: fragmentRegions.map(({ text }) => text).join('\n'),
+      confidence: 91,
+      engine: 'paddle' as const,
+      regions: fragmentRegions
+    }
+    const native = service(vi.fn(async () => nativeResult))
+    const fallback = service(vi.fn(async () => fallbackResult))
+
+    await expect(new NativeFirstOcrService(native, fallback)
+      .recognise('capture', Buffer.from('image'), { width: 100, height: 100 }, undefined, {
+        sourcePath: 'capture.png',
+        preserveGeometry: true
+      }))
+      .resolves.toMatchObject({ engine: 'windows', text: nativeResult.text, regions: nativeResult.regions })
+
+    expect(shouldAcceptFrozenScreenRefinement(nativeResult, fallbackResult)).toBe(false)
   })
 
   it('passes a corrected temporary image to Windows OCR and removes it afterwards', async () => {

@@ -19,7 +19,9 @@
     "ocr:benchmark": "node scripts/benchmark-ocr.mjs",
     "ocr:benchmark:paddle": "node scripts/benchmark-paddle-ocr.mjs",
     "ocr:fixture": "node scripts/generate-ocr-fixture.mjs",
+    "analyze:evaluate": "node scripts/evaluate-analyze.mjs",
     "paddle:setup": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-paddle-ocr.ps1",
+    "omniparser:setup": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-omniparser.ps1",
     "test": "vitest run",
     "build": "electron-vite build",
     "package:win": "npm run build && electron-builder --win nsis"
@@ -98,6 +100,10 @@
       {
         "from": "resources/ocr/paddle-ocr.py",
         "to": "ocr/paddle-ocr.py"
+      },
+      {
+        "from": "resources/analysis/omniparser-detector.py",
+        "to": "analysis/omniparser-detector.py"
       }
     ],
     "win": {

@@ -29,6 +29,7 @@
   --fovea-capture-feature-text: #7c3aed;
   --fovea-capture-feature-link: #007c72;
   --fovea-capture-feature-value: #9a5600;
+  --fovea-capture-feature-face: #a92d70;
   --fovea-capture-feature-visual: #167a3d;
   --fovea-capture-feature-label-text: #fff;
   --fovea-glow-capture-feature: 0 0 0 1px color-mix(in srgb, var(--analyze-feature-color) 22%, transparent), 0 0 16px color-mix(in srgb, var(--analyze-feature-color) 20%, transparent);

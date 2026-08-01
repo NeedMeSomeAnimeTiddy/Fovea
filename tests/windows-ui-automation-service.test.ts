@@ -17,6 +17,8 @@ describe('Windows UI Automation screen analysis', () => {
           enabled: false,
           focusable: true,
           visibleRatio: 0.8,
+          centerVisible: true,
+          windowVisibilityVerified: true,
           x: 20,
           y: 30,
           width: 100,
@@ -34,6 +36,8 @@ describe('Windows UI Automation screen analysis', () => {
       enabled: false,
       focusable: true,
       visibleRatio: 0.8,
+      centerVisible: true,
+      windowVisibilityVerified: true,
       bounds: { x: 20, y: 30, width: 100, height: 32 }
     })])
   })
@@ -89,6 +93,7 @@ describe('Windows UI Automation screen analysis', () => {
     }], { x: 0, y: 0, width: 100, height: 100 }, (bounds) => bounds)
 
     expect(features[0]?.bounds).toEqual({ x: 0.9, y: 0.9, width: 0.1, height: 0.1 })
+    expect(features[0]?.visibilityVerified).toBe(false)
   })
 
   it('does not map elements that failed topmost point visibility checks', () => {

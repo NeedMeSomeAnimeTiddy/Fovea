@@ -163,6 +163,204 @@ describe('frozen-screen feature analysis', () => {
     ])
   })
 
+  it('never renders accessibility-only controls in screenshot-anchored mode', async () => {
+    const image = await markedScreen([{ x: 30, y: 34, width: 70, height: 18 }])
+    const analysis = await buildCaptureAnalysis(image, {
+      lines: [],
+      screenshotAnchored: true,
+      uiFeatures: [{
+        id: 'uia-hidden-save',
+        kind: 'control',
+        label: 'Save',
+        source: 'uia',
+        role: 'button',
+        description: 'Hidden window control',
+        visibility: 1,
+        visibilityVerified: true,
+        bounds: { x: 0.09, y: 0.18, width: 0.24, height: 0.13 }
+      }]
+    })
+
+    expect(analysis.features).toEqual([])
+  })
+
+  it('uses frozen-screen geometry while attaching accessibility labels and tooltips', async () => {
+    const image = await markedScreen([{ x: 38, y: 36, width: 42, height: 18 }])
+    const analysis = await buildCaptureAnalysis(image, {
+      lines: [],
+      screenshotAnchored: true,
+      visualFeatures: [{
+        id: 'omniparser-save',
+        kind: 'control',
+        label: 'Unlabelled button',
+        source: 'visual',
+        detector: 'omniparser',
+        role: 'button',
+        visibility: 0.91,
+        bounds: { x: 0.11, y: 0.18, width: 0.16, height: 0.14 }
+      }],
+      uiFeatures: [{
+        id: 'uia-save',
+        kind: 'control',
+        label: 'Save',
+        source: 'uia',
+        role: 'button',
+        description: 'Save the current document',
+        visibility: 1,
+        visibilityVerified: true,
+        bounds: { x: 0.09, y: 0.17, width: 0.2, height: 0.16 }
+      }]
+    })
+
+    expect(analysis.features).toEqual([
+      expect.objectContaining({
+        id: 'uia-save',
+        kind: 'control',
+        label: 'Save',
+        source: 'hybrid',
+        detector: 'omniparser',
+        role: 'button',
+        description: 'Save the current document',
+        bounds: { x: 0.11, y: 0.18, width: 0.16, height: 0.14 }
+      })
+    ])
+  })
+
+  it('keeps a detected face while suppressing OCR noise and a generic control over it', () => {
+    const faceBounds = { x: 0.2, y: 0.18, width: 0.12, height: 0.2 }
+    const analysis = buildCaptureAnalysisStage({
+      screenshotAnchored: true,
+      lines: [{
+        id: 'face-ocr-noise',
+        text: 'QX',
+        confidence: 91,
+        bounds: { x: 0.23, y: 0.24, width: 0.04, height: 0.04 }
+      }],
+      visualFeatures: [
+        {
+          id: 'face-1',
+          kind: 'face',
+          label: 'Face 1',
+          source: 'visual',
+          detector: 'yunet',
+          role: 'face',
+          visibility: 0.94,
+          visibilityVerified: true,
+          bounds: faceBounds
+        },
+        {
+          id: 'model-face-false-control',
+          kind: 'control',
+          label: 'Unlabelled button',
+          source: 'visual',
+          detector: 'omniparser',
+          role: 'button',
+          visibility: 0.8,
+          bounds: faceBounds
+        }
+      ]
+    }, 'text')
+
+    expect(analysis.features).toEqual([
+      expect.objectContaining({ id: 'face-1', kind: 'face', detector: 'yunet' })
+    ])
+  })
+
+  it('does not promote sentence text inside a generic model box to an unlabelled button', () => {
+    const analysis = buildCaptureAnalysisStage({
+      screenshotAnchored: true,
+      lines: [{
+        id: 'sentence',
+        text: 'This ordinary sentence is visible content, not an interactive control.',
+        confidence: 96,
+        bounds: { x: 0.1, y: 0.3, width: 0.46, height: 0.05 }
+      }],
+      visualFeatures: [{
+        id: 'model-text-false-positive',
+        kind: 'control',
+        label: 'Unlabelled button',
+        source: 'visual',
+        detector: 'omniparser',
+        role: 'button',
+        visibility: 0.81,
+        bounds: { x: 0.095, y: 0.294, width: 0.47, height: 0.062 }
+      }]
+    }, 'text')
+
+    expect(analysis.features).toEqual([
+      expect.objectContaining({
+        kind: 'text',
+        label: 'This ordinary sentence is visible content, not an interactive control.',
+        source: 'ocr-line'
+      })
+    ])
+    expect(analysis.features).not.toContainEqual(expect.objectContaining({
+      label: 'Unlabelled button'
+    }))
+  })
+
+  it('drops low-confidence model boxes that tightly hug ordinary compact text', () => {
+    const analysis = buildCaptureAnalysisStage({
+      screenshotAnchored: true,
+      lines: [{
+        id: 'heading',
+        text: 'Quarterly revenue',
+        confidence: 96,
+        bounds: { x: 0.12, y: 0.2, width: 0.18, height: 0.04 }
+      }],
+      visualFeatures: [{
+        id: 'model-heading-false-positive',
+        kind: 'control',
+        label: 'Unlabelled button',
+        source: 'visual',
+        detector: 'omniparser',
+        role: 'button',
+        visibility: 0.31,
+        bounds: { x: 0.115, y: 0.194, width: 0.19, height: 0.052 }
+      }]
+    }, 'text')
+
+    expect(analysis.features).toEqual([
+      expect.objectContaining({
+        kind: 'text',
+        label: 'Quarterly revenue',
+        source: 'ocr-line'
+      })
+    ])
+  })
+
+  it('still uses a high-confidence model box for explicitly actionable text', () => {
+    const analysis = buildCaptureAnalysisStage({
+      screenshotAnchored: true,
+      lines: [{
+        id: 'save-label',
+        text: 'Save',
+        confidence: 98,
+        bounds: { x: 0.12, y: 0.2, width: 0.05, height: 0.04 }
+      }],
+      visualFeatures: [{
+        id: 'model-save',
+        kind: 'control',
+        label: 'Unlabelled button',
+        source: 'visual',
+        detector: 'omniparser',
+        role: 'button',
+        visibility: 0.91,
+        bounds: { x: 0.1, y: 0.185, width: 0.09, height: 0.07 }
+      }]
+    }, 'text')
+
+    expect(analysis.features).toEqual([
+      expect.objectContaining({
+        kind: 'control',
+        label: 'Save',
+        source: 'hybrid',
+        detector: 'omniparser',
+        bounds: { x: 0.1, y: 0.185, width: 0.09, height: 0.07 }
+      })
+    ])
+  })
+
   it('keeps only the named button when OCR mistakes its icon for a letter', async () => {
     const image = await markedScreen([{ x: 62, y: 32, width: 28, height: 28 }])
     const analysis = await buildCaptureAnalysis(image, {

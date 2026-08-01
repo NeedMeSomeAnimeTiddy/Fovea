@@ -38,6 +38,9 @@ BASE_DETECTION_MAX_HEIGHT = 1080
 RETRY_DETECTION_MIN_SIDE = 2160
 RETRY_DETECTION_MAX_WIDTH = 3840
 RETRY_DETECTION_MAX_HEIGHT = 2160
+SELECTIVE_DETECTION_MIN_SIDE = 720
+SELECTIVE_DETECTION_MAX_WIDTH = 1280
+SELECTIVE_DETECTION_MAX_HEIGHT = 720
 
 
 def emit(payload: dict[str, Any], stream: TextIO = PROTOCOL_STDOUT) -> None:
@@ -233,7 +236,12 @@ def bounded_detection_min_side(
     return max(64, round(minimum_side * scale))
 
 
-def recognise(pipeline: Any, profile: str, image_path: str) -> dict[str, Any]:
+def recognise(
+    pipeline: Any,
+    profile: str,
+    image_path: str,
+    selective_screen_refinement: bool = False,
+) -> dict[str, Any]:
     started = time.perf_counter()
     resolved_path = str(Path(image_path).resolve())
     with contextlib.redirect_stdout(sys.stderr):
@@ -244,20 +252,29 @@ def recognise(pipeline: Any, profile: str, image_path: str) -> dict[str, Any]:
         raise ValueError(f"Could not read OCR image: {resolved_path}")
     source_height, source_width = source.shape[:2]
     minimum_side = min(source_width, source_height)
-    base_detection_min_side = bounded_detection_min_side(
-        source_width,
-        source_height,
-        BASE_DETECTION_MIN_SIDE,
-        BASE_DETECTION_MAX_WIDTH,
-        BASE_DETECTION_MAX_HEIGHT,
-    )
+    if selective_screen_refinement:
+        base_detection_min_side = bounded_detection_min_side(
+            source_width,
+            source_height,
+            SELECTIVE_DETECTION_MIN_SIDE,
+            SELECTIVE_DETECTION_MAX_WIDTH,
+            SELECTIVE_DETECTION_MAX_HEIGHT,
+        )
+    else:
+        base_detection_min_side = bounded_detection_min_side(
+            source_width,
+            source_height,
+            BASE_DETECTION_MIN_SIDE,
+            BASE_DETECTION_MAX_WIDTH,
+            BASE_DETECTION_MAX_HEIGHT,
+        )
     predictions = predict(pipeline, source, base_detection_min_side)
     lines, diagnostics = extract_lines(predictions)
     analysis_scale = max(1.0, base_detection_min_side / minimum_side)
     retried_high_resolution = False
     diagnostics["baseDetectionMinSide"] = base_detection_min_side
 
-    if len(lines) < MIN_LINES_BEFORE_HIGH_RES_RETRY:
+    if not selective_screen_refinement and len(lines) < MIN_LINES_BEFORE_HIGH_RES_RETRY:
         retry_detection_min_side = bounded_detection_min_side(
             source_width,
             source_height,
@@ -328,7 +345,12 @@ def serve(profile: str) -> int:
                 {
                     "type": "result",
                     "requestId": request_id,
-                    **recognise(pipeline, profile, image_path),
+                    **recognise(
+                        pipeline,
+                        profile,
+                        image_path,
+                        request.get("selectiveScreenRefinement") is True,
+                    ),
                 }
             )
         except Exception as error:  # Keep the server available after a bad image.

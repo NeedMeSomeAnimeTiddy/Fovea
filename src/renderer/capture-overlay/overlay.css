@@ -151,6 +151,10 @@ body,
   --analyze-feature-color: var(--fovea-capture-feature-visual);
 }
 
+.analyze-feature--face {
+  --analyze-feature-color: var(--fovea-capture-feature-face);
+}
+
 .analyze-feature > span {
   position: absolute;
   top: -19px;
@@ -228,6 +232,10 @@ body,
 
 .analyze-legend__visual {
   --legend-color: var(--fovea-capture-feature-visual);
+}
+
+.analyze-legend__face {
+  --legend-color: var(--fovea-capture-feature-face);
 }
 
 .analyze-legend__error {

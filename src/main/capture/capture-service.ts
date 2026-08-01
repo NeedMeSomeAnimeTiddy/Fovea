@@ -8,6 +8,7 @@ import type { Rectangle } from '@shared/types/geometry'
 import { clampCropRectangle, logicalToPhysical } from './geometry'
 import type { ImageEditorService } from './image-editor-service'
 import { buildCaptureAnalysis, buildCaptureAnalysisStage, detectVisualControlFeatures, validateCaptureAnalysis } from './screen-feature-analysis'
+import { mergeScreenshotElementFeatures, type ScreenshotElementDetector } from './screenshot-element-detector-service'
 import { mapUiAutomationFeatures, type UiAutomationSnapshotService } from './windows-ui-automation-service'
 import type { OcrService } from '../ocr/ocr-service'
 import { loadRenderer, secureWindow } from '../windows/window-factory'
@@ -60,7 +61,8 @@ export class CaptureService {
     private readonly onError: (message: string) => void,
     private readonly imageEditor?: Pick<ImageEditorService, 'createDerivative'>,
     private readonly ocr?: Pick<OcrService, 'recognise' | 'cancel'>,
-    private readonly uiAutomation?: UiAutomationSnapshotService
+    private readonly uiAutomation?: UiAutomationSnapshotService,
+    private readonly screenshotDetector?: ScreenshotElementDetector
   ) {
     screen.on('display-added', this.cancelForTopologyChange)
     screen.on('display-removed', this.cancelForTopologyChange)
@@ -98,15 +100,18 @@ export class CaptureService {
     const analysisStartedAt = Date.now()
     const candidate = this.findCandidate(senderWebContentsId)
     await candidate.ready
-    await candidate.uiFeaturesReady
     if (candidate.readinessError) throw candidate.readinessError
     if (!candidate.image || !candidate.viewport) throw new Error('The frozen display image is unavailable.')
-    const uiFeatures = candidate.uiFeatures
+    let uiFeatures = candidate.uiFeatures
     const ownerId = senderWebContentsId ?? candidate.window.webContents.id
     const pending = this.pending
     const analysisId = `capture-analysis-${randomUUID()}`
     const png = candidate.image.toPNG()
-    onProgress?.(await validateCaptureAnalysis(png, buildCaptureAnalysisStage({ lines: [], uiFeatures }, 'semantic')))
+    let screenshotAnchored = Boolean(this.screenshotDetector)
+    onProgress?.(await validateCaptureAnalysis(
+      png,
+      buildCaptureAnalysisStage({ lines: [], uiFeatures, screenshotAnchored }, 'semantic')
+    ))
     const imagePath = await this.screenshots.save(png)
     this.analysisIds.set(ownerId, analysisId)
     try {
@@ -123,7 +128,69 @@ export class CaptureService {
           onProgress(await validateCaptureAnalysis(png, progress))
         })
       }
-      const visualFeaturesReady = detectVisualControlFeatures(png, { lines: [], uiFeatures })
+      const uiFeaturesReady = candidate.uiFeaturesReady.then(() => {
+        uiFeatures = candidate.uiFeatures
+        const availablePartial = partialOcrResult as OcrResult | null
+        queueProgress(availablePartial
+          ? buildCaptureAnalysisStage({
+              lines: availablePartial.regions,
+              words: availablePartial.words ?? [],
+              entities: availablePartial.entities ?? [],
+              uiFeatures,
+              visualFeatures,
+              screenshotAnchored
+            }, 'text')
+          : buildCaptureAnalysisStage({
+              lines: [],
+              uiFeatures,
+              visualFeatures,
+              screenshotAnchored
+            }, 'semantic'))
+        return uiFeatures
+      })
+      let heuristicFeatures: CaptureFeature[] = []
+      const heuristicFeaturesReady = uiFeaturesReady
+        .then((features) => detectVisualControlFeatures(png, { lines: [], uiFeatures: features }))
+        .then((features) => {
+          heuristicFeatures = features
+          return features
+        })
+      const visualFeaturesReady = this.screenshotDetector
+        ? this.screenshotDetector.detect(
+            analysisId,
+            png,
+            candidate.image.getSize(),
+            (progress) => {
+              visualFeatures = mergeScreenshotElementFeatures(progress.features, heuristicFeatures)
+              const availablePartial = partialOcrResult as OcrResult | null
+              queueProgress(availablePartial
+                ? buildCaptureAnalysisStage({
+                    lines: availablePartial.regions,
+                    words: availablePartial.words ?? [],
+                    entities: availablePartial.entities ?? [],
+                    uiFeatures,
+                    visualFeatures,
+                    screenshotAnchored
+                  }, 'text')
+                : buildCaptureAnalysisStage({
+                    lines: [],
+                    uiFeatures,
+                    visualFeatures,
+                    screenshotAnchored
+                  }, 'semantic'))
+            },
+            { sourcePath: imagePath }
+          ).then(async (features) =>
+            mergeScreenshotElementFeatures(features, await heuristicFeaturesReady)
+          ).catch(async (error) => {
+            screenshotAnchored = false
+            console.warn(
+              `[capture] OmniParser unavailable during Analyze: ` +
+              `${error instanceof Error ? error.message : String(error)}`
+            )
+            return heuristicFeaturesReady
+          })
+        : heuristicFeaturesReady
       const ocrReady = (async (): Promise<void> => {
         if (this.ocr) {
           try {
@@ -139,10 +206,15 @@ export class CaptureService {
                   words: partialOcrResult.words ?? [],
                   entities: partialOcrResult.entities ?? [],
                   uiFeatures,
-                  visualFeatures
+                  visualFeatures,
+                  screenshotAnchored
                 }, 'text'))
               },
-              { sourcePath: imagePath, preserveGeometry: true }
+              {
+                sourcePath: imagePath,
+                preserveGeometry: true,
+                refinementRegions: uiFeatures.map(({ bounds }) => bounds)
+              }
             )
             regions = result.regions
             words = result.words ?? []
@@ -166,14 +238,32 @@ export class CaptureService {
               words: availablePartial.words ?? [],
               entities: availablePartial.entities ?? [],
               uiFeatures,
-              visualFeatures
+              visualFeatures,
+              screenshotAnchored
             }, 'text')
-          : buildCaptureAnalysisStage({ lines: [], uiFeatures, visualFeatures }, 'semantic'))
+          : buildCaptureAnalysisStage({ lines: [], uiFeatures, visualFeatures, screenshotAnchored }, 'semantic'))
       }
       await ocrReady
       await progressTail
-      onProgress?.(await validateCaptureAnalysis(png, buildCaptureAnalysisStage({ lines: regions, words, entities, uiFeatures, visualFeatures }, 'text')))
-      const analysis = await buildCaptureAnalysis(png, { lines: regions, words, entities, uiFeatures, visualFeatures })
+      onProgress?.(await validateCaptureAnalysis(
+        png,
+        buildCaptureAnalysisStage({
+          lines: regions,
+          words,
+          entities,
+          uiFeatures,
+          visualFeatures,
+          screenshotAnchored
+        }, 'text')
+      ))
+      const analysis = await buildCaptureAnalysis(png, {
+        lines: regions,
+        words,
+        entities,
+        uiFeatures,
+        visualFeatures,
+        screenshotAnchored
+      })
       if (this.pending !== pending || !pending?.candidates.has(ownerId)) throw new Error('Screen analysis was cancelled.')
       console.info(`[capture] Analyze completed in ${Date.now() - analysisStartedAt}ms with ${analysis.features.length} features.`)
       return analysis
@@ -188,7 +278,10 @@ export class CaptureService {
     const analysisId = this.analysisIds.get(senderWebContentsId)
     if (!analysisId) return
     this.analysisIds.delete(senderWebContentsId)
-    await this.ocr?.cancel?.(analysisId)
+    await Promise.allSettled([
+      this.ocr?.cancel?.(analysisId),
+      this.screenshotDetector?.cancel?.(analysisId)
+    ])
   }
 
   async select(rectangle: Rectangle, senderWebContentsId?: number, operations: ImageEditOperation[] = [], preferWebSearch = false, extractText = false, ocrLanguageCode?: string, initialQuestion?: string): Promise<void> {
@@ -236,6 +329,9 @@ export class CaptureService {
     this.disposed = true
     this.cancel()
     this.releaseAllPrewarmedOverlays()
+    void this.screenshotDetector?.dispose?.().catch((error) => {
+      console.warn(`[capture] Screenshot detector shutdown failed: ${error instanceof Error ? error.message : String(error)}`)
+    })
     screen.off('display-added', this.cancelForTopologyChange)
     screen.off('display-removed', this.cancelForTopologyChange)
     screen.off('display-metrics-changed', this.cancelForTopologyChange)
@@ -244,8 +340,9 @@ export class CaptureService {
   private async beginRegion(descriptor?: CaptureDescriptor, destination?: CaptureDestination): Promise<void> {
     const startupStartedAt = Date.now()
     const displays = screen.getAllDisplays()
+    const semanticStartedAt = Date.now()
     const semanticSnapshot = this.uiAutomation
-      ? this.uiAutomation.snapshot([], true, true).catch(() => [])
+      ? this.uiAutomation.snapshot([], false, true).catch(() => [])
       : Promise.resolve([])
     const topology = displays.map((display) => `${display.id}:${display.bounds.x},${display.bounds.y},${display.bounds.width},${display.bounds.height}:${display.scaleFactor}`).sort().join('|')
     const maxWidth = Math.max(...displays.map((display) => Math.round(display.bounds.width * display.scaleFactor)))
@@ -324,7 +421,10 @@ export class CaptureService {
             (bounds) => typeof screen.screenToDipRect === 'function' ? screen.screenToDipRect(null, bounds) : bounds
           )
         }
-        console.info(`[capture] Semantic scan completed with ${uiElements.length} controls.`)
+        console.info(
+          `[capture] Semantic scan completed in ${Date.now() - semanticStartedAt}ms ` +
+          `with ${uiElements.length} visible controls.`
+        )
       })
       for (const candidate of candidates.values()) {
         candidate.uiFeaturesReady = semanticReady
@@ -332,6 +432,14 @@ export class CaptureService {
         if (!candidate.window.isDestroyed()) candidate.window.showInactive()
       }
       console.info(`[capture] Frozen screen displayed in ${Date.now() - startupStartedAt}ms.`)
+      // Loading a large detector must never delay the frozen bitmap. Start it
+      // only after the overlay is visible, then keep it resident for Analyze.
+      void this.screenshotDetector?.prepare?.().catch((error) => {
+        console.warn(
+          `[capture] Screenshot detector prewarm failed: ` +
+          `${error instanceof Error ? error.message : String(error)}`
+        )
+      })
       void semanticReady.finally(() => {
         if (this.pending?.candidates !== candidates) return
         for (const candidate of candidates.values()) {
@@ -481,6 +589,7 @@ export class CaptureService {
       if (analysisId) {
         this.analysisIds.delete(candidate.window.webContents.id)
         void this.ocr?.cancel?.(analysisId).catch(() => undefined)
+        void this.screenshotDetector?.cancel?.(analysisId).catch(() => undefined)
       }
       if (!candidate.image && !candidate.readinessError) candidate.readinessError = new Error('Screen capture was cancelled.')
       candidate.resolveReady()

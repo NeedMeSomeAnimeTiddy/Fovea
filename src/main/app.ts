@@ -1,8 +1,10 @@
 import { app, dialog, globalShortcut, safeStorage, shell } from 'electron'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { AppearanceController } from './appearance/appearance-controller'
 import { CaptureService } from './capture/capture-service'
 import { ImageEditorService } from './capture/image-editor-service'
+import { OmniParserDetectorService, type ScreenshotElementDetector } from './capture/screenshot-element-detector-service'
 import { WindowsUiAutomationService } from './capture/windows-ui-automation-service'
 import { registerIpc } from './ipc/register-ipc'
 import { OnboardingController, shouldShowOnboardingAtStartup } from './onboarding/onboarding-controller'
@@ -86,7 +88,16 @@ async function startApplication(): Promise<void> {
       ? join(process.resourcesPath, 'automation', 'windows-ui-elements.ps1')
       : join(app.getAppPath(), 'resources', 'automation', 'windows-ui-elements.ps1')
   )
-  const capture = new CaptureService(screenshots, (completed) => services.questions!.open(completed), (message) => showSafeError(message, 'capture-failed'), imageEditor, ocr, uiAutomation)
+  const screenshotDetector = createScreenshotDetector(app.getAppPath(), runtimeRoot)
+  const capture = new CaptureService(
+    screenshots,
+    (completed) => services.questions!.open(completed),
+    (message) => showSafeError(message, 'capture-failed'),
+    imageEditor,
+    ocr,
+    uiAutomation,
+    screenshotDetector
+  )
   const questions = new QuestionSessions(providers, screenshots, (destination) => capture.begin('region', destination), undefined, history, settings, imageEditor, ocr)
   services.questions = questions
 
@@ -124,6 +135,63 @@ async function startApplication(): Promise<void> {
 }
 
 function redact(message: string): string { return message.replace(/(?:sk|key)-[\w-]+/gi, '[redacted]') }
+
+function createScreenshotDetector(appPath: string, runtimeRoot: string): ScreenshotElementDetector | undefined {
+  const backend = process.env.FOVEA_ANALYZE_BACKEND?.trim().toLocaleLowerCase() || 'auto'
+  if (['heuristic', 'legacy', 'off'].includes(backend)) return undefined
+  const omniParserRoot = process.env.FOVEA_OMNIPARSER_ROOT?.trim() || (app.isPackaged
+    ? join(process.resourcesPath, 'analysis', 'omniparser')
+    : join(appPath, '.omniparser-runtime', 'source'))
+  const pythonPath = process.env.FOVEA_OMNIPARSER_PYTHON?.trim() || (app.isPackaged
+    ? join(process.resourcesPath, 'analysis', 'omniparser-python', 'python.exe')
+    : join(appPath, '.venv-omniparser', 'Scripts', 'python.exe'))
+  const modelPath = process.env.FOVEA_OMNIPARSER_MODEL?.trim() ||
+    join(omniParserRoot, 'weights', 'icon_detect_v3', 'model.pt')
+  const configuredFaceModelPath = process.env.FOVEA_FACE_MODEL?.trim() ||
+    join(omniParserRoot, 'weights', 'face_detection_yunet', 'face_detection_yunet_2023mar.onnx')
+  const available = [
+    pythonPath,
+    join(omniParserRoot, 'util', 'yolov9.py'),
+    modelPath
+  ].every((path) => existsSync(path))
+  if (!available) {
+    if (backend !== 'auto') {
+      console.warn(
+        '[omniparser] Analyze requested the screenshot detector, but its runtime is incomplete. ' +
+        'Run npm run omniparser:setup or configure FOVEA_OMNIPARSER_ROOT.'
+      )
+    }
+    return undefined
+  }
+  const faceModelPath = existsSync(configuredFaceModelPath) ? configuredFaceModelPath : undefined
+  console.info(
+    `[omniparser] Screenshot-anchored Analyze backend is enabled` +
+    `${faceModelPath ? ' with frozen-screen face detection' : ' (face model not installed)'}.`
+  )
+  return new OmniParserDetectorService({
+    pythonPath,
+    scriptPath: app.isPackaged
+      ? join(process.resourcesPath, 'analysis', 'omniparser-detector.py')
+      : join(appPath, 'resources', 'analysis', 'omniparser-detector.py'),
+    runtimePath: join(runtimeRoot, 'omniparser'),
+    omniParserRoot,
+    modelPath,
+    faceModelPath,
+    device: process.env.FOVEA_OMNIPARSER_DEVICE?.trim() || 'auto',
+    confidence: environmentNumber('FOVEA_OMNIPARSER_CONFIDENCE', 0.08, 0.01, 0.95),
+    faceConfidence: environmentNumber('FOVEA_FACE_CONFIDENCE', 0.82, 0.5, 0.99),
+    tileSize: environmentNumber('FOVEA_OMNIPARSER_TILE_SIZE', 1280, 512, 2048),
+    tileOverlap: environmentNumber('FOVEA_OMNIPARSER_TILE_OVERLAP', 0.125, 0.05, 0.35),
+    fullFrameLongSide: environmentNumber('FOVEA_OMNIPARSER_FULL_FRAME', 1920, 960, 4096),
+    fullNative: process.env.FOVEA_OMNIPARSER_FULL_NATIVE === '1',
+    maxDetections: environmentNumber('FOVEA_OMNIPARSER_MAX_DETECTIONS', 500, 20, 1000)
+  })
+}
+
+function environmentNumber(name: string, fallback: number, minimum: number, maximum: number): number {
+  const value = Number(process.env[name])
+  return Number.isFinite(value) ? Math.max(minimum, Math.min(maximum, value)) : fallback
+}
 
 function showSafeError(error: unknown, fallbackCode: 'capture-failed' | 'unexpected'): void {
   const appError = toAppError(error, fallbackCode)
