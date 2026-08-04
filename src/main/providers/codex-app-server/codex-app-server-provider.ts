@@ -216,7 +216,14 @@ export class CodexAppServerProvider extends EventEmitter implements VisionProvid
     try {
       await stat(this.options.binaryPath)
     } catch {
-      throw new Error(`Bundled Codex ${PINNED_VERSION} is missing. Run npm run sidecar:fetch.`)
+      const error = createAppError(
+        'provider-unavailable',
+        'ChatGPT runtime not installed',
+        'Install the optional ChatGPT runtime in Settings, or use an API-key provider.',
+        'open-settings'
+      )
+      this.setStatus({ state: 'error', version: PINNED_VERSION, account: null, error })
+      throw new FoveaError(error)
     }
 
     const child = spawn(this.options.binaryPath, ['app-server', '--listen', 'stdio://'], {

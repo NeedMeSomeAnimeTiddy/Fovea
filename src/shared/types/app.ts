@@ -50,6 +50,17 @@ export type ProviderKind = 'chatgpt' | 'openai' | 'anthropic' | 'openrouter'
 export type ProfileAuthentication = 'chatgpt-oauth' | 'api-key'
 export type ProfileHealth = 'unknown' | 'checking' | 'available' | 'unavailable'
 
+export interface ChatGptRuntimeStatus {
+  state: 'not-installed' | 'checking' | 'downloading' | 'installed' | 'error' | 'unsupported'
+  version: string
+  architecture: string
+  downloadBytes: number
+  downloadedBytes: number
+  installedBytes: number
+  removable: boolean
+  error?: string
+}
+
 export interface ProviderModelCapability {
   id: string
   displayName: string

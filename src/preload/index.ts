@@ -38,6 +38,10 @@ const api: FoveaApi = {
     setDefaults: (id, modelId, reasoning) => invokeResult(IPC.profilesSetDefaults, id, modelId, reasoning),
     models: (id) => invokeResult(IPC.profilesModels, id)
   },
+  chatGptRuntime: {
+    install: () => invokeResult(IPC.chatGptRuntimeInstall),
+    remove: () => invokeResult(IPC.chatGptRuntimeRemove)
+  },
   settings: {
     get: () => invokeResult(IPC.settingsGet), openOcrLanguages: () => invokeResult(IPC.settingsOpenOcrLanguages), setAppearance: (value) => invokeResult(IPC.settingsSetAppearance, value), setLaunchAtLogin: (enabled) => invokeResult(IPC.settingsSetLaunchAtLogin, enabled), setShortcut: (action, accelerator) => invokeResult(IPC.settingsSetShortcut, action, accelerator), resetShortcuts: () => invokeResult(IPC.settingsResetShortcuts), saveCustomPrompt: (id, label, prompt) => invokeResult(IPC.settingsSaveCustomPrompt, id, label, prompt), deleteCustomPrompt: (id) => invokeResult(IPC.settingsDeleteCustomPrompt, id), setOnboardingStatus: (status) => invokeResult(IPC.settingsSetOnboardingStatus, status), setPrivateMode: (enabled) => invokeResult(IPC.settingsSetPrivateMode, enabled), setHistoryRetention: (days) => invokeResult(IPC.settingsSetHistoryRetention, days), setScreenshotRetention: (enabled) => invokeResult(IPC.settingsSetScreenshotRetention, enabled), testOnboardingCapture: () => invokeResult(IPC.settingsTestOnboardingCapture), deleteTemporaryFiles: () => invokeResult(IPC.settingsDeleteTemp),
     onChanged: (callback) => subscribe(IPC.settingsChanged, callback), onAppearanceChanged: (callback) => subscribe(IPC.appearanceChanged, callback)

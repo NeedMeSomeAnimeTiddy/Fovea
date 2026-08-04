@@ -1,10 +1,8 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { createPortal } from 'react-dom'
-import ReactMarkdown from 'react-markdown'
-import rehypeHighlight from 'rehype-highlight'
 import type { QuestionViewState } from '@shared/contracts/ipc'
-import type { ConversationExchange, ConversationSelection, CustomPrompt, OcrEntity, OcrExternalActionKind, ProviderModelCapability, QuestionAttachment, ResponsePhase } from '@shared/types/app'
+import type { ConversationExchange, ConversationSelection, CustomPrompt, OcrEntity, ProviderModelCapability, QuestionAttachment, ResponsePhase } from '@shared/types/app'
 import type { ProviderEvent } from '@shared/types/provider'
 import type { AppError, AppRecoveryKind } from '@shared/types/app-error'
 import {
@@ -21,7 +19,15 @@ import { initialiseAppearance } from '../appearance'
 import { AppStatusNotice, appErrorFromUnknown, spectralStateForPhase } from '../status/status-presentation'
 import { WindowFrame } from '../window-chrome/WindowFrame'
 import { QuestionTitlebarActions } from './QuestionTitlebarActions'
+import {
+  AnswerSkeleton,
+  ConversationTimeline,
+  FriendlyStatus,
+  exchangeText,
+  ocrEntityExternalAction
+} from './QuestionResponse'
 import { ScreenshotEditor } from './ScreenshotEditor'
+import { ResponseStreamBuffer } from './response-stream-buffer'
 import '../design-system/index.css'
 import 'highlight.js/styles/github-dark.css'
 import './question.css'
@@ -32,10 +38,6 @@ const FALLBACK_SUGGESTIONS = [
   'What is the most useful next step based on this image?',
   'What could a web search verify about what is shown?'
 ]
-const TYPING_INTERVAL_MS = 12
-
-type TerminalPhase = Extract<ResponsePhase, 'completed' | 'stopped' | 'failed'>
-
 export function QuestionApp(): React.JSX.Element {
   const sessionId = useMemo(() => new URLSearchParams(location.search).get('session') ?? '', [])
   const [state, setState] = useState<QuestionViewState | null>(null)
@@ -57,107 +59,56 @@ export function QuestionApp(): React.JSX.Element {
   const responseContentRef = useRef<HTMLDivElement>(null)
   const stickToBottom = useRef(true)
   const stateReady = useRef(false)
-  const pendingSummary = useRef('')
-  const pendingAnswer = useRef('')
-  const pendingTerminal = useRef<TerminalPhase | null>(null)
-  const typingTimer = useRef<number | null>(null)
-
-  const updateLatest = (update: (exchange: ConversationExchange) => ConversationExchange): void => {
+  const updateLatest = useCallback((update: (exchange: ConversationExchange) => ConversationExchange): void => {
     setState((current) => current
       ? { ...current, exchanges: current.exchanges.map((item, index) => index === current.exchanges.length - 1 ? update(item) : item) }
       : current)
-  }
-  const setPhase = (phase: ResponsePhase): void => {
-    updateLatest((item) => ({ ...item, phase }))
+  }, [])
+  const setPhase = useCallback((phase: ResponsePhase): void => {
     setState((current) => current
-      ? { ...current, phase, busy: ['connecting', 'thinking', 'streaming'].includes(phase) }
+      ? {
+          ...current,
+          phase,
+          busy: ['connecting', 'thinking', 'streaming'].includes(phase),
+          exchanges: current.exchanges.map((item, index) => (
+            index === current.exchanges.length - 1 ? { ...item, phase } : item
+          ))
+        }
       : current)
-  }
-  const refresh = async (): Promise<void> => {
+  }, [])
+  const refresh = useCallback(async (): Promise<void> => {
     const next = await window.fovea.question.get(sessionId)
     stateReady.current = true
     setState(next)
-  }
-  const clearTypingQueue = (): void => {
-    pendingSummary.current = ''
-    pendingAnswer.current = ''
-    pendingTerminal.current = null
-    if (typingTimer.current !== null) clearTimeout(typingTimer.current)
-    typingTimer.current = null
-  }
-  const finishTyping = (): void => {
-    const phase = pendingTerminal.current
-    if (!phase) return
-    pendingTerminal.current = null
-    setPhase(phase)
-    void refresh()
-  }
-  const drainTypingQueue = (): void => {
-    typingTimer.current = null
-    if (!stateReady.current) {
-      typingTimer.current = window.setTimeout(drainTypingQueue, TYPING_INTERVAL_MS)
-      return
-    }
-    let wroteCharacter = false
-    const summary = takeNextTypingCharacter(pendingSummary.current)
-    if (summary.character) {
-      wroteCharacter = true
-      pendingSummary.current = summary.remainder
-      updateLatest((item) => item.metadata
-        ? { ...item, metadata: { ...item.metadata, summary: item.metadata.summary + summary.character }, phase: 'streaming' }
-        : item)
-    } else {
-      const answer = takeNextTypingCharacter(pendingAnswer.current)
-      if (answer.character) {
-        wroteCharacter = true
-        pendingAnswer.current = answer.remainder
-        updateLatest((item) => ({ ...item, answer: item.answer + answer.character, phase: 'streaming' }))
-      }
-    }
-    if (wroteCharacter) setState((current) => current ? { ...current, phase: 'streaming', busy: true } : current)
-    if (pendingSummary.current || pendingAnswer.current) {
-      typingTimer.current = window.setTimeout(drainTypingQueue, TYPING_INTERVAL_MS)
-    } else {
-      finishTyping()
-    }
-  }
-  const scheduleTyping = (): void => {
-    if (typingTimer.current !== null) return
-    typingTimer.current = window.setTimeout(drainTypingQueue, TYPING_INTERVAL_MS)
-  }
-  const queueTerminal = (phase: TerminalPhase): void => {
-    pendingTerminal.current = phase
-    if (pendingSummary.current || pendingAnswer.current) scheduleTyping()
-    else finishTyping()
-  }
-  const consume = (event: ProviderEvent): void => {
-    if (event.type === 'web-search-requested') {
-      clearTypingQueue()
-      void refresh()
-      return
-    }
-    if (event.type === 'response-metadata') {
-      pendingSummary.current += event.metadata.summary
-      updateLatest((item) => ({ ...item, metadata: { ...event.metadata, summary: '' }, phase: 'streaming' }))
-      scheduleTyping()
-      return
-    }
-    if (event.type === 'delta') {
-      pendingAnswer.current += event.text
-      scheduleTyping()
-      return
-    }
-    if (event.type === 'started') {
-      pendingTerminal.current = null
-      setPhase('thinking')
-    }
-    if (event.type === 'completed' || event.type === 'cancelled') {
-      queueTerminal(event.type === 'completed' ? 'completed' : 'stopped')
-    }
-    if (event.type === 'error') {
-      queueTerminal('failed')
-    }
-  }
+  }, [sessionId])
+  const responseStream = useMemo(() => new ResponseStreamBuffer({
+    isReady: () => stateReady.current,
+    prefersReducedMotion: () => matchMedia('(prefers-reduced-motion: reduce)').matches,
+    onBatch: ({ summary, answer }) => {
+      setState((current) => current
+        ? {
+            ...current,
+            phase: 'streaming',
+            busy: true,
+            exchanges: current.exchanges.map((item, index) => {
+              if (index !== current.exchanges.length - 1) return item
+              return {
+                ...item,
+                phase: 'streaming',
+                answer: item.answer + answer,
+                metadata: item.metadata && summary
+                  ? { ...item.metadata, summary: item.metadata.summary + summary }
+                  : item.metadata
+              }
+            })
+          }
+        : current)
+    },
+    onMetadata: (metadata) => updateLatest((item) => ({ ...item, metadata, phase: 'streaming' })),
+    onPhase: setPhase,
+    onRefresh: () => { void refresh() }
+  }), [refresh, setPhase, updateLatest])
+  const consume = useCallback((event: ProviderEvent): void => responseStream.consume(event), [responseStream])
 
   useEffect(() => {
     void initialiseAppearance()
@@ -179,7 +130,7 @@ export function QuestionApp(): React.JSX.Element {
     void window.fovea.settings.get().then((settings) => setCustomPrompts(settings.customPrompts)).catch(() => undefined)
     return window.fovea.settings.onChanged((settings) => setCustomPrompts(settings.customPrompts))
   }, [])
-  useEffect(() => () => clearTypingQueue(), [])
+  useEffect(() => () => responseStream.dispose(), [responseStream])
 
   const latestExchange = state?.exchanges.at(-1)
   const latestVisibleLength = (latestExchange?.metadata?.summary.length ?? 0) + (latestExchange?.answer.length ?? 0)
@@ -234,7 +185,7 @@ export function QuestionApp(): React.JSX.Element {
     setModelOpen(false)
     setExpandedModelId(null)
     setPreferWebSearch(false)
-    clearTypingQueue()
+    responseStream.reset()
     stickToBottom.current = true
     const optimistic: ConversationExchange = {
       id: `pending-${Date.now()}`,
@@ -253,7 +204,7 @@ export function QuestionApp(): React.JSX.Element {
   }
   const resolveWebSearch = (requestId: string, approved: boolean): void => {
     setError(null)
-    clearTypingQueue()
+    responseStream.reset()
     stickToBottom.current = true
     setState((current) => current
       ? {
@@ -352,7 +303,7 @@ export function QuestionApp(): React.JSX.Element {
   const retryExchange = (exchange: ConversationExchange): void => {
     if (!state || state.busy || state.exchanges.at(-1)?.id !== exchange.id) return
     setError(null)
-    clearTypingQueue()
+    responseStream.reset()
     stickToBottom.current = true
     const optimistic: ConversationExchange = {
       id: `retry-${Date.now()}`,
@@ -705,7 +656,7 @@ export function AttachmentStrip({
     document.addEventListener('keydown', closeOnEscape)
     return () => document.removeEventListener('keydown', closeOnEscape)
   }, [menu])
-  const openMenu = (event: React.MouseEvent<HTMLButtonElement>, attachmentId: string, index: number): void => {
+  const openMenu = useCallback((event: React.MouseEvent<HTMLButtonElement>, attachmentId: string, index: number): void => {
     const bounds = event.currentTarget.getBoundingClientRect()
     const menuWidth = 172
     const menuHeight = 132
@@ -713,26 +664,19 @@ export function AttachmentStrip({
     const above = bounds.top - menuHeight - 8
     const top = above >= 12 ? above : Math.min(innerHeight - menuHeight - 12, bounds.bottom + 8)
     setMenu({ attachmentId, index, left, top })
-  }
+  }, [])
   return (
     <section className="attachment-strip" aria-label="Conversation screenshots">
       <span className="attachment-strip__label">{attachments.length} {attachments.length === 1 ? 'screenshot' : 'screenshots'}</span>
       <div className="attachment-strip__items">
         {attachments.map((attachment, index) => (
-          <div className="attachment-thumbnail" data-status={attachment.status} key={attachment.id}>
-            <button
-              aria-expanded={menu?.attachmentId === attachment.id}
-              aria-haspopup="menu"
-              aria-label={`Screenshot ${index + 1} options${attachment.status === 'draft' ? ', not sent yet' : ''}`}
-              className="attachment-thumbnail__preview"
-              onClick={(event) => openMenu(event, attachment.id, index)}
-              type="button"
-            >
-              <img alt="" draggable={false} src={attachment.thumbnailDataUrl} />
-              <span aria-hidden="true">{index + 1}</span>
-            </button>
-            {attachment.edited && <span className="attachment-thumbnail__edited">Edited</span>}
-          </div>
+          <AttachmentThumbnail
+            attachment={attachment}
+            expanded={menu?.attachmentId === attachment.id}
+            index={index}
+            key={attachment.id}
+            onOpen={openMenu}
+          />
         ))}
       </div>
       {menu && selected && createPortal(
@@ -754,6 +698,44 @@ export function AttachmentStrip({
     </section>
   )
 }
+
+interface AttachmentThumbnailProps {
+  attachment: QuestionAttachment
+  expanded: boolean
+  index: number
+  onOpen(event: React.MouseEvent<HTMLButtonElement>, attachmentId: string, index: number): void
+}
+
+export const AttachmentThumbnail = memo(function AttachmentThumbnail({
+  attachment,
+  expanded,
+  index,
+  onOpen
+}: AttachmentThumbnailProps): React.JSX.Element {
+  return (
+    <div className="attachment-thumbnail" data-status={attachment.status}>
+      <button
+        aria-expanded={expanded}
+        aria-haspopup="menu"
+        aria-label={`Screenshot ${index + 1} options${attachment.status === 'draft' ? ', not sent yet' : ''}`}
+        className="attachment-thumbnail__preview"
+        onClick={(event) => onOpen(event, attachment.id, index)}
+        type="button"
+      >
+        <img alt="" draggable={false} src={attachment.thumbnailDataUrl} />
+        <span aria-hidden="true">{index + 1}</span>
+      </button>
+      {attachment.edited && <span className="attachment-thumbnail__edited">Edited</span>}
+    </div>
+  )
+}, (previous, next) => (
+  previous.expanded === next.expanded &&
+  previous.index === next.index &&
+  previous.attachment.id === next.attachment.id &&
+  previous.attachment.status === next.attachment.status &&
+  previous.attachment.edited === next.attachment.edited &&
+  previous.attachment.thumbnailDataUrl === next.attachment.thumbnailDataUrl
+))
 
 export function CaptureMenu({
   addDisabled,
@@ -955,275 +937,12 @@ export function ModelMenu({
   )
 }
 
-export function ConversationTimeline({
-  exchanges,
-  onCopy,
-  onOpenOcrEntity,
-  onManageOcrLanguages,
-  onResolveWebSearch
-}: {
-  exchanges: ConversationExchange[]
-  onCopy(value: string, label?: string): Promise<void>
-  onOpenOcrEntity?(entity: OcrEntity): void
-  onManageOcrLanguages?(): void
-  onResolveWebSearch(requestId: string, approved: boolean): void
-}): React.JSX.Element {
-  return (
-    <div className="conversation-thread" role="log" aria-label="Conversation" aria-live="polite">
-      {exchanges.map((exchange) => (
-        <section className="conversation-turn" key={exchange.id}>
-          {!exchange.automatic && !exchange.retryOf && (
-            <div className="conversation-message conversation-message--user">
-              <span className="fui-sr-only">You asked: </span>
-              {exchange.question}
-            </div>
-          )}
-          {exchange.retryOf && <small className="conversation-retry-label">Regenerated reply</small>}
-          <div className={`conversation-message conversation-message--assistant${exchange.automatic ? ' conversation-message--opening' : ''}`}>
-            <span className="fui-sr-only">{exchange.source === 'ocr' ? 'Extracted text: ' : 'AI response: '}</span>
-            <ResponseBody
-              exchange={exchange}
-              onCopy={onCopy}
-              onOpenOcrEntity={onOpenOcrEntity}
-              onManageOcrLanguages={onManageOcrLanguages}
-              onResolveWebSearch={onResolveWebSearch}
-            />
-          </div>
-        </section>
-      ))}
-    </div>
-  )
-}
-
-function FriendlyStatus({ phase, source }: { phase: ResponsePhase; source?: ConversationExchange['source'] }): React.JSX.Element {
-  const busy = ['connecting', 'thinking', 'streaming'].includes(phase)
-  const label = source === 'ocr'
-    ? phase === 'completed' ? 'Text extracted' : phase === 'failed' ? 'Extraction failed' : 'Extracting text…'
-    : friendlyPhaseLabel(phase)
-  return (
-    <div className="friendly-status" role="status">
-      {busy && <Spinner />}
-      <span>{label}</span>
-    </div>
-  )
-}
-
-function ResponseBody({
-  exchange,
-  onCopy,
-  onOpenOcrEntity,
-  onManageOcrLanguages,
-  onResolveWebSearch
-}: {
-  exchange: ConversationExchange
-  onCopy(value: string, label?: string): Promise<void>
-  onOpenOcrEntity?(entity: OcrEntity): void
-  onManageOcrLanguages?(): void
-  onResolveWebSearch(requestId: string, approved: boolean): void
-}): React.JSX.Element {
-  const summary = exchange.metadata?.summary
-  const detail = exchange.answer.trim()
-  const waiting = ['connecting', 'thinking'].includes(exchange.phase) && !summary && !detail
-  if (exchange.source === 'ocr') {
-    const ocr = exchange.ocr
-    return (
-      <article className="answer-card answer-card--ocr">
-        {waiting && <TypingIndicator label="Recognising text" />}
-        {ocr && (
-          <div className="ocr-response-meta">
-            <span>{ocr.language.label}</span>
-            <span>{ocr.engine === 'windows' ? 'Windows OCR' : ocr.engine === 'paddle' ? `PaddleOCR ${ocr.paddleProfile ?? ''}`.trim() : 'Tesseract OCR'}</span>
-            {ocr.engine !== 'windows' && <span>{ocr.confidence}% confidence</span>}
-            {ocr.durationMs > 0 && <span>{formatOcrDuration(ocr.durationMs)}</span>}
-            {ocr.preprocessing === 'upscaled-contrast' && <span>Enhanced</span>}
-            {ocr.preprocessing === 'high-contrast' && <span>High contrast</span>}
-            {ocr.geometryCorrection === 'deskewed' && <span>Deskewed</span>}
-            {ocr.geometryCorrection === 'perspective-corrected' && <span>Perspective corrected</span>}
-            {ocr.cached && <span>Cached</span>}
-            {onManageOcrLanguages && (
-              <button type="button" onClick={onManageOcrLanguages}>Manage languages</button>
-            )}
-          </div>
-        )}
-        {detail && <pre className="ocr-response-text">{detail}</pre>}
-        {ocr?.entities.length ? (
-          <div className="ocr-response-entities" aria-label="Detected text actions">
-            {ocr.entities.map((entity) => {
-              const action = ocrEntityExternalAction(entity)
-              return (
-                <div className="ocr-response-entity" key={entity.id}>
-                  <button
-                    aria-label={`Copy ${ocrEntityLabel(entity.kind)}: ${entity.value}`}
-                    className="ocr-response-entity__value"
-                    title={`Copy ${entity.kind}`}
-                    type="button"
-                    onClick={() => void onCopy(entity.value, `${ocrEntityLabel(entity.kind)} copied`)}
-                  >
-                    <span>{ocrEntityLabel(entity.kind)}</span>
-                    <strong>{entity.value}</strong>
-                  </button>
-                  {onOpenOcrEntity && action && (
-                    <button
-                      aria-label={`${action.label} ${entity.value}`}
-                      className="ocr-response-entity__action"
-                      type="button"
-                      onClick={() => onOpenOcrEntity(entity)}
-                    >
-                      {action.label}
-                    </button>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-        ) : null}
-      </article>
-    )
-  }
-  return (
-    <article className="answer-card">
-      {waiting && <TypingIndicator />}
-      {summary && <div className="answer-summary"><Markdown text={summary} onCopy={onCopy} /></div>}
-      {!summary && detail && <div className="answer answer--primary"><Markdown text={detail} onCopy={onCopy} /></div>}
-      {summary && detail && (
-        <details className="answer-details">
-          <summary>Show details</summary>
-          <div className="answer"><Markdown text={detail} onCopy={onCopy} /></div>
-        </details>
-      )}
-      {exchange.webSearch?.status === 'requested' && (
-        <div className="web-approval" role="group" aria-label="Web search approval">
-          <strong>Should I check the web?</strong>
-          <p>The image does not contain enough reliable information for a confident answer.</p>
-          <code>{exchange.webSearch.query}</code>
-          <div>
-            <Button size="compact" variant="secondary" onClick={() => onResolveWebSearch(exchange.webSearch!.id, false)}>Use the image only</Button>
-            <Button size="compact" onClick={() => onResolveWebSearch(exchange.webSearch!.id, true)}>Check the web</Button>
-          </div>
-        </div>
-      )}
-    </article>
-  )
-}
-
-function TypingIndicator({ label = 'AI is writing' }: { label?: string }): React.JSX.Element {
-  return (
-    <div className="typing-indicator" aria-label={label} role="status">
-      <span />
-      <span />
-      <span />
-    </div>
-  )
-}
-
-function AnswerSkeleton(): React.JSX.Element {
-  return (
-    <div className="answer-skeleton" aria-label="Looking at your capture" role="status">
-      <span />
-      <span />
-      <span />
-    </div>
-  )
-}
-
-function Markdown({ text, onCopy }: { text: string; onCopy(value: string, label?: string): Promise<void> }): React.JSX.Element {
-  return (
-    <ReactMarkdown
-      rehypePlugins={[rehypeHighlight]}
-      components={{
-        a: ({ href, children }) => (
-          <a
-            href={href}
-            onClick={(event) => {
-              event.preventDefault()
-              if (href) void window.fovea.openExternal(href)
-            }}
-          >
-            {children}
-          </a>
-        ),
-        pre: ({ children }) => {
-          const value = nodeText(children)
-          return (
-            <div className="code-block">
-              <button onClick={() => void onCopy(value, 'Code copied')}>Copy</button>
-              <pre>{children}</pre>
-            </div>
-          )
-        }
-      }}
-    >
-      {text}
-    </ReactMarkdown>
-  )
-}
-
-function exchangeText(exchange: ConversationExchange): string {
-  return [exchange.metadata?.summary, exchange.answer].filter(Boolean).join('\n\n').trim()
-}
-
-function ocrEntityLabel(kind: 'url' | 'email' | 'phone' | 'qr' | 'barcode'): string {
-  if (kind === 'url') return 'URL'
-  if (kind === 'email') return 'Email'
-  if (kind === 'phone') return 'Phone'
-  return kind === 'qr' ? 'QR code' : 'Barcode'
-}
-
-export function ocrEntityExternalAction(entity: OcrEntity): {
-  kind: OcrExternalActionKind
-  label: 'Open' | 'Email' | 'Call'
-  confirmation: string
-} | null {
-  if (entity.kind === 'url' || (entity.kind === 'qr' && /^(?:https?:\/\/|www\.)/i.test(entity.value.trim()))) {
-    return { kind: 'url', label: 'Open', confirmation: 'Open this link in your default browser?' }
-  }
-  if (entity.kind === 'email') {
-    return { kind: 'email', label: 'Email', confirmation: 'Open this address in your email app?' }
-  }
-  if (entity.kind === 'phone') {
-    return { kind: 'phone', label: 'Call', confirmation: 'Open this number in your calling app?' }
-  }
-  return null
-}
-
-function formatOcrDuration(durationMs: number): string {
-  if (durationMs < 1_000) return `${Math.max(1, Math.round(durationMs))}ms`
-  return `${(durationMs / 1_000).toFixed(durationMs < 10_000 ? 1 : 0)}s`
-}
-
-export function takeNextTypingCharacter(value: string): { character: string; remainder: string } {
-  if (!value) return { character: '', remainder: '' }
-  const codePoint = value.codePointAt(0)
-  const length = codePoint !== undefined && codePoint > 0xFFFF ? 2 : 1
-  return { character: value.slice(0, length), remainder: value.slice(length) }
-}
-
-function nodeText(node: ReactNode): string {
-  if (typeof node === 'string' || typeof node === 'number') return String(node)
-  if (Array.isArray(node)) return node.map(nodeText).join('')
-  if (node && typeof node === 'object' && 'props' in node) {
-    return nodeText((node as { props: { children?: ReactNode } }).props.children)
-  }
-  return ''
-}
-
-function friendlyPhaseLabel(phase: ResponsePhase): string {
-  return ({
-    idle: 'Ready',
-    connecting: 'Looking at your capture…',
-    thinking: 'Working out the answer…',
-    streaming: 'Writing the answer…',
-    'awaiting-approval': 'Your choice is needed',
-    stopped: 'Answer stopped',
-    completed: 'Answer',
-    failed: 'Couldn’t finish'
-  })[phase]
-}
-
 function thinkingEffortLabel(effort: string | null | undefined): string {
   if (!effort) return 'Default'
   return effort.charAt(0).toUpperCase() + effort.slice(1)
 }
+
+export { ConversationTimeline, ocrEntityExternalAction } from './QuestionResponse'
 
 function Icon({ name }: { name: string }): React.JSX.Element {
   const paths: Record<string, ReactNode> = {

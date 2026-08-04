@@ -1,23 +1,16 @@
 import { createHash } from 'node:crypto'
 import { createReadStream, createWriteStream } from 'node:fs'
-import { mkdir, rm, stat } from 'node:fs/promises'
+import { mkdir, readFile, rm, stat } from 'node:fs/promises'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { spawnSync } from 'node:child_process'
 import { dirname, join, resolve } from 'node:path'
 import process from 'node:process'
 
-const VERSION = '0.144.4'
-const TARGETS = {
-  x64: {
-    asset: 'codex-x86_64-pc-windows-msvc.exe',
-    sha256: '51398051c2332b6afe08dc3b9dbb4056085c197f35ca57a307ee303d450cada5'
-  },
-  arm64: {
-    asset: 'codex-aarch64-pc-windows-msvc.exe',
-    sha256: '84406bf7cb8c689e46ebd31244f0458fce3eeed781ec1030399a96baab062932'
-  }
-}
+const root = resolve(import.meta.dirname, '..')
+const manifest = JSON.parse(await readFile(join(root, 'resources', 'runtime', 'codex-runtime-manifest.json'), 'utf8'))
+const VERSION = manifest.version
+const TARGETS = manifest.targets
 
 if (process.platform !== 'win32') {
   console.log('Codex sidecar fetch skipped: this prototype packages the official Windows binary.')
@@ -27,7 +20,6 @@ if (process.platform !== 'win32') {
 const target = TARGETS[process.arch]
 if (!target) throw new Error(`Unsupported Windows architecture: ${process.arch}`)
 
-const root = resolve(import.meta.dirname, '..')
 const output = join(root, 'resources', 'sidecar', 'codex.exe')
 const temporary = `${output}.download`
 const schemaDir = join(root, 'resources', 'codex-schema')

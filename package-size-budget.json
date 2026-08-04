@@ -1,0 +1,7 @@
+{
+  "description": "Windows x64 minimal-install budgets. CI warns at 90% and fails above these ceilings.",
+  "installerMaxBytes": 131072000,
+  "unpackedMaxBytes": 487587840,
+  "warningRatio": 0.9,
+  "largestFilesReported": 15
+}

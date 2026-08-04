@@ -94,6 +94,7 @@ function SettingsApp(): React.JSX.Element {
     setState(await window.fovea.settings.get())
   }
   const signInForOnboarding = async (): Promise<void> => {
+    if (state.chatGptRuntime.state !== 'installed') await window.fovea.chatGptRuntime.install()
     const existing = state.profiles.find((profile) => profile.provider === 'chatgpt')
     if (existing?.authenticationState === 'signed-in') return
     const profile = existing ?? await window.fovea.profiles.createChatGpt()
@@ -152,6 +153,51 @@ function SettingsApp(): React.JSX.Element {
     <section className="settings-content"><header className="settings-header"><div><h1>{category}</h1><p>{CATEGORY_DETAILS[category]}</p></div>{working && <Badge icon={<Spinner size="small" />} role="status" tone="info">{activity?.label ?? 'Working…'}</Badge>}</header>
       {category === 'Account' && <>
         {state.profiles.length === 0 && <StatusBanner title="Connect a provider" tone="warning">Add a ChatGPT subscription or API-key profile before asking questions.</StatusBanner>}
+        <Card as="section" className="settings-section runtime-card">
+          <div>
+            <h2>Optional ChatGPT runtime</h2>
+            <p className="muted">
+              ChatGPT subscription sign-in uses a pinned, SHA-256 verified local service ({formatBytes(state.chatGptRuntime.downloadBytes)} download and disk use).
+              OpenAI, Anthropic, and OpenRouter API profiles do not need it.
+            </p>
+            {state.chatGptRuntime.state === 'downloading' && (
+              <small role="status">Downloaded {formatBytes(state.chatGptRuntime.downloadedBytes)} of {formatBytes(state.chatGptRuntime.downloadBytes)}.</small>
+            )}
+            {state.chatGptRuntime.state === 'error' && <small role="alert">{state.chatGptRuntime.error}</small>}
+            {state.chatGptRuntime.state === 'installed' && <small>Version {state.chatGptRuntime.version} · {formatBytes(state.chatGptRuntime.installedBytes)} installed</small>}
+          </div>
+          <div className="runtime-card__actions">
+            {state.chatGptRuntime.state === 'installed'
+              ? state.chatGptRuntime.removable && (
+                  <Button
+                    disabled={working}
+                    variant="secondary"
+                    onClick={() => void run(
+                      () => window.fovea.chatGptRuntime.remove(),
+                      'ChatGPT runtime removed. Profiles, settings, and history were kept.',
+                      'Removing ChatGPT runtime…'
+                    )}
+                  >
+                    Remove runtime
+                  </Button>
+                )
+              : (
+                  <Button
+                    disabled={working || state.chatGptRuntime.state === 'unsupported'}
+                    loading={state.chatGptRuntime.state === 'downloading'}
+                    loadingLabel="Downloading verified runtime"
+                    onClick={() => void run(
+                      () => window.fovea.chatGptRuntime.install(),
+                      'Verified ChatGPT runtime installed.',
+                      'Downloading ChatGPT runtime…',
+                      'connecting'
+                    )}
+                  >
+                    {state.chatGptRuntime.state === 'error' ? 'Retry download' : `Install ${formatBytes(state.chatGptRuntime.downloadBytes)}`}
+                  </Button>
+                )}
+          </div>
+        </Card>
         {state.profiles.length > 0 && (
           <Card as="section" className="settings-section provider-profiles-section">
             <h2>Provider profiles</h2>
@@ -211,7 +257,7 @@ function SettingsApp(): React.JSX.Element {
           <div className="divider">or</div>
           <Button
             variant="secondary"
-            disabled={working || state.profiles.some((item) => item.provider === 'chatgpt')}
+            disabled={working || state.chatGptRuntime.state !== 'installed' || state.profiles.some((item) => item.provider === 'chatgpt')}
             onClick={() => void run(
               () => window.fovea.profiles.createChatGpt(),
               'ChatGPT profile added. Sign in to authenticate.',
@@ -428,6 +474,11 @@ function providerLabel(provider: ProviderKind): string {
     openai: 'OpenAI',
     openrouter: 'OpenRouter'
   })[provider]
+}
+
+function formatBytes(bytes: number): string {
+  if (!bytes) return 'unknown size'
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`
 }
 
 export function AboutSettings({ appVersion, onOpenTour }: { appVersion: string; onOpenTour(): void }): React.JSX.Element {

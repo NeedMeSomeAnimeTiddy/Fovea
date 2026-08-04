@@ -4,7 +4,7 @@ import { app, BrowserWindow, nativeImage, screen } from 'electron'
 import { IPC, type QuestionViewState, type WindowMaterial } from '../../shared/contracts/ipc'
 import type { ConversationExchange, ConversationSegment, ConversationSelection, OcrLanguage, OcrResult, ProviderModelCapability, QuestionAttachment, ResponsePhase } from '@shared/types/app'
 import type { ImageEditOperation } from '@shared/types/app'
-import type { AssistantResponseMetadata, ProviderEvent } from '@shared/types/provider'
+import type { ProviderEvent } from '@shared/types/provider'
 import { createAppError, FoveaError, toAppError } from '../errors/app-error'
 import type { CaptureDestination, CompletedCapture } from '../capture/capture-service'
 import type { ProviderRegistry } from '../providers/provider-registry'
@@ -17,45 +17,39 @@ import { getWindowAppearanceOptions, selectWindowMaterial, type WindowSurfaceSiz
 import { openBrowserWindowWithChrome, WINDOW_CHROME_READY_TIMEOUT_MS } from './window-chrome'
 import { loadRenderer, secureWindow } from './window-factory'
 import { placeWindowAdjacentToSelection } from './window-geometry'
+import {
+  runQuestionTurn,
+  SAFE_SUGGESTED_QUESTIONS,
+  setTurnPhase,
+  type ResponseControlOptions
+} from './question-turn-runner'
+import {
+  createSessionAttachment,
+  invalidateAttachmentOcr,
+  pathsForAttachmentIds,
+  releaseSessionAttachments,
+  requireSessionAttachment,
+  type SessionAttachment
+} from './question-attachments'
+import {
+  questionSessionSnapshot,
+  type ProviderSegmentState,
+  type QuestionSessionState
+} from './question-session-model'
 
 export const QUESTION_WINDOW_SIZES: WindowSurfaceSizes = { surfaceSize: { width: 480, height: 480 }, minimumSurfaceSize: { width: 400, height: 320 } }
 export const QUESTION_WINDOW_READY_TIMEOUT_MS = WINDOW_CHROME_READY_TIMEOUT_MS
-const WEB_SEARCH_REQUEST_PREFIX = '<fovea-web-search-request>'
 const WEB_SEARCH_APPROVED_PREFIX = '[FOVEA_WEB_SEARCH_APPROVED]'
 const WEB_SEARCH_PREFERRED_PREFIX = '[FOVEA_WEB_SEARCH_PREFERRED]'
-const RESPONSE_METADATA_PREFIX = '<fovea-response>'
-const RESPONSE_METADATA_SUFFIX = '</fovea-response>'
-const RESPONSE_METADATA_LIMIT = 12_000
-const RESPONSE_PREAMBLE_LIMIT = 2_000
 const INITIAL_QUESTION = 'Analyse this capture'
-const SAFE_SUGGESTED_QUESTIONS = [
-  'What do the most important visible details mean?',
-  'Is anything in this image unusual or incorrect?',
-  'What is the most useful next step based on this image?',
-  'What could a web search verify about what is shown?'
-]
 const RESPONSE_INSTRUCTION = `Respond as a clean productivity assistant for a non-technical user. First output exactly one compact metadata tag in this form, with valid JSON and no Markdown fence:
 <fovea-response>{"category":"a short internal category","summary":"a concise direct answer","suggestedQuestions":["four specific follow-up questions"]}</fovea-response>
 Never narrate or announce searching, browsing, tool use, analysis, or a plan. Even after an approved web search, begin directly with the metadata tag. The category is internal and must not be mentioned in the visible answer. The summary must give the most useful result first in plain language, normally in one to three sentences and at most 70 words. Supply exactly four short follow-up questions that the user can ask Fovea now and that are directly grounded in the current capture, the existing conversation, or facts a web search can verify. Never ask the user to share, upload, attach, provide, capture, or show another screen, screenshot, image, file, link, recording, or an earlier/later state. Do not suggest an action that this app cannot perform. After the tag, optionally provide useful Markdown detail that expands on the summary without repeating it. Do not add a visible category heading.`
 const INITIAL_ANALYSIS_INSTRUCTION = `Inspect the capture carefully and infer the user's most likely goal from its content. Give the useful result immediately: solve a visible problem, explain an error, summarise a document, interpret a chart, identify an interface, or otherwise perform the clearest likely task. If the likely goal is genuinely ambiguous, briefly explain what is visible and make the suggested questions resolve the ambiguity.`
 const PREFERRED_WEB_SEARCH_INSTRUCTION = `The user explicitly chose Search web for this question. Search before answering whenever current sources could improve identification, accuracy, context, or verification. Do not answer "I don't know" without first attempting a focused search using the visible clues and conversation context.`
 
-interface ProviderSegmentState { segment: ConversationSegment; conversationId: string | null }
-interface ResponseControlOptions { detectMetadata: boolean; detectWebSearch: boolean }
-interface SessionAttachment extends QuestionAttachment {
-  imagePath: string
-  ocrResult: OcrResult | null
-  ocrSelectedRegionIds: Set<string>
-  ocrRevision: number
-}
-interface QuestionSession {
-  id: string; attachments: SessionAttachment[]; window: BrowserWindow | null; previewWindow: BrowserWindow | null; previewAttachmentId: string | null; busy: boolean; cleaningUp: boolean; capturePending: boolean
-  phase: ResponsePhase; selection: ConversationSelection | null; exchanges: ConversationExchange[]; segments: ProviderSegmentState[]; disclosure: string | null
-  models: ProviderModelCapability[]; initialization: Promise<void>; pinned: boolean; historyId: string; createdAt: string; ocrContextByExchangeId: Map<string, string>
-}
-
 export class QuestionSessions {
-  private readonly sessions = new Map<string, QuestionSession>()
+  private readonly sessions = new Map<string, QuestionSessionState>()
   constructor(
     private readonly providers: ProviderRegistry,
     private readonly screenshots: TempScreenshotStore,
@@ -70,8 +64,8 @@ export class QuestionSessions {
   async open(capture: CompletedCapture): Promise<void> {
     const id = randomUUID()
     const createdAt = new Date().toISOString()
-    const attachment = this.createAttachment(capture.imagePath, 'sent', capture.edited === true)
-    const session: QuestionSession = { id, attachments: [attachment], window: null, previewWindow: null, previewAttachmentId: null, busy: false, cleaningUp: false, capturePending: false, phase: 'idle', selection: null, exchanges: [], segments: [], disclosure: null, models: [], initialization: Promise.resolve(), pinned: false, historyId: id, createdAt, ocrContextByExchangeId: new Map() }
+    const attachment = createSessionAttachment(capture.imagePath, 'sent', capture.edited === true)
+    const session: QuestionSessionState = { id, attachments: [attachment], window: null, previewWindow: null, previewAttachmentId: null, busy: false, cleaningUp: false, capturePending: false, phase: 'idle', selection: null, exchanges: [], segments: [], disclosure: null, models: [], initialization: Promise.resolve(), pinned: false, historyId: id, createdAt, ocrContextByExchangeId: new Map() }
     this.sessions.set(id, session)
     session.initialization = this.selectInitial(session, capture.preferWebSearch === true, capture.extractText === true, capture.ocrLanguageCode, capture.initialQuestion)
     const material = selectWindowMaterial({ disableTransparentWindows: app.commandLine.hasSwitch('disable-transparent-windows') })
@@ -86,8 +80,8 @@ export class QuestionSessions {
     const record = this.history.get(historyId)
     if (!record) throw new Error('That saved conversation no longer exists.')
     const id = randomUUID()
-    const attachments = record.attachments.map((attachment) => this.createAttachment(attachment.imagePath, 'sent', attachment.edited, attachment.id))
-    const session: QuestionSession = {
+    const attachments = record.attachments.map((attachment) => createSessionAttachment(attachment.imagePath, 'sent', attachment.edited, attachment.id))
+    const session: QuestionSessionState = {
       id,
       attachments,
       window: null,
@@ -141,18 +135,18 @@ export class QuestionSessions {
 
   async getFullImage(id: string, attachmentId: string): Promise<string> {
     const session = await this.requireInitializedSession(id)
-    const attachment = this.requireAttachment(session, attachmentId)
+    const attachment = requireSessionAttachment(session.attachments, attachmentId)
     const png = await this.readImage(attachment.imagePath)
     return `data:image/png;base64,${png.toString('base64')}`
   }
 
   async runOcr(id: string, attachmentId: string): Promise<OcrResult> {
     const session = await this.requireInitializedSession(id)
-    const attachment = this.requireAttachment(session, attachmentId)
+    const attachment = requireSessionAttachment(session.attachments, attachmentId)
     return this.recogniseAttachment(session, attachment)
   }
 
-  private async recogniseAttachment(session: QuestionSession, attachment: SessionAttachment, languageCode?: string): Promise<OcrResult> {
+  private async recogniseAttachment(session: QuestionSessionState, attachment: SessionAttachment, languageCode?: string): Promise<OcrResult> {
     const revision = ++attachment.ocrRevision
     attachment.ocrResult = null
     attachment.ocrSelectedRegionIds.clear()
@@ -196,7 +190,7 @@ export class QuestionSessions {
 
   async getOcrResult(id: string, attachmentId: string): Promise<OcrResult | null> {
     const session = await this.requireInitializedSession(id)
-    const attachment = this.requireAttachment(session, attachmentId)
+    const attachment = requireSessionAttachment(session.attachments, attachmentId)
     return attachment.ocrResult ? structuredClone(attachment.ocrResult) : null
   }
 
@@ -207,7 +201,7 @@ export class QuestionSessions {
     includeNextRequest: boolean
   ): Promise<QuestionViewState> {
     const session = await this.requireInitializedSession(id)
-    const attachment = this.requireAttachment(session, attachmentId)
+    const attachment = requireSessionAttachment(session.attachments, attachmentId)
     if (!attachment.ocrResult || attachment.ocr.status !== 'ready') throw new Error('Extract text before choosing OCR regions.')
     const available = new Set(attachment.ocrResult.regions.map((region) => region.id))
     const selected = [...new Set(regionIds)]
@@ -251,7 +245,7 @@ export class QuestionSessions {
       this.closePreview(session)
       return
     }
-    this.requireAttachment(session, attachmentId)
+    requireSessionAttachment(session.attachments, attachmentId)
     if (session.previewWindow && !session.previewWindow.isDestroyed()) {
       if (session.previewAttachmentId === attachmentId) {
         session.previewWindow.focus()
@@ -333,11 +327,11 @@ export class QuestionSessions {
   async applyAttachmentEdits(id: string, attachmentId: string, operations: ImageEditOperation[]): Promise<QuestionViewState> {
     const session = await this.requireInitializedSession(id)
     if (session.busy) throw new Error('Wait for the current answer or press Stop before editing a screenshot.')
-    const attachment = this.requireAttachment(session, attachmentId)
+    const attachment = requireSessionAttachment(session.attachments, attachmentId)
     if (attachment.status !== 'draft') throw new Error('Only screenshots that have not been sent can be edited.')
     const sourcePath = attachment.imagePath
     const derivativePath = await this.imageEditor.createDerivative(sourcePath, operations)
-    this.invalidateOcr(attachment)
+    invalidateAttachmentOcr(attachment)
     attachment.imagePath = derivativePath
     attachment.edited = true
     await this.screenshots.delete(sourcePath)
@@ -419,7 +413,7 @@ export class QuestionSessions {
       session,
       exchange,
       providerSegment,
-      { text: responsePrompt(regenerationPrompt(previousExchanges, target), target.automatic, false, false, ocrContext), imagePaths: this.pathsForAttachmentIds(session, attachmentIds) },
+      { text: responsePrompt(regenerationPrompt(previousExchanges, target), target.automatic, false, false, ocrContext), imagePaths: pathsForAttachmentIds(session.attachments, attachmentIds) },
       { detectMetadata: true, detectWebSearch: true }
     )
   }
@@ -510,7 +504,7 @@ export class QuestionSessions {
     await this.ocr.dispose()
   }
 
-  private async selectInitial(session: QuestionSession, preferWebSearch = false, extractText = false, ocrLanguageCode?: string, initialQuestion?: string): Promise<void> {
+  private async selectInitial(session: QuestionSessionState, preferWebSearch = false, extractText = false, ocrLanguageCode?: string, initialQuestion?: string): Promise<void> {
     if (extractText) this.startInitialOcr(session, ocrLanguageCode)
     const profiles = this.providers.listProfiles(); const profile = profiles.find((item) => item.isDefault) ?? profiles[0]; if (!profile) return
     const models = await this.safeModels(profile.id); session.models = models; const model = models.find((item) => item.id === profile.defaultModelId) ?? models.find((item) => item.isDefault) ?? models[0]; if (!model) return
@@ -520,7 +514,7 @@ export class QuestionSessions {
       if (segment) this.startInitialAnalysis(session, segment, preferWebSearch, initialQuestion ?? INITIAL_QUESTION, !initialQuestion)
     }
   }
-  private startInitialOcr(session: QuestionSession, ocrLanguageCode?: string): void {
+  private startInitialOcr(session: QuestionSessionState, ocrLanguageCode?: string): void {
     const attachment = session.attachments[0]
     if (!attachment) return
     const exchange: ConversationExchange = {
@@ -571,7 +565,7 @@ export class QuestionSessions {
       }
     })()
   }
-  private startInitialAnalysis(session: QuestionSession, providerSegment: ProviderSegmentState, preferWebSearch = false, question = INITIAL_QUESTION, automatic = true): void {
+  private startInitialAnalysis(session: QuestionSessionState, providerSegment: ProviderSegmentState, preferWebSearch = false, question = INITIAL_QUESTION, automatic = true): void {
     const attachmentIds = session.attachments.map((attachment) => attachment.id)
     const exchange: ConversationExchange = {
       id: randomUUID(),
@@ -602,7 +596,7 @@ export class QuestionSessions {
           providerSegment,
           {
             text: responsePrompt(question, automatic, preferWebSearch, preferWebSearch),
-            imagePaths: this.pathsForAttachmentIds(session, attachmentIds),
+            imagePaths: pathsForAttachmentIds(session.attachments, attachmentIds),
             webSearchAllowed: preferWebSearch,
             webSearchPreferred: preferWebSearch
           },
@@ -617,7 +611,7 @@ export class QuestionSessions {
       }
     })()
   }
-  private startSegment(session: QuestionSession, switchedProvider: boolean, disclosureOverride?: string): ProviderSegmentState | undefined {
+  private startSegment(session: QuestionSessionState, switchedProvider: boolean, disclosureOverride?: string): ProviderSegmentState | undefined {
     if (!session.selection) return undefined
     const disclosure = disclosureOverride ?? (switchedProvider ? 'Provider changed. The new provider receives the conversation screenshots required for this turn and only messages sent from this point; earlier transcript remains local.' : null)
     const segment: ConversationSegment = { id: randomUUID(), selection: structuredClone(session.selection), startedAt: new Date().toISOString(), disclosure }
@@ -625,113 +619,21 @@ export class QuestionSessions {
     session.segments.push(state); session.disclosure = disclosure
     return state
   }
-  private setPhase(session: QuestionSession, exchange: ConversationExchange, phase: ResponsePhase): void { session.phase = phase; exchange.phase = phase }
-  private pendingWebSearch(session: QuestionSession): ConversationExchange | undefined { return session.exchanges.find((exchange) => exchange.webSearch?.status === 'requested') }
-  private async runTurn(session: QuestionSession, exchange: ConversationExchange, providerSegment: ProviderSegmentState, input: { text: string; imagePaths?: string[]; webSearchAllowed?: boolean; webSearchPreferred?: boolean }, controls: ResponseControlOptions): Promise<void> {
-    let probe = ''
-    let probing = controls.detectMetadata || controls.detectWebSearch
-    const appendAnswer = (text: string): void => {
-      const visibleText = exchange.answer ? text : text.replace(/^\s+/, '')
-      if (!visibleText) return
-      exchange.answer += visibleText
-      this.setPhase(session, exchange, 'streaming')
-      this.emit(session, { type: 'delta', text: visibleText })
-    }
-    const flush = (): void => { if (!probe) return; appendAnswer(probe); probe = '' }
-    const consumeMetadata = (): 'complete' | 'partial' | 'none' => {
-      if (!controls.detectMetadata) return 'none'
-      const parsed = parseResponseMetadata(probe)
-      if (parsed.state !== 'complete') return parsed.state
-      probe = ''
-      probing = false
-      if (parsed.metadata) {
-        exchange.metadata = parsed.metadata
-        this.emit(session, { type: 'response-metadata', metadata: parsed.metadata })
-      }
-      appendAnswer(parsed.remainder)
-      return 'complete'
-    }
-    try {
-      for await (const event of this.providers.send(providerSegment.conversationId!, providerSegment.segment.selection, input)) {
-        if (event.type === 'started') { this.setPhase(session, exchange, 'thinking'); this.emit(session, event); continue }
-        if (event.type === 'delta') {
-          if (probing) {
-            probe += event.text
-            const metadataState = consumeMetadata()
-            if (metadataState === 'complete') continue
-            const candidate = probe.trimStart()
-            const possibleMetadata = controls.detectMetadata && (metadataState === 'partial' || candidate.startsWith(RESPONSE_METADATA_PREFIX))
-            const possibleWebSearch = controls.detectWebSearch && (WEB_SEARCH_REQUEST_PREFIX.startsWith(candidate) || candidate.startsWith(WEB_SEARCH_REQUEST_PREFIX))
-            if ((possibleMetadata || possibleWebSearch) && probe.length <= RESPONSE_METADATA_LIMIT) continue
-            probing = false
-            flush()
-            continue
-          }
-          appendAnswer(event.text)
-          continue
-        }
-        if (event.type === 'completed') {
-          if (probing) {
-            const query = controls.detectWebSearch ? parseWebSearchRequest(probe) : null
-            if (query) {
-              const requestId = randomUUID()
-              exchange.webSearch = { id: requestId, query, status: 'requested' }
-              exchange.answer = ''
-              this.setPhase(session, exchange, 'awaiting-approval')
-              this.emit(session, { type: 'web-search-requested', requestId, query })
-              return
-            }
-            if (consumeMetadata() !== 'complete') {
-              probing = false
-              flush()
-            }
-          }
-          const recovered = parseResponseMetadata(exchange.answer)
-          if (recovered.state === 'complete') {
-            exchange.answer = recovered.remainder
-            if (recovered.metadata) {
-              exchange.metadata = recovered.metadata
-              this.emit(session, { type: 'response-metadata', metadata: recovered.metadata })
-            }
-          }
-          if (exchange.webSearch?.status === 'searching') exchange.webSearch.status = 'completed'
-          this.setPhase(session, exchange, 'completed')
-          this.emit(session, event)
-          return
-        }
-        if (event.type === 'cancelled') {
-          if (exchange.webSearch?.status === 'searching') exchange.webSearch.status = 'failed'
-          this.setPhase(session, exchange, 'stopped')
-          this.emit(session, event)
-          return
-        }
-        if (event.type === 'error') {
-          if (exchange.webSearch?.status === 'searching') exchange.webSearch.status = 'failed'
-          exchange.error = event.error
-          this.setPhase(session, exchange, 'failed')
-          this.emit(session, event)
-          return
-        }
-      }
-    } catch (error) {
-      if (exchange.webSearch?.status === 'searching') exchange.webSearch.status = 'failed'
-      if (session.phase === 'stopped' || (error instanceof Error && (error.name === 'AbortError' || /stopped|aborted|cancelled/i.test(error.message)))) {
-        this.setPhase(session, exchange, 'stopped')
-        this.emit(session, { type: 'cancelled' })
-        return
-      }
-      const appError = toAppError(error, 'provider-unavailable')
-      exchange.error = appError
-      this.setPhase(session, exchange, 'failed')
-      this.emit(session, { type: 'error', error: appError })
-    } finally {
-      session.busy = false
-      await this.persistHistory(session).catch(() => undefined)
-    }
+  private setPhase(session: QuestionSessionState, exchange: ConversationExchange, phase: ResponsePhase): void { setTurnPhase(session, exchange, phase) }
+  private pendingWebSearch(session: QuestionSessionState): ConversationExchange | undefined { return session.exchanges.find((exchange) => exchange.webSearch?.status === 'requested') }
+  private async runTurn(session: QuestionSessionState, exchange: ConversationExchange, providerSegment: ProviderSegmentState, input: { text: string; imagePaths?: string[]; webSearchAllowed?: boolean; webSearchPreferred?: boolean }, controls: ResponseControlOptions): Promise<void> {
+    await runQuestionTurn({
+      session,
+      exchange,
+      events: this.providers.send(providerSegment.conversationId!, providerSegment.segment.selection, input),
+      controls,
+      emit: (event) => this.emit(session, event),
+      persist: () => this.persistHistory(session)
+    })
   }
   private async safeModels(profileId: string): Promise<ProviderModelCapability[]> { try { return await this.providers.listModels(profileId) } catch { return [] } }
-  private emit(session: QuestionSession, event: ProviderEvent): void { if (session.window && !session.window.isDestroyed()) session.window.webContents.send(IPC.questionEvent, session.id, event) }
-  private emitChanged(session: QuestionSession, state = this.snapshot(session)): void { if (session.window && !session.window.isDestroyed()) session.window.webContents.send(IPC.questionStateChanged, state) }
+  private emit(session: QuestionSessionState, event: ProviderEvent): void { if (session.window && !session.window.isDestroyed()) session.window.webContents.send(IPC.questionEvent, session.id, event) }
+  private emitChanged(session: QuestionSessionState, state = this.snapshot(session)): void { if (session.window && !session.window.isDestroyed()) session.window.webContents.send(IPC.questionStateChanged, state) }
 
   private readyOcrState(attachment: SessionAttachment, includeNextRequest: boolean): Extract<QuestionAttachment['ocr'], { status: 'ready' }> {
     const result = attachment.ocrResult
@@ -749,20 +651,13 @@ export class QuestionSessions {
     }
   }
 
-  private isCurrentOcr(session: QuestionSession, attachment: SessionAttachment, revision: number): boolean {
+  private isCurrentOcr(session: QuestionSessionState, attachment: SessionAttachment, revision: number): boolean {
     return (
       this.sessions.get(session.id) === session
       && !session.cleaningUp
       && session.attachments.includes(attachment)
       && attachment.ocrRevision === revision
     )
-  }
-
-  private invalidateOcr(attachment: SessionAttachment): void {
-    attachment.ocrRevision += 1
-    attachment.ocrResult = null
-    attachment.ocrSelectedRegionIds.clear()
-    attachment.ocr = { status: 'idle' }
   }
 
   private ocrError(error: unknown) {
@@ -780,7 +675,7 @@ export class QuestionSessions {
     return createAppError(code, 'Text extraction failed', 'Fovea could not recognise text in this screenshot. You can retry or keep using the image normally.', 'retry', detail)
   }
 
-  private buildOcrContext(session: QuestionSession): string {
+  private buildOcrContext(session: QuestionSessionState): string {
     const attachments: Array<{
       attachment: number
       language: string
@@ -819,7 +714,7 @@ export class QuestionSessions {
     ].join('\n')
   }
 
-  private clearIncludedOcr(session: QuestionSession): void {
+  private clearIncludedOcr(session: QuestionSessionState): void {
     for (const attachment of session.attachments) {
       if (attachment.ocr.status === 'ready' && attachment.ocr.includeNextRequest) {
         attachment.ocr = this.readyOcrState(attachment, false)
@@ -827,33 +722,11 @@ export class QuestionSessions {
     }
   }
 
-  private createAttachment(imagePath: string, status: QuestionAttachment['status'], edited = false, id: string = randomUUID()): SessionAttachment {
-    const image = nativeImage.createFromPath(imagePath)
-    return {
-      id,
-      imagePath,
-      thumbnailDataUrl: image.resize({ width: Math.min(380, image.getSize().width), quality: 'good' }).toDataURL(),
-      status,
-      edited,
-      ocr: { status: 'idle' },
-      ocrResult: null,
-      ocrSelectedRegionIds: new Set(),
-      ocrRevision: 0
-    }
-  }
-  private requireAttachment(session: QuestionSession, attachmentId: string): SessionAttachment {
-    const attachment = session.attachments.find((candidate) => candidate.id === attachmentId)
-    if (!attachment) throw new Error('That screenshot is no longer attached.')
-    return attachment
-  }
-  private pathsForAttachmentIds(session: QuestionSession, attachmentIds: string[]): string[] {
-    return attachmentIds.map((attachmentId) => this.requireAttachment(session, attachmentId).imagePath)
-  }
-  private imagePathsForTurn(session: QuestionSession, providerSegment: ProviderSegmentState, freshProviderContext: boolean, draftAttachmentIds: string[]): string[] {
+  private imagePathsForTurn(session: QuestionSessionState, providerSegment: ProviderSegmentState, freshProviderContext: boolean, draftAttachmentIds: string[]): string[] {
     if (providerSegment.segment.selection.provider !== 'chatgpt' || freshProviderContext) {
       return session.attachments.filter((attachment) => attachment.status === 'sent').map((attachment) => attachment.imagePath)
     }
-    return this.pathsForAttachmentIds(session, draftAttachmentIds)
+    return pathsForAttachmentIds(session.attachments, draftAttachmentIds)
   }
   private async attachCapture(id: string, capture: CompletedCapture): Promise<void> {
     const session = this.sessions.get(id)
@@ -861,7 +734,7 @@ export class QuestionSessions {
       await this.screenshots.delete(capture.imagePath)
       return
     }
-    session.attachments.push(this.createAttachment(capture.imagePath, 'draft'))
+    session.attachments.push(createSessionAttachment(capture.imagePath, 'draft'))
     session.capturePending = false
     this.emitChanged(session)
     if (session.window && !session.window.isDestroyed()) {
@@ -876,23 +749,23 @@ export class QuestionSessions {
     this.emitChanged(session)
     if (session.window && !session.window.isDestroyed()) session.window.focus()
   }
-  private createQuestionWindow(capture: CompletedCapture, session: QuestionSession, material: WindowMaterial): BrowserWindow {
+  private createQuestionWindow(capture: CompletedCapture, session: QuestionSessionState, material: WindowMaterial): BrowserWindow {
     const appearance = getWindowAppearanceOptions(QUESTION_WINDOW_SIZES, material, capture.display.workArea)
     const selection = { x: capture.display.bounds.x + capture.selectedBounds.x, y: capture.display.bounds.y + capture.selectedBounds.y, width: capture.selectedBounds.width, height: capture.selectedBounds.height }
     const placement = placeWindowAdjacentToSelection(selection, appearance.size, capture.display.workArea)
     const window = secureWindow({ x: placement.x, y: placement.y, width: placement.width, height: placement.height, minWidth: appearance.minimumSize.width, minHeight: appearance.minimumSize.height, frame: appearance.frame, transparent: appearance.transparent, backgroundColor: appearance.backgroundColor, show: appearance.show, useContentSize: appearance.useContentSize, hasShadow: appearance.hasShadow, resizable: false, maximizable: false, minimizable: appearance.minimizable, closable: appearance.closable, movable: appearance.movable, fullscreenable: appearance.fullscreenable, thickFrame: false, roundedCorners: appearance.roundedCorners, alwaysOnTop: session.pinned, skipTaskbar: false, title: 'Fovea', autoHideMenuBar: true })
     session.window = window; window.webContents.setWindowOpenHandler(() => ({ action: 'deny' })); window.once('closed', () => { if (session.window === window) void this.cleanup(session.id) }); return window
   }
-  private snapshot(session: QuestionSession): QuestionViewState { return { sessionId: session.id, attachments: session.attachments.map(({ id, thumbnailDataUrl, status, edited, ocr }) => ({ id, thumbnailDataUrl, status, edited, ocr: structuredClone(ocr) })), capturePending: session.capturePending, phase: session.phase, exchanges: structuredClone(session.exchanges), segments: session.segments.map((item) => structuredClone(item.segment)), selection: session.selection ? structuredClone(session.selection) : null, profiles: this.providers.listProfiles(), models: structuredClone(session.models), disclosure: session.disclosure, busy: session.busy, pinned: session.pinned } }
-  private async requireInitializedSession(id: string): Promise<QuestionSession> { const session = this.requireSession(id); await session.initialization; if (this.sessions.get(id) !== session) throw new Error('This capture session has already closed.'); return session }
-  private requireSession(id: string): QuestionSession { const session = this.sessions.get(id); if (!session) throw new Error('This capture session has already closed.'); return session }
-  private closePreview(session: QuestionSession): void { const preview = session.previewWindow; session.previewWindow = null; session.previewAttachmentId = null; if (preview && !preview.isDestroyed()) preview.close() }
-  private async initialiseRestored(session: QuestionSession): Promise<void> {
+  private snapshot(session: QuestionSessionState): QuestionViewState { return questionSessionSnapshot(session, this.providers.listProfiles()) }
+  private async requireInitializedSession(id: string): Promise<QuestionSessionState> { const session = this.requireSession(id); await session.initialization; if (this.sessions.get(id) !== session) throw new Error('This capture session has already closed.'); return session }
+  private requireSession(id: string): QuestionSessionState { const session = this.sessions.get(id); if (!session) throw new Error('This capture session has already closed.'); return session }
+  private closePreview(session: QuestionSessionState): void { const preview = session.previewWindow; session.previewWindow = null; session.previewAttachmentId = null; if (preview && !preview.isDestroyed()) preview.close() }
+  private async initialiseRestored(session: QuestionSessionState): Promise<void> {
     if (!session.selection) return
     session.models = await this.safeModels(session.selection.profileId)
     if (!session.models.some((model) => model.id === session.selection?.modelId)) session.selection = null
   }
-  private async persistHistory(session: QuestionSession): Promise<void> {
+  private async persistHistory(session: QuestionSessionState): Promise<void> {
     if (!this.history || !this.settings || this.settings.get().history.privateMode || !session.exchanges.length) return
     const historySettings = this.settings.get().history
     const now = new Date().toISOString()
@@ -910,16 +783,19 @@ export class QuestionSessions {
       edited: attachment.edited
     })), historySettings.retainScreenshots)
   }
-  private async cleanup(id: string): Promise<void> { const session = this.sessions.get(id); if (!session || session.cleaningUp) return; session.cleaningUp = true; await this.persistHistory(session).catch(() => undefined); this.sessions.delete(id); session.ocrContextByExchangeId.clear(); for (const attachment of session.attachments) this.invalidateOcr(attachment); this.closePreview(session); await Promise.all(session.attachments.map((attachment) => this.screenshots.delete(attachment.imagePath))); await Promise.all(session.segments.flatMap((item) => item.conversationId ? [this.providers.deleteConversation(item.conversationId, item.segment.selection.provider).catch(() => undefined)] : [])) }
-}
-
-function parseWebSearchRequest(value: string): string | null {
-  const match = value.match(/<fovea-web-search-request>([\s\S]{1,1000})<\/fovea-web-search-request>/i)
-  if (!match) return null
-  try {
-    const payload = JSON.parse(match[1]!) as { query?: unknown }
-    return typeof payload.query === 'string' && payload.query.trim() ? payload.query.trim().slice(0, 500) : null
-  } catch { return null }
+  private async cleanup(id: string): Promise<void> {
+    const session = this.sessions.get(id)
+    if (!session || session.cleaningUp) return
+    session.cleaningUp = true
+    await this.persistHistory(session).catch(() => undefined)
+    this.sessions.delete(id)
+    session.ocrContextByExchangeId.clear()
+    this.closePreview(session)
+    await releaseSessionAttachments(session.attachments, (path) => this.screenshots.delete(path))
+    await Promise.all(session.segments.flatMap((item) => item.conversationId
+      ? [this.providers.deleteConversation(item.conversationId, item.segment.selection.provider).catch(() => undefined)]
+      : []))
+  }
 }
 
 function responsePrompt(
@@ -937,63 +813,6 @@ function responsePrompt(
     ...(ocrContext ? [ocrContext] : []),
     `User request:\n${question}`
   ].join('\n\n')
-}
-
-function parseResponseMetadata(value: string): {
-  state: 'complete' | 'partial' | 'none'
-  metadata?: AssistantResponseMetadata
-  remainder: string
-} {
-  const candidate = value.trimStart()
-  const lowerCandidate = candidate.toLowerCase()
-  const start = lowerCandidate.indexOf(RESPONSE_METADATA_PREFIX)
-  if (start < 0) {
-    if (candidate.length <= RESPONSE_PREAMBLE_LIMIT) return { state: 'partial', remainder: '' }
-    return { state: 'none', remainder: value }
-  }
-  const end = lowerCandidate.indexOf(RESPONSE_METADATA_SUFFIX, start + RESPONSE_METADATA_PREFIX.length)
-  if (end < 0) return { state: 'partial', remainder: '' }
-
-  const payloadText = candidate.slice(start + RESPONSE_METADATA_PREFIX.length, end)
-  const remainder = candidate.slice(end + RESPONSE_METADATA_SUFFIX.length).replace(/^\s+/, '')
-  try {
-    const payload = JSON.parse(payloadText) as {
-      category?: unknown
-      summary?: unknown
-      suggestedQuestions?: unknown
-    }
-    const summary = typeof payload.summary === 'string' ? payload.summary.trim().slice(0, 1_200) : ''
-    if (!summary) return { state: 'complete', remainder }
-    const category = typeof payload.category === 'string' && payload.category.trim()
-      ? payload.category.trim().slice(0, 80)
-      : 'general'
-    const suggestedQuestions = [
-      ...(Array.isArray(payload.suggestedQuestions)
-        ? payload.suggestedQuestions
-        .filter((item): item is string => typeof item === 'string')
-        .map((item) => item.trim())
-        .filter((item) => item && !requiresUnavailableInput(item))
-        : []),
-      ...SAFE_SUGGESTED_QUESTIONS
-    ]
-    const uniqueSuggestedQuestions = [...new Set(suggestedQuestions)]
-      .slice(0, 4)
-      .map((item) => item.slice(0, 180))
-    return {
-      state: 'complete',
-      metadata: { category, summary, suggestedQuestions: uniqueSuggestedQuestions },
-      remainder
-    }
-  } catch {
-    return { state: 'complete', remainder }
-  }
-}
-
-function requiresUnavailableInput(question: string): boolean {
-  const requestsUserAction = /\b(?:can|could|would)\s+you\b|\b(?:please|share|upload|attach|send|provide|capture|record|show me|take another)\b/i.test(question)
-  const unavailableInput = /\b(?:screens?|screenshots?|images?|photos?|pictures?|files?|links?|videos?|recordings?|logs?)\b/i.test(question)
-  const unavailableMoment = /\b(?:just before|just after|previous screen|next screen|earlier screen|later screen)\b/i.test(question)
-  return unavailableMoment || (requestsUserAction && unavailableInput)
 }
 
 function regenerationPrompt(exchanges: ConversationExchange[], target: ConversationExchange): string {

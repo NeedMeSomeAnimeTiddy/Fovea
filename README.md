@@ -1,10 +1,10 @@
 # Fovea prototype
 
 Fovea is a Windows-first Electron prototype for selecting part of the screen,
-receiving an automatic visual answer, and asking focused follow-up questions. It bundles the
-official Codex CLI `0.144.4` executable and runs `codex app-server` locally over
-JSONL/stdin/stdout; no global Codex, Node.js, Rust, Python, or separate server is
-needed by an installed user.
+receiving an automatic visual answer, and asking focused follow-up questions. OpenAI,
+Anthropic, and OpenRouter API-key profiles work with the minimal installer. ChatGPT
+subscription sign-in is an explicit optional download of the official Codex CLI
+`0.144.4`, which runs `codex app-server` locally over JSONL/stdin/stdout.
 
 The application is currently packaged and displayed under its original temporary
 name, **Fovea**. This repository is the new Fovea home; product-name rebranding
@@ -32,12 +32,26 @@ npm run release:check
 npm run package:win
 ```
 
-`npm install` downloads the official binary for the build machine's Windows
-architecture, verifies its pinned SHA-256 digest, and asks that binary to
-generate its complete TypeScript app-server schema under
-`resources/codex-schema`. The binary and generated schema are ignored by Git;
-run `npm run sidecar:fetch` to restore or verify them. `package:win` writes an
-NSIS installer under `dist/`.
+`npm install` installs only the desktop development dependencies. Run
+`npm run sidecar:fetch` when developing the ChatGPT adapter; that command downloads
+the official binary for the build machine's Windows architecture, verifies its
+pinned SHA-256 digest, and generates the TypeScript app-server schema under
+`resources/codex-schema`. The binary and generated schema are ignored by Git and
+are not included in the minimal installer. `package:win` writes an NSIS installer
+under `dist/`, prints its largest files, and enforces the package-size budget.
+
+## Package-size budget
+
+The minimal Windows package must remain at or below 125 MiB for the installer and
+465 MiB unpacked. The release check warns at 90% of either ceiling and the packaging
+job fails above it. Budgets live in `package-size-budget.json`; measured minimal and
+full sizes per architecture are recorded in [the release-size log](docs/release-sizes.md).
+
+The ChatGPT runtime is never downloaded at startup. Settings and onboarding disclose
+its pinned download/disk size before the user chooses to install it. Interrupted,
+offline, or corrupt downloads are discarded, and only a matching SHA-256 binary is
+made executable. Removing the runtime leaves provider profiles, settings, and
+conversation history intact.
 
 On Windows, text extraction first uses the operating system's local OCR engine
 and the recognition languages installed in Windows Settings. When the isolated
@@ -203,9 +217,9 @@ evaluations, and the runtime doctor before packaging.
 ## Manual test
 
 1. Run `npm run dev`, or install the generated NSIS package.
-2. In Settings, click **Sign in with ChatGPT**, finish the browser flow, and
-   confirm the account and plan appear. API-key auth is also available and is
-   billed separately.
+2. In Settings, either add an API-key profile or explicitly install the optional
+   ChatGPT runtime, review its disclosed size, click **Sign in with ChatGPT**, and
+   finish the browser flow. Confirm the account and plan appear.
 3. Confirm an image-capable model is selected, then press `Ctrl+Shift+Space`.
 4. Toggle **Extract text locally** in the capture bar, make a selection, and
    confirm the recognised text appears in the normal response panel. Try Stop,
@@ -241,8 +255,9 @@ typed, allow-listed preload bridge with `contextIsolation: true`,
 `nodeIntegration: false`, and renderer sandboxing. There is no generic command
 IPC channel.
 
-`CodexAppServerProvider` is the only `VisionProvider` implementation. It
-initializes and supervises the pinned sidecar, correlates JSON-RPC responses,
+`CodexAppServerProvider` handles ChatGPT subscription profiles, while direct API
+adapters support OpenAI, Anthropic, and OpenRouter without the optional runtime.
+The ChatGPT adapter supervises the pinned sidecar, correlates JSON-RPC responses,
 continues after malformed lines, streams typed notifications, and restarts with
 bounded backoff after an unexpected exit. Codex owns OAuth tokens and refresh;
 its isolated `CODEX_HOME` prefers Windows Credential Manager through the
@@ -272,7 +287,8 @@ unredacted temporary source is deleted once the derivative replaces it.
   Even if sandbox initialization fails, approval requests are never surfaced or
   accepted and the assistant is explicitly instructed not to use tools.
 - The installer is unsigned, has no auto-update support, and packages only the
-  architecture used for the build.
+  architecture used for the build. Optional ChatGPT runtime downloads are pinned
+  independently for x64 and ARM64.
 - PaddleOCR is currently a development evaluation sidecar. The Python runtime
   and models are not included in the NSIS installer yet; packaged builds safely
   continue to Tesseract when that sidecar is absent.
@@ -283,7 +299,6 @@ unredacted temporary source is deleted once the derivative replaces it.
 - A real ChatGPT/App Server request cannot be exercised in CI because it needs
   an interactive user login; protocol tests use an in-memory transport instead.
 
-Third-party licensing for the bundled Codex sidecar is in
-`resources/licences/`. Screenshots are sent only through the selected OpenAI
-authentication mode. There is no analytics, telemetry, backend, Fovea
-account, history database, or non-OpenAI provider.
+Third-party licensing for the optional Codex runtime is in `resources/licences/`.
+Screenshots are sent only through the provider profile selected for that conversation.
+There is no analytics, telemetry, backend, or Fovea account.

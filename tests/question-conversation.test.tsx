@@ -3,7 +3,8 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ConversationExchange } from '../src/shared/types/app'
-import { AttachmentStrip, CaptureMenu, ConversationTimeline, ocrEntityExternalAction, takeNextTypingCharacter } from '../src/renderer/question-window/main'
+import { AttachmentStrip, CaptureMenu, ConversationTimeline, ocrEntityExternalAction } from '../src/renderer/question-window/main'
+import { takeStreamingBatch } from '../src/renderer/question-window/response-stream-buffer'
 
 afterEach(cleanup)
 
@@ -54,10 +55,10 @@ describe('response conversation timeline', () => {
     expect(container.querySelectorAll('.conversation-message--user')).toHaveLength(1)
   })
 
-  it('extracts exactly one visible Unicode character for each typing tick', () => {
-    expect(takeNextTypingCharacter('Hello')).toEqual({ character: 'H', remainder: 'ello' })
-    expect(takeNextTypingCharacter('🙂 done')).toEqual({ character: '🙂', remainder: ' done' })
-    expect(takeNextTypingCharacter('')).toEqual({ character: '', remainder: '' })
+  it('takes bounded streaming batches without splitting visible Unicode graphemes', () => {
+    expect(takeStreamingBatch('Hello', 3)).toEqual({ value: 'Hel', remainder: 'lo', count: 3 })
+    expect(takeStreamingBatch('👨‍👩‍👧‍👦 done', 1)).toEqual({ value: '👨‍👩‍👧‍👦', remainder: ' done', count: 1 })
+    expect(takeStreamingBatch('', 4)).toEqual({ value: '', remainder: '', count: 0 })
   })
 
   it('opens screenshot actions and disables draft-only actions for sent images', () => {

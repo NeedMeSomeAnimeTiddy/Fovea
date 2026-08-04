@@ -1,41 +1,90 @@
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
-import { ConversationHistoryStore, type ConversationHistoryRecord } from '../src/main/storage/conversation-history-store'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import {
+  ConversationHistoryStore,
+  HISTORY_LIST_LIMIT,
+  type ConversationHistoryRecord
+} from '../src/main/storage/conversation-history-store'
+
+interface StoreLocation {
+  root: string
+  databasePath: string
+  legacyJsonPath: string
+  images: string
+}
 
 const roots: string[] = []
+const stores: ConversationHistoryStore[] = []
 
-afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))))
+afterEach(async () => {
+  for (const store of stores.splice(0)) store.dispose()
+  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
+  vi.restoreAllMocks()
+})
 
-async function createStore(): Promise<{ root: string; path: string; images: string; store: ConversationHistoryStore }> {
+async function createLocation(): Promise<StoreLocation> {
   const root = await mkdtemp(join(tmpdir(), 'fovea-history-test-'))
   roots.push(root)
-  const path = join(root, 'history.v1.json')
-  const images = join(root, 'conversation-images')
-  const store = new ConversationHistoryStore(path, images)
+  return {
+    root,
+    databasePath: join(root, 'history.v2.sqlite'),
+    legacyJsonPath: join(root, 'history.v1.json'),
+    images: join(root, 'conversation-images')
+  }
+}
+
+async function openStore(location: StoreLocation): Promise<ConversationHistoryStore> {
+  const store = new ConversationHistoryStore(
+    location.databasePath,
+    location.images,
+    location.legacyJsonPath
+  )
+  stores.push(store)
   await store.initialise()
-  return { root, path, images, store }
+  return store
+}
+
+async function createStore(): Promise<StoreLocation & { store: ConversationHistoryStore }> {
+  const location = await createLocation()
+  return { ...location, store: await openStore(location) }
 }
 
 describe('ConversationHistoryStore', () => {
-  it('initialises and migrates an unversioned local store', async () => {
-    const { path, images } = await createStore()
-    await writeFile(path, JSON.stringify({ conversations: [record('legacy', '2026-01-02T00:00:00.000Z', 'Legacy question')] }))
+  it('imports an unversioned JSON store once and keeps the source as a backup', async () => {
+    const location = await createLocation()
+    await writeFile(location.legacyJsonPath, JSON.stringify({
+      conversations: [record('legacy', '2026-01-02T00:00:00.000Z', 'Legacy question')]
+    }))
 
-    const migrated = new ConversationHistoryStore(path, images)
-    await migrated.initialise()
+    const migrated = await openStore(location)
 
     expect(migrated.list()).toEqual([expect.objectContaining({ id: 'legacy', title: 'Legacy question' })])
-    expect(JSON.parse(await readFile(path, 'utf8')).version).toBe(1)
+    await expect(stat(location.databasePath)).resolves.toBeTruthy()
+    await expect(stat(`${location.legacyJsonPath}.migrated.bak`)).resolves.toBeTruthy()
+    await expect(readFile(location.legacyJsonPath, 'utf8')).rejects.toThrow()
   })
 
-  it('searches transcript text and deletes one conversation or all history', async () => {
+  it('leaves malformed legacy JSON untouched and reports the failed import', async () => {
+    const location = await createLocation()
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    await writeFile(location.legacyJsonPath, '{ valid history that was truncated')
+
+    const store = await openStore(location)
+
+    expect(store.list()).toEqual([])
+    await expect(readFile(location.legacyJsonPath, 'utf8')).resolves.toBe('{ valid history that was truncated')
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining('left untouched'))
+  })
+
+  it('searches transcript substrings and deletes one conversation or all history', async () => {
     const { store } = await createStore()
     await store.upsert(withoutAttachments(record('alpha', '2026-01-02T00:00:00.000Z', 'Quarterly chart')), [], false)
     await store.upsert(withoutAttachments(record('beta', '2026-01-03T00:00:00.000Z', 'Login error')), [], false)
 
-    expect(store.list('quarterly')).toHaveLength(1)
+    expect(store.list('arterly').map((item) => item.id)).toEqual(['alpha'])
+    expect(store.list('og').map((item) => item.id)).toEqual(['beta'])
     expect(store.list('useful answer').map((item) => item.id)).toEqual(['beta', 'alpha'])
     await expect(store.delete('alpha')).resolves.toBe(true)
     expect(store.list().map((item) => item.id)).toEqual(['beta'])
@@ -70,6 +119,39 @@ describe('ConversationHistoryStore', () => {
     expect(store.get('images')?.attachments).toEqual([])
     await expect(stat(archived!.imagePath)).rejects.toThrow()
   })
+
+  it('keeps list and indexed substring search bounded with 10,000 records', async () => {
+    const location = await createLocation()
+    const conversations = Array.from({ length: 10_000 }, (_, index) => {
+      const suffix = String(index).padStart(5, '0')
+      return record(
+        `history-${suffix}`,
+        new Date(Date.UTC(2026, 0, 1, 0, 0, index)).toISOString(),
+        `Question ${suffix} unique-suffix`
+      )
+    })
+    await writeFile(location.legacyJsonPath, JSON.stringify({ version: 1, conversations }))
+    const startupStarted = performance.now()
+    const store = await openStore(location)
+    const startupElapsed = performance.now() - startupStarted
+
+    const listStarted = performance.now()
+    const recent = store.list()
+    const listElapsed = performance.now() - listStarted
+    const searchStarted = performance.now()
+    const matches = store.list('09999 unique')
+    const searchElapsed = performance.now() - searchStarted
+    const upsertStarted = performance.now()
+    await store.upsert(withoutAttachments(record('history-new', '2026-02-01T00:00:00.000Z', 'New record')), [], false)
+    const upsertElapsed = performance.now() - upsertStarted
+
+    expect(recent).toHaveLength(HISTORY_LIST_LIMIT)
+    expect(recent[0]?.id).toBe('history-09999')
+    expect(matches.map((item) => item.id)).toEqual(['history-09999'])
+    expect(startupElapsed).toBeLessThan(20_000)
+    expect(Math.max(listElapsed, searchElapsed)).toBeLessThan(1_000)
+    expect(upsertElapsed).toBeLessThan(1_000)
+  }, 30_000)
 })
 
 function record(id: string, updatedAt: string, question: string): ConversationHistoryRecord {

@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events'
-import type { ConversationSelection, ProviderModelCapability, ProviderProfileSummary } from '@shared/types/app'
+import type { ChatGptRuntimeStatus, ConversationSelection, ProviderModelCapability, ProviderProfileSummary } from '@shared/types/app'
 import type { ProviderEvent, ProviderStatus, VisionTurnInput } from '@shared/types/provider'
 import { createAppError, FoveaError } from '../errors/app-error'
 import type { CodexAppServerProvider } from './codex-app-server/codex-app-server-provider'
 import { DirectApiProvider } from './direct-api-provider'
 import type { ProfileManager } from './profile-manager'
+import type { CodexRuntimeManager } from '../runtime/codex-runtime-manager'
 
 export class ProviderRegistry extends EventEmitter {
   private readonly direct = {
@@ -16,6 +17,9 @@ export class ProviderRegistry extends EventEmitter {
   private readonly controllers = new Map<string, AbortController>()
   private chatgptStatus: ProviderStatus | null = null
   private statusRefresh: Promise<void> = Promise.resolve()
+  private readonly handleRuntimeStatus = (): void => {
+    this.emit('status', structuredClone(this.chatgptStatus))
+  }
   private readonly handleChatGptStatus = (status: ProviderStatus): void => {
     this.chatgptStatus = structuredClone(status)
     this.emit('status', structuredClone(status))
@@ -32,16 +36,51 @@ export class ProviderRegistry extends EventEmitter {
 
   constructor(
     readonly profiles: ProfileManager,
-    private readonly chatgpt: CodexAppServerProvider
+    private readonly chatgpt: CodexAppServerProvider,
+    private readonly chatgptRuntime?: CodexRuntimeManager
   ) {
     super()
     this.chatgpt.on('status', this.handleChatGptStatus)
+    this.chatgptRuntime?.on('changed', this.handleRuntimeStatus)
   }
 
   async initialise(): Promise<void> {
+    await this.chatgptRuntime?.initialise()
+    if (!this.chatgptRuntime || this.chatgptRuntime.isInstalled()) {
+      await this.chatgpt.initialise().catch(() => undefined)
+    }
+    this.chatgptStatus = await this.chatgpt.getStatus()
+    await this.refreshChatGptHealth(this.chatgptStatus)
+  }
+
+  getChatGptRuntimeStatus(): ChatGptRuntimeStatus {
+    return this.chatgptRuntime?.getStatus() ?? {
+      state: 'installed',
+      version: 'development',
+      architecture: process.arch,
+      downloadBytes: 0,
+      downloadedBytes: 0,
+      installedBytes: 0,
+      removable: false
+    }
+  }
+
+  async installChatGptRuntime(): Promise<ChatGptRuntimeStatus> {
+    if (!this.chatgptRuntime) return this.getChatGptRuntimeStatus()
+    const status = await this.chatgptRuntime.install()
     await this.chatgpt.initialise()
     this.chatgptStatus = await this.chatgpt.getStatus()
     await this.refreshChatGptHealth(this.chatgptStatus)
+    return status
+  }
+
+  async removeChatGptRuntime(): Promise<ChatGptRuntimeStatus> {
+    if (!this.chatgptRuntime) throw new Error('The ChatGPT runtime is not managed by this build.')
+    await this.chatgpt.dispose()
+    const status = await this.chatgptRuntime.remove()
+    this.chatgptStatus = await this.chatgpt.getStatus()
+    await this.refreshChatGptHealth(this.chatgptStatus)
+    return status
   }
 
   listProfiles(): ProviderProfileSummary[] {
@@ -55,6 +94,9 @@ export class ProviderRegistry extends EventEmitter {
   async authenticate(profileId: string): Promise<void> {
     const profile = this.profiles.require(profileId)
     if (profile.provider !== 'chatgpt') throw new Error('API-key profiles are authenticated when they are created.')
+    if (this.chatgptRuntime && !this.chatgptRuntime.isInstalled()) {
+      throw new Error('Install the optional ChatGPT runtime before signing in. API-key providers remain available without it.')
+    }
     await this.chatgpt.signInWithChatGPT()
     await this.refreshChatGptHealth()
   }
@@ -155,6 +197,7 @@ export class ProviderRegistry extends EventEmitter {
     for (const controller of this.controllers.values()) controller.abort()
     this.controllers.clear()
     this.chatgpt.off('status', this.handleChatGptStatus)
+    this.chatgptRuntime?.off('changed', this.handleRuntimeStatus)
     await this.statusRefresh
     await this.chatgpt.dispose()
   }

@@ -21,6 +21,7 @@ import { SettingsStore } from './storage/settings-store'
 import { TempScreenshotStore } from './storage/temp-screenshot-store'
 import { TrayController } from './tray/tray-controller'
 import { QuestionSessions } from './windows/question-sessions'
+import { CodexRuntimeManager } from './runtime/codex-runtime-manager'
 import { showSettingsWindow } from './windows/settings-window'
 import { toAppError } from './errors/app-error'
 
@@ -43,21 +44,29 @@ async function startApplication(): Promise<void> {
   const settings = new SettingsStore(join(userData, 'settings.v2.json'))
   const credentials = new CredentialStore(join(userData, 'credentials.v1.json'), safeStorage)
   const screenshots = new TempScreenshotStore(join(userData, 'temporary-screenshots'))
-  const history = new ConversationHistoryStore(join(userData, 'history.v1.json'), join(userData, 'conversation-images'))
+  const history = new ConversationHistoryStore(
+    join(userData, 'history.v2.sqlite'),
+    join(userData, 'conversation-images'),
+    join(userData, 'history.v1.json')
+  )
   await Promise.all([settings.load(), credentials.load(), screenshots.initialise(), history.initialise()])
   await Promise.all([screenshots.cleanup(), history.applyRetention(settings.get().history.retentionDays)])
 
   const appearance = new AppearanceController(settings)
   appearance.initialise()
   const runtimeRoot = join(userData, 'runtime')
+  const codexRuntime = new CodexRuntimeManager({
+    runtimeDirectory: join(runtimeRoot, 'providers', 'codex'),
+    ...(!app.isPackaged ? { bundledBinaryPath: join(app.getAppPath(), 'resources', 'sidecar', 'codex.exe') } : {})
+  })
   const codex = new CodexAppServerProvider({
-    binaryPath: app.isPackaged ? join(process.resourcesPath, 'sidecar', 'codex.exe') : join(app.getAppPath(), 'resources', 'sidecar', 'codex.exe'),
+    binaryPath: codexRuntime.binaryPath,
     codexHome: join(runtimeRoot, 'codex-home'), workingDirectory: join(runtimeRoot, 'workspace'), openExternal: (url) => shell.openExternal(url), getSelectedModel: () => null
   })
   codex.on('diagnostic', (message: string) => console.info(`[codex] ${redact(message)}`))
   codex.on('warning', (message: string) => console.warn(`[codex] ${redact(message)}`))
   const profiles = new ProfileManager(settings, credentials)
-  const providers = new ProviderRegistry(profiles, codex)
+  const providers = new ProviderRegistry(profiles, codex, codexRuntime)
   const services: { questions?: QuestionSessions } = {}
   const imageEditor = new ImageEditorService(screenshots)
   const tesseractOcr = new TesseractOcrService(
@@ -131,7 +140,23 @@ async function startApplication(): Promise<void> {
   app.on('second-instance', openSettingsSafely)
   app.on('activate', openSettingsSafely)
   let shuttingDown = false
-  app.on('before-quit', () => { if (shuttingDown) return; shuttingDown = true; capture.dispose(); shortcuts.dispose(); tray.dispose(); appearance.dispose(); void questions.dispose(); void providers.dispose() })
+  app.on('before-quit', (event) => {
+    if (shuttingDown) return
+    event.preventDefault()
+    shuttingDown = true
+    capture.dispose()
+    shortcuts.dispose()
+    tray.dispose()
+    appearance.dispose()
+    void questions.dispose()
+      .catch(() => undefined)
+      .then(() => providers.dispose())
+      .catch(() => undefined)
+      .finally(() => {
+        history.dispose()
+        app.quit()
+      })
+  })
 }
 
 function redact(message: string): string { return message.replace(/(?:sk|key)-[\w-]+/gi, '[redacted]') }

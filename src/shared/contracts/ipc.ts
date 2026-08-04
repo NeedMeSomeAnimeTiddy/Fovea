@@ -5,6 +5,7 @@ import type {
   AppearanceState,
   CaptureAnalysis,
   CaptureMode,
+  ChatGptRuntimeStatus,
   ConversationExchange,
   ConversationHistorySummary,
   ConversationSegment,
@@ -28,7 +29,8 @@ import type {
 export const IPC = {
   appearanceGet: 'appearance:get',
   settingsGet: 'settings:get', settingsOpenOcrLanguages: 'settings:open-ocr-languages', settingsSetAppearance: 'settings:set-appearance', settingsSetLaunchAtLogin: 'settings:set-launch-at-login', settingsSetShortcut: 'settings:set-shortcut', settingsResetShortcuts: 'settings:reset-shortcuts', settingsSaveCustomPrompt: 'settings:save-custom-prompt', settingsDeleteCustomPrompt: 'settings:delete-custom-prompt', settingsSetOnboardingStatus: 'settings:set-onboarding-status', settingsSetPrivateMode: 'settings:set-private-mode', settingsSetHistoryRetention: 'settings:set-history-retention', settingsSetScreenshotRetention: 'settings:set-screenshot-retention', settingsTestOnboardingCapture: 'settings:test-onboarding-capture', settingsDeleteTemp: 'settings:delete-temp', settingsChanged: 'settings:changed', appearanceChanged: 'appearance:changed',
-  profilesList: 'profiles:list', profilesCreateApiKey: 'profiles:create-api-key', profilesCreateChatGpt: 'profiles:create-chatgpt', profilesRename: 'profiles:rename', profilesAuthenticate: 'profiles:authenticate', profilesTest: 'profiles:test', profilesSignOut: 'profiles:sign-out', profilesDelete: 'profiles:delete', profilesSetDefault: 'profiles:set-default', profilesSetDefaults: 'profiles:set-defaults', profilesModels: 'profiles:models',
+  profilesList: 'profiles:list', profilesCreateApiKey: 'profiles:create-api-key', profilesCreateChatGpt: 'profiles:create-chatgpt', profilesAuthenticate: 'profiles:authenticate', profilesRename: 'profiles:rename', profilesTest: 'profiles:test', profilesSignOut: 'profiles:sign-out', profilesDelete: 'profiles:delete', profilesSetDefault: 'profiles:set-default', profilesSetDefaults: 'profiles:set-defaults', profilesModels: 'profiles:models',
+  chatGptRuntimeInstall: 'chatgpt-runtime:install', chatGptRuntimeRemove: 'chatgpt-runtime:remove',
   captureStart: 'capture:start', captureGetContext: 'capture:get-context', captureAnalyze: 'capture:analyze', captureAnalysisProgress: 'capture:analysis-progress', captureCancelAnalysis: 'capture:cancel-analysis', captureGetOcrLanguages: 'capture:get-ocr-languages', captureSetOcrLanguage: 'capture:set-ocr-language', captureSelect: 'capture:select', captureCancel: 'capture:cancel',
   questionGet: 'question:get', questionGetFullImage: 'question:get-full-image', questionRunOcr: 'question:run-ocr', questionGetOcrResult: 'question:get-ocr-result', questionSetOcrSelection: 'question:set-ocr-selection', questionSetSelection: 'question:set-selection', questionSetPinned: 'question:set-pinned', questionSetPreviewOpen: 'question:set-preview-open', questionRemoveAttachment: 'question:remove-attachment', questionApplyAttachmentEdits: 'question:apply-attachment-edits', questionSend: 'question:send', questionRetry: 'question:retry', questionResolveWebSearch: 'question:resolve-web-search', questionStop: 'question:stop', questionClose: 'question:close', questionAddSnip: 'question:add-snip', questionNewChat: 'question:new-chat', questionEvent: 'question:event', questionStateChanged: 'question:state-changed',
   historyList: 'history:list', historyOpen: 'history:open', historyDelete: 'history:delete', historyClear: 'history:clear',
@@ -45,6 +47,7 @@ export function isWindowResizeEdge(value: unknown): value is WindowResizeEdge { 
 export interface SettingsViewState {
   appearance: AppearanceState
   profiles: ProviderProfileSummary[]
+  chatGptRuntime: ChatGptRuntimeStatus
   shortcuts: ShortcutBindingState[]
   customPrompts: CustomPrompt[]
   launchAtLogin: boolean
@@ -77,6 +80,7 @@ export interface FoveaApi {
   profiles: {
     list(): Promise<ProviderProfileSummary[]>; createApiKey(provider: Exclude<ProviderKind, 'chatgpt'>, name: string, apiKey: string): Promise<ProviderProfileSummary>; createChatGpt(name?: string): Promise<ProviderProfileSummary>; rename(id: string, name: string): Promise<void>; authenticate(id: string): Promise<void>; test(id: string): Promise<ProviderModelCapability[]>; signOut(id: string): Promise<void>; delete(id: string): Promise<void>; setDefault(id: string): Promise<void>; setDefaults(id: string, modelId: string | null, reasoningEffort: string | null): Promise<void>; models(id: string): Promise<ProviderModelCapability[]>
   }
+  chatGptRuntime: { install(): Promise<ChatGptRuntimeStatus>; remove(): Promise<ChatGptRuntimeStatus> }
   settings: {
     get(): Promise<SettingsViewState>; openOcrLanguages(): Promise<void>; setAppearance(preference: AppearancePreference): Promise<void>; setLaunchAtLogin(enabled: boolean): Promise<void>; setShortcut(action: ShortcutAction, accelerator: string | null): Promise<void>; resetShortcuts(): Promise<void>; saveCustomPrompt(id: string | null, label: string, prompt: string): Promise<void>; deleteCustomPrompt(id: string): Promise<void>; setOnboardingStatus(status: Exclude<OnboardingStatus, 'pending'>): Promise<void>; setPrivateMode(enabled: boolean): Promise<void>; setHistoryRetention(days: number): Promise<void>; setScreenshotRetention(enabled: boolean): Promise<void>; testOnboardingCapture(): Promise<OnboardingTestCaptureResult>; deleteTemporaryFiles(): Promise<number>; onChanged(callback: (state: SettingsViewState) => void): () => void; onAppearanceChanged(callback: (state: AppearanceState) => void): () => void
   }

@@ -7,7 +7,7 @@
   "private": true,
   "license": "MIT",
   "scripts": {
-    "postinstall": "node scripts/fetch-codex-sidecar.mjs && electron-builder install-app-deps",
+    "postinstall": "electron-builder install-app-deps",
     "sidecar:fetch": "node scripts/fetch-codex-sidecar.mjs",
     "sidecar:smoke": "node scripts/smoke-codex-sidecar.mjs",
     "dev": "electron-vite dev",
@@ -30,8 +30,10 @@
     "omniparser:setup": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-omniparser.ps1",
     "test": "vitest run",
     "build": "electron-vite build",
-    "release:check": "npm run typecheck && npm run lint && npm test && npm run assets:validate && npm run build && npm run analyze:evaluate && npm run analyze:corpus:check && npm run analyze:doctor",
-    "package:win": "npm run release:check && electron-builder --win nsis"
+    "package:size": "node scripts/report-package-size.mjs --if-present",
+    "package:size:check": "node scripts/report-package-size.mjs --check",
+    "release:check": "npm run typecheck && npm run lint && npm test && npm run assets:validate && npm run build && npm run analyze:evaluate && npm run analyze:corpus:check && npm run analyze:doctor && npm run package:size",
+    "package:win": "npm run release:check && electron-builder --win nsis && npm run package:size:check"
   },
   "dependencies": {
     "@zxing/library": "^0.21.3",
@@ -71,20 +73,21 @@
     "asar": true,
     "asarUnpack": [
       "node_modules/tesseract.js/**/*",
-      "node_modules/tesseract.js-core/**/*"
+      "node_modules/tesseract.js-core/tesseract-core*-lstm.js",
+      "node_modules/tesseract.js-core/tesseract-core*-lstm.wasm"
     ],
     "files": [
       "out/**/*",
-      "package.json"
+      "package.json",
+      "!node_modules/tesseract.js-core/tesseract-core.wasm*",
+      "!node_modules/tesseract.js-core/tesseract-core-simd.wasm*",
+      "!node_modules/tesseract.js-core/tesseract-core-relaxedsimd.wasm*",
+      "!node_modules/tesseract.js-core/tesseract-core.js",
+      "!node_modules/tesseract.js-core/tesseract-core-simd.js",
+      "!node_modules/tesseract.js-core/tesseract-core-relaxedsimd.js",
+      "!node_modules/tesseract.js-core/tesseract-core*-lstm.wasm.js"
     ],
     "extraResources": [
-      {
-        "from": "resources/sidecar",
-        "to": "sidecar",
-        "filter": [
-          "codex.exe"
-        ]
-      },
       {
         "from": "resources/licences",
         "to": "licences"

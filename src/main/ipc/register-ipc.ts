@@ -22,7 +22,7 @@ export interface IpcDependencies { providers: ProviderRegistry; settings: Settin
 
 export function registerIpc(dependencies: IpcDependencies): void {
   ipcMain.on(IPC.appearanceGet, (event) => { event.returnValue = dependencies.appearance.getState() })
-  const buildSettingsState = (): SettingsViewState => ({ appearance: dependencies.appearance.getState(), profiles: dependencies.providers.listProfiles(), shortcuts: dependencies.shortcuts.getState(), customPrompts: dependencies.settings.get().customPrompts, launchAtLogin: dependencies.settings.get().launchAtLogin, onboardingStatus: dependencies.settings.get().onboardingStatus, history: dependencies.settings.get().history, ocrLanguageCode: dependencies.settings.get().ocrLanguageCode, tempLocation: dependencies.screenshots.directory, appVersion: app.getVersion() })
+  const buildSettingsState = (): SettingsViewState => ({ appearance: dependencies.appearance.getState(), profiles: dependencies.providers.listProfiles(), chatGptRuntime: dependencies.providers.getChatGptRuntimeStatus(), shortcuts: dependencies.shortcuts.getState(), customPrompts: dependencies.settings.get().customPrompts, launchAtLogin: dependencies.settings.get().launchAtLogin, onboardingStatus: dependencies.settings.get().onboardingStatus, history: dependencies.settings.get().history, ocrLanguageCode: dependencies.settings.get().ocrLanguageCode, tempLocation: dependencies.screenshots.directory, appVersion: app.getVersion() })
   const broadcastSettings = (): void => {
     const state = buildSettingsState()
     for (const window of BrowserWindow.getAllWindows()) {
@@ -99,6 +99,8 @@ export function registerIpc(dependencies: IpcDependencies): void {
   handle(IPC.profilesSetDefault, (_event, id) => mutate(() => dependencies.providers.profiles.setDefault(requireId(id))))
   handle(IPC.profilesSetDefaults, (_event, id, model, reasoning) => mutate(() => dependencies.providers.profiles.setDefaults(requireId(id), requireNullableString(model, 200), requireNullableString(reasoning, 50))), 'validation')
   handle(IPC.profilesModels, (_event, id) => dependencies.providers.listModels(requireId(id)), 'no-compatible-models')
+  handle(IPC.chatGptRuntimeInstall, () => mutate(() => dependencies.providers.installChatGptRuntime()), 'provider-unavailable')
+  handle(IPC.chatGptRuntimeRemove, () => mutate(() => dependencies.providers.removeChatGptRuntime()), 'provider-unavailable')
 
   handle(IPC.captureStart, (_event, mode) => dependencies.capture.begin(requireCaptureMode(mode)), 'capture-failed')
   handle(IPC.captureGetContext, (event) => dependencies.capture.getContext(event.sender.id), 'capture-failed')

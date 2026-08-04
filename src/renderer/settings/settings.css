@@ -194,6 +194,21 @@ body,
   position: relative;
 }
 
+.runtime-card {
+  align-items: center;
+  display: flex;
+  gap: var(--fovea-space-4);
+  justify-content: space-between;
+}
+
+.runtime-card > div:first-child {
+  min-width: 0;
+}
+
+.runtime-card__actions {
+  flex: 0 0 auto;
+}
+
 .provider-profiles-section:has(.profile-menu__popover) {
   z-index: var(--fovea-z-overlay);
 }

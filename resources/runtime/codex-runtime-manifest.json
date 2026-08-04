@@ -1,0 +1,17 @@
+{
+  "version": "0.144.4",
+  "targets": {
+    "x64": {
+      "architecture": "x64",
+      "asset": "codex-x86_64-pc-windows-msvc.exe",
+      "sha256": "51398051c2332b6afe08dc3b9dbb4056085c197f35ca57a307ee303d450cada5",
+      "sizeBytes": 341142832
+    },
+    "arm64": {
+      "architecture": "arm64",
+      "asset": "codex-aarch64-pc-windows-msvc.exe",
+      "sha256": "84406bf7cb8c689e46ebd31244f0458fce3eeed781ec1030399a96baab062932",
+      "sizeBytes": 293900080
+    }
+  }
+}

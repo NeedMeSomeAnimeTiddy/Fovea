@@ -52,6 +52,19 @@ describe('first-run onboarding flow', () => {
     expect(screen.getByRole('heading', { name: 'Set your capture shortcut' })).toBeTruthy()
   })
 
+  it('discloses the optional runtime size before starting its download', async () => {
+    const user = userEvent.setup()
+    const onSignIn = vi.fn(async () => undefined)
+    renderFlow({
+      chatGptRuntime: { state: 'not-installed', version: '0.144.4', architecture: 'x64', downloadBytes: 341_142_832, downloadedBytes: 0, installedBytes: 0, removable: false }
+    }, { onSignIn })
+
+    await user.click(screen.getByRole('button', { name: 'Next' }))
+    expect(screen.getByText(/325\.3 MiB/)).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: 'Download runtime and sign in' }))
+    await waitFor(() => expect(onSignIn).toHaveBeenCalledTimes(1))
+  })
+
   it('connects supported API-key providers without asking for an endpoint', async () => {
     const user = userEvent.setup()
     const onCreateApiProfile = vi.fn(async () => undefined)
@@ -158,6 +171,7 @@ function makeState(patch: Partial<SettingsViewState> = {}): SettingsViewState {
   return {
     appearance: { preference: 'light', resolved: 'light' },
     profiles: [],
+    chatGptRuntime: { state: 'installed', version: '0.144.4', architecture: 'x64', downloadBytes: 341_142_832, downloadedBytes: 341_142_832, installedBytes: 341_142_832, removable: true },
     shortcuts: [{ action: 'region', accelerator: 'CommandOrControl+Alt+Shift+Space', registered: true }],
     customPrompts: [],
     launchAtLogin: false,

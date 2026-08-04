@@ -208,6 +208,7 @@ export function OnboardingFlow({
             busy={activity === 'provider'}
             profile={chatGptProfile}
             profiles={state.profiles}
+            runtime={state.chatGptRuntime}
             onCreateApiProfile={createApiProfile}
             onSignIn={() => void signIn()}
           />
@@ -264,12 +265,14 @@ function PrivacyStep({
   busy,
   profile,
   profiles,
+  runtime,
   onCreateApiProfile,
   onSignIn
 }: {
   busy: boolean
   profile: SettingsViewState['profiles'][number] | undefined
   profiles: SettingsViewState['profiles']
+  runtime: SettingsViewState['chatGptRuntime']
   onCreateApiProfile(provider: Exclude<ProviderKind, 'chatgpt'>, name: string, apiKey: string): Promise<boolean>
   onSignIn(): void
 }): React.JSX.Element {
@@ -301,14 +304,19 @@ function PrivacyStep({
       <Card as="section" className="onboarding-connect-card">
         <div className="onboarding-connect-card__heading">
           <div aria-hidden="true" className="onboarding-illustration">{method === 'chatgpt' ? <AccountIcon /> : <KeyIcon />}</div>
-          <div><h2>{selected.label}</h2><p>{method === 'chatgpt' ? 'Sign in securely in your browser.' : 'Fovea uses the provider’s standard API endpoint.'}</p></div>
+          <div><h2>{selected.label}</h2><p>{method === 'chatgpt' ? 'Sign in securely in your browser after installing the optional verified local runtime.' : 'Fovea uses the provider’s standard API endpoint.'}</p></div>
         </div>
         {method === 'chatgpt'
           ? connected
             ? <StatusBanner title="ChatGPT connected" tone="success">{profile.accountLabel ?? 'Ready to use.'}</StatusBanner>
             : starting
               ? <StatusBanner icon={<Spinner />} title="Starting local service">Sign-in will be available shortly.</StatusBanner>
-              : <Button loading={busy} loadingLabel="Signing in with ChatGPT" onClick={onSignIn}>Sign in with ChatGPT</Button>
+              : <>
+                  {runtime.state !== 'installed' && <p className="muted">The ChatGPT option downloads about {formatBytesForOnboarding(runtime.downloadBytes)} and uses the same disk space. API-key options need no extra runtime.</p>}
+                  <Button loading={busy} loadingLabel={runtime.state === 'installed' ? 'Signing in with ChatGPT' : 'Installing ChatGPT runtime'} onClick={onSignIn}>
+                    {runtime.state === 'installed' ? 'Sign in with ChatGPT' : 'Download runtime and sign in'}
+                  </Button>
+                </>
           : configured
             ? <StatusBanner title={`${selected.label} configured`} tone="success">Manage or replace this profile in Settings.</StatusBanner>
             : <div className="onboarding-api-form">
@@ -323,6 +331,10 @@ function PrivacyStep({
       </div>
     </>
   )
+}
+
+function formatBytesForOnboarding(bytes: number): string {
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`
 }
 
 function PrivacyPoint({ children, title }: { children: ReactNode; title: string }): React.JSX.Element {
