@@ -6,7 +6,11 @@ import { CaptureService } from './capture/capture-service'
 import { ImageEditorService } from './capture/image-editor-service'
 import { OmniParserDetectorService, type ScreenshotElementDetector } from './capture/screenshot-element-detector-service'
 import { WindowsUiAutomationService } from './capture/windows-ui-automation-service'
+import { FileAnalysisService } from './files/file-analysis-service'
+import { PdfIngestionService, registerDocumentScheme } from './files/pdf-ingestion-service'
 import { registerIpc } from './ipc/register-ipc'
+import { parseAnalyseArguments, type AnalyseRequest } from './shell/analyse-arguments'
+import { ExplorerIntegration } from './shell/explorer-integration'
 import { OnboardingController, shouldShowOnboardingAtStartup } from './onboarding/onboarding-controller'
 import { TesseractOcrService } from './ocr/ocr-service'
 import { PaddleFirstOcrService, PaddleOcrService, resolvePaddleOcrProfile } from './ocr/paddle-ocr-service'
@@ -29,6 +33,21 @@ app.setName('Fovea')
 app.setPath('userData', join(app.getPath('appData'), 'Fovea'))
 // Fovea is tray-first: closing or cancelling its last window must not end the process.
 app.on('window-all-closed', () => undefined)
+
+// The hidden PDF renderer fetches its document over this scheme, which must be declared before ready.
+registerDocumentScheme()
+
+/**
+ * A context-menu launch can arrive before the services that handle it exist, so the request waits
+ * here until the application has finished starting.
+ */
+let dispatchAnalyseRequest: ((request: AnalyseRequest) => void) | null = null
+let pendingAnalyseRequest: AnalyseRequest | null = parseAnalyseArguments(process.argv, { appPath: app.getAppPath() })
+
+function queueAnalyseRequest(request: AnalyseRequest): void {
+  if (dispatchAnalyseRequest) dispatchAnalyseRequest(request)
+  else pendingAnalyseRequest = request
+}
 
 if (!app.requestSingleInstanceLock()) app.quit()
 else void startApplication().catch((error) => {
@@ -109,6 +128,22 @@ async function startApplication(): Promise<void> {
   )
   const questions = new QuestionSessions(providers, screenshots, (destination) => capture.begin('region', destination), undefined, history, settings, imageEditor, ocr)
   services.questions = questions
+  const files = new FileAnalysisService(
+    screenshots,
+    (analysis) => questions.openFiles(analysis),
+    (message) => showSafeError(message, 'capture-failed'),
+    new PdfIngestionService()
+  )
+  const explorer = new ExplorerIntegration(
+    {
+      executablePath: process.execPath,
+      // A development run launches Electron against the project, which Explorer must repeat.
+      ...(app.isPackaged ? {} : { appPath: app.getAppPath() })
+    },
+    process.platform,
+    undefined,
+    () => settings.get().customPrompts.map(({ id, label }) => ({ id, label }))
+  )
 
   let tray: TrayController | null = null
   const onboarding = new OnboardingController(capture, screenshots, async () => {
@@ -129,15 +164,42 @@ async function startApplication(): Promise<void> {
   tray = new TrayController(async (mode) => capture.begin(mode), shortcuts, providers, settings)
   tray.initialise()
   providers.on('status', () => tray?.refreshStatus())
-  registerIpc({ providers, settings, screenshots, history, capture, onboarding, questions, shortcuts, appearance })
+  registerIpc({ providers, settings, screenshots, history, capture, onboarding, questions, shortcuts, appearance, explorer })
   capture.prewarm()
   app.setLoginItemSettings({ openAtLogin: settings.get().launchAtLogin, path: process.execPath })
+  // The executable path changes when Fovea is reinstalled, so an enabled entry is re-asserted.
+  if (settings.get().shellIntegrationEnabled) {
+    void explorer.enable().catch((error) => {
+      console.warn(`[shell] The Explorer context-menu entry could not be refreshed: ${redact(error instanceof Error ? error.message : String(error))}`)
+    })
+  }
+
+  const analyseSafely = (request: AnalyseRequest): void => {
+    // The prompt text is resolved here rather than carried on the command line, so a prompt that
+    // has since been edited or deleted simply falls back to an empty question.
+    const prompt = request.promptId
+      ? settings.get().customPrompts.find((item) => item.id === request.promptId)?.prompt
+      : undefined
+    void files.analyse(request.paths, request.dropped, request.action, prompt)
+      .catch((error) => showSafeError(error, 'capture-failed'))
+  }
+  dispatchAnalyseRequest = analyseSafely
+  if (pendingAnalyseRequest) {
+    const request = pendingAnalyseRequest
+    pendingAnalyseRequest = null
+    analyseSafely(request)
+  }
 
   try { await providers.initialise() }
   catch (error) { console.warn(`[provider] ChatGPT adapter unavailable: ${redact(error instanceof Error ? error.message : String(error))}`) }
   if (shouldShowOnboardingAtStartup(settings.get().onboardingStatus)) openSettingsSafely()
 
-  app.on('second-instance', openSettingsSafely)
+  app.on('second-instance', (_event, argv) => {
+    // A context-menu click on an already-running Fovea arrives here rather than as a new process.
+    const request = parseAnalyseArguments(argv, { appPath: app.getAppPath() })
+    if (request) queueAnalyseRequest(request)
+    else openSettingsSafely()
+  })
   app.on('activate', openSettingsSafely)
   let shuttingDown = false
   app.on('before-quit', (event) => {

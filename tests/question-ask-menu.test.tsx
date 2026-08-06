@@ -3,11 +3,78 @@
 import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { AskMenu, ModelMenu } from '../src/renderer/question-window/main'
+import { AskMenu, ModelMenu, suggestionsFor } from '../src/renderer/question-window/main'
 
 afterEach(cleanup)
 
+describe('question suggestions', () => {
+  it('opens the subject when nothing has been asked yet', () => {
+    // The model has never seen the file at this point, so an action-oriented follow-up would be
+    // guesswork; these have to make sense for whatever was right-clicked.
+    expect(suggestionsFor()).toEqual([
+      'What is this?',
+      'Describe what this shows.',
+      'Summarise any text in it.',
+      'What is worth noticing here?'
+    ])
+  })
+
+  it('prefers the follow-ups a reply named for itself', () => {
+    expect(suggestionsFor({
+      id: 'a',
+      question: 'q',
+      answer: 'a',
+      phase: 'completed',
+      segmentId: 's',
+      metadata: { category: 'general', summary: 's', suggestedQuestions: ['Who is in it?', 'Where was it taken?'] }
+    })).toEqual(['Who is in it?', 'Where was it taken?'])
+  })
+
+  it('falls back to follow-up wording once an answer exists without its own suggestions', () => {
+    const suggestions = suggestionsFor({ id: 'a', question: 'q', answer: 'a', phase: 'completed', segmentId: 's' })
+    expect(suggestions).toContain('What is the most useful next step based on this image?')
+    expect(suggestions).not.toContain('What is this?')
+  })
+})
+
 describe('response Ask menu', () => {
+  it('heads the list differently before anything has been asked', () => {
+    const { rerender } = render(
+      <AskMenu
+        busy={false}
+        customOpen={false}
+        customPrompts={[{ id: 'p', label: 'Summarise', prompt: 'Summarise this.' }]}
+        opening
+        preferWebSearch={false}
+        suggestions={['What is this?']}
+        text=""
+        onCustom={vi.fn()}
+        onSend={vi.fn(async () => undefined)}
+        onTextChange={vi.fn()}
+        onToggleWebSearch={vi.fn()}
+      />
+    )
+    expect(screen.getByText('Start with…')).toBeTruthy()
+    expect(screen.getByText('Your saved prompts')).toBeTruthy()
+
+    rerender(
+      <AskMenu
+        busy={false}
+        customOpen={false}
+        customPrompts={[{ id: 'p', label: 'Summarise', prompt: 'Summarise this.' }]}
+        preferWebSearch={false}
+        suggestions={['What next?']}
+        text=""
+        onCustom={vi.fn()}
+        onSend={vi.fn(async () => undefined)}
+        onTextChange={vi.fn()}
+        onToggleWebSearch={vi.fn()}
+      />
+    )
+    expect(screen.getByText('You could ask…')).toBeTruthy()
+    expect(screen.getByText('Saved prompts')).toBeTruthy()
+  })
+
   it('shows saved prompts and sends their stored prompt text', async () => {
     const user = userEvent.setup()
     const onSend = vi.fn(async () => undefined)

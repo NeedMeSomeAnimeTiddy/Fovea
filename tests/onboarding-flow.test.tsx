@@ -175,6 +175,7 @@ function makeState(patch: Partial<SettingsViewState> = {}): SettingsViewState {
     shortcuts: [{ action: 'region', accelerator: 'CommandOrControl+Alt+Shift+Space', registered: true }],
     customPrompts: [],
     launchAtLogin: false,
+    shellIntegration: { enabled: false, supported: true, registered: false },
     onboardingStatus: 'pending',
     history: { privateMode: false, retentionDays: 30, retainScreenshots: false },
     tempLocation: 'C:\\temp',

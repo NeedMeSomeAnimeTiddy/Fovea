@@ -22,7 +22,8 @@ export default defineConfig({
           settings: resolve('src/renderer/settings/index.html'),
           overlay: resolve('src/renderer/capture-overlay/index.html'),
           question: resolve('src/renderer/question-window/index.html'),
-          preview: resolve('src/renderer/image-preview/index.html')
+          preview: resolve('src/renderer/image-preview/index.html'),
+          'document-render': resolve('src/renderer/document-render/index.html')
         }
       }
     }

@@ -9,12 +9,17 @@ import type {
   ProfileAuthentication,
   ShortcutAction
 } from '@shared/types/app'
+import { MAX_CUSTOM_MODEL_IDS, normaliseBaseUrl } from '@shared/provider-endpoint'
 
 export interface StoredProviderProfile {
   id: string
   name: string
   provider: ProviderKind
   authentication: ProfileAuthentication
+  /** Required for `custom` profiles: the OpenAI-compatible API root. */
+  baseUrl?: string
+  /** Optional manual model list for endpoints that do not implement `GET /models`. */
+  modelIds?: string[]
   accountLabel?: string
   defaultModelId: string | null
   defaultReasoningEffort: string | null
@@ -30,6 +35,8 @@ export interface AppSettings {
   appearance: AppearancePreference
   onboardingStatus: OnboardingStatus
   launchAtLogin: boolean
+  /** Whether the "Analyse with Fovea" entry is registered in the Windows Explorer context menu. */
+  shellIntegrationEnabled: boolean
   shortcuts: ShortcutSettings
   profiles: StoredProviderProfile[]
   defaultProfileId: string | null
@@ -51,6 +58,7 @@ const DEFAULTS: AppSettings = {
   appearance: 'light',
   onboardingStatus: 'pending',
   launchAtLogin: false,
+  shellIntegrationEnabled: false,
   shortcuts: { ...DEFAULT_SHORTCUTS },
   profiles: [],
   defaultProfileId: null,
@@ -116,7 +124,7 @@ function sanitize(value: StoredSettingsInput): AppSettings {
     }
   }
   const profiles = Array.isArray(value.profiles)
-    ? value.profiles.filter(isStoredProfile).map((profile) => ({ ...profile }))
+    ? value.profiles.filter(isStoredProfile).map(sanitizeProfile)
     : []
   const defaultProfileId =
     typeof value.defaultProfileId === 'string' && profiles.some((profile) => profile.id === value.defaultProfileId)
@@ -144,6 +152,7 @@ function sanitize(value: StoredSettingsInput): AppSettings {
         ? 'completed'
         : 'pending',
     launchAtLogin: value.launchAtLogin === true,
+    shellIntegrationEnabled: value.shellIntegrationEnabled === true,
     shortcuts,
     profiles,
     defaultProfileId,
@@ -187,14 +196,34 @@ function isStoredCustomPrompt(value: unknown): value is CustomPrompt {
 function isStoredProfile(value: unknown): value is StoredProviderProfile {
   if (!value || typeof value !== 'object') return false
   const profile = value as Partial<StoredProviderProfile>
-  return Boolean(
+  if (!(
     typeof profile.id === 'string' &&
     profile.id.length <= 100 &&
     typeof profile.name === 'string' &&
     profile.name.length > 0 &&
-    ['chatgpt', 'openai', 'anthropic', 'openrouter'].includes(String(profile.provider)) &&
+    ['chatgpt', 'openai', 'anthropic', 'openrouter', 'custom'].includes(String(profile.provider)) &&
     ['chatgpt-oauth', 'api-key'].includes(String(profile.authentication))
-  )
+  )) return false
+  // A custom profile without a usable endpoint could never be reached, so it is dropped rather
+  // than kept in a state the rest of the app has to keep re-checking.
+  if (profile.provider === 'custom') {
+    if (typeof profile.baseUrl !== 'string') return false
+    try { normaliseBaseUrl(profile.baseUrl) } catch { return false }
+  }
+  return true
+}
+
+function sanitizeProfile(profile: StoredProviderProfile): StoredProviderProfile {
+  const clean: StoredProviderProfile = { ...profile }
+  if (clean.provider === 'custom' && clean.baseUrl) clean.baseUrl = normaliseBaseUrl(clean.baseUrl)
+  else delete clean.baseUrl
+  const modelIds = Array.isArray(clean.modelIds)
+    ? [...new Set(clean.modelIds.filter((id): id is string => typeof id === 'string' && id.trim().length > 0 && id.length <= 200))]
+        .slice(0, MAX_CUSTOM_MODEL_IDS)
+    : []
+  if (clean.provider === 'custom' && modelIds.length) clean.modelIds = modelIds
+  else delete clean.modelIds
+  return clean
 }
 
 function clone<T>(value: T): T {

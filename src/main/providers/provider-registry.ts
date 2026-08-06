@@ -6,6 +6,7 @@ import { createAppError, FoveaError } from '../errors/app-error'
 import type { CodexAppServerProvider } from './codex-app-server/codex-app-server-provider'
 import { DirectApiProvider } from './direct-api-provider'
 import type { ProfileManager } from './profile-manager'
+import type { StoredProviderProfile } from '../storage/settings-store'
 import type { CodexRuntimeManager } from '../runtime/codex-runtime-manager'
 
 export class ProviderRegistry extends EventEmitter {
@@ -13,6 +14,19 @@ export class ProviderRegistry extends EventEmitter {
     openai: new DirectApiProvider('openai'),
     anthropic: new DirectApiProvider('anthropic'),
     openrouter: new DirectApiProvider('openrouter')
+  }
+  /**
+   * Custom endpoints vary per profile, so their adapter is built from the stored profile rather
+   * than shared. Built-in providers keep their single long-lived instance.
+   */
+  private adapterFor(profile: StoredProviderProfile): DirectApiProvider {
+    if (profile.provider === 'chatgpt') throw new Error('ChatGPT profiles do not use a direct API adapter.')
+    if (profile.provider !== 'custom') return this.direct[profile.provider]
+    if (!profile.baseUrl) throw new Error('This profile has no API address configured.')
+    return new DirectApiProvider('custom', undefined, {
+      baseUrl: profile.baseUrl,
+      ...(profile.modelIds?.length ? { modelIds: profile.modelIds } : {})
+    })
   }
   private readonly controllers = new Map<string, AbortController>()
   private chatgptStatus: ProviderStatus | null = null
@@ -137,7 +151,7 @@ export class ProviderRegistry extends EventEmitter {
         .map((model) => ({ ...model, provider: 'chatgpt' }))
     } else {
       const secret = await this.profiles.getSecret(profile)
-      models = await this.direct[profile.provider].listModels(secret)
+      models = await this.adapterFor(profile).listModels(secret)
     }
     if (!models.length) {
       throw new FoveaError(createAppError('no-compatible-models', 'No compatible models', 'This profile does not currently offer an image-capable model.', 'choose-provider'))
@@ -176,7 +190,7 @@ export class ProviderRegistry extends EventEmitter {
     const controller = new AbortController()
     this.controllers.set(conversationId, controller)
     try {
-      yield* this.direct[selection.provider].send(secret, turn, controller.signal)
+      yield* this.adapterFor(profile).send(secret, turn, controller.signal)
     } finally {
       this.controllers.delete(conversationId)
     }
