@@ -46,7 +46,8 @@ export interface AppearanceState {
   resolved: ResolvedAppearance
 }
 
-export type ProviderKind = 'chatgpt' | 'openai' | 'anthropic' | 'openrouter'
+/** `custom` is any OpenAI-compatible endpoint the user points Fovea at, such as DeepSeek. */
+export type ProviderKind = 'chatgpt' | 'openai' | 'anthropic' | 'openrouter' | 'custom'
 export type ProfileAuthentication = 'chatgpt-oauth' | 'api-key'
 export type ProfileHealth = 'unknown' | 'checking' | 'available' | 'unavailable'
 
@@ -77,6 +78,8 @@ export interface ProviderProfileSummary {
   name: string
   provider: ProviderKind
   authentication: ProfileAuthentication
+  /** Present for `custom` profiles so the UI can show where requests are sent. */
+  baseUrl?: string
   authenticationState: 'signed-in' | 'signed-out' | 'error'
   accountLabel?: string
   defaultModelId: string | null

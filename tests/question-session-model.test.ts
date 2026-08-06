@@ -24,6 +24,7 @@ describe('typed question session snapshot', () => {
       pinned: false,
       historyId: 'history-1',
       createdAt: '2026-08-04T00:00:00.000Z',
+      documentContext: '',
       ocrContextByExchangeId: new Map()
     }
 

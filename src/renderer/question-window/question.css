@@ -718,6 +718,22 @@ body,
   background: var(--fovea-surface-sunken);
 }
 
+.empty-conversation {
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: var(--fovea-space-4);
+  min-height: 100%;
+  padding: var(--fovea-space-6);
+  text-align: center;
+}
+
+.empty-conversation p {
+  margin: 0;
+  color: var(--fovea-color-text-secondary);
+  font-size: var(--fovea-type-body-sm);
+}
+
 .answer-skeleton {
   display: grid;
   gap: var(--fovea-space-4);
