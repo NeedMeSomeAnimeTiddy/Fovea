@@ -1,10 +1,12 @@
-import { app, BrowserWindow, clipboard, ipcMain, shell, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, shell, type IpcMainEvent, type IpcMainInvokeEvent, type OpenDialogOptions } from 'electron'
 import { randomUUID } from 'node:crypto'
+import { readFile, rename, writeFile } from 'node:fs/promises'
 import { IPC, isWindowResizeEdge, type SettingsViewState } from '@shared/contracts/ipc'
-import type { AppearancePreference, CaptureMode, ConversationSelection, ImageEditOperation, OcrExternalActionKind, OnboardingStatus, ProviderKind, ShortcutAction } from '@shared/types/app'
+import type { AppearancePreference, CaptureMode, CaptureRecipe, ConversationExportOptions, ConversationSelection, ImageEditOperation, OcrExternalActionKind, OnboardingStatus, ProviderKind, ShortcutAction } from '@shared/types/app'
 import type { Rectangle } from '@shared/types/geometry'
 import type { AppErrorCode } from '@shared/types/app-error'
 import { toIpcResult } from '../errors/app-error'
+import { conversationExportPreview, exportConversation, type ConversationExportRecord } from '../export/conversation-export-service'
 import { ocrEntityExternalTarget } from '../external/ocr-entity-target'
 import type { AppearanceController } from '../appearance/appearance-controller'
 import type { CaptureService } from '../capture/capture-service'
@@ -22,7 +24,7 @@ export interface IpcDependencies { providers: ProviderRegistry; settings: Settin
 
 export function registerIpc(dependencies: IpcDependencies): void {
   ipcMain.on(IPC.appearanceGet, (event) => { event.returnValue = dependencies.appearance.getState() })
-  const buildSettingsState = (): SettingsViewState => ({ appearance: dependencies.appearance.getState(), profiles: dependencies.providers.listProfiles(), chatGptRuntime: dependencies.providers.getChatGptRuntimeStatus(), shortcuts: dependencies.shortcuts.getState(), customPrompts: dependencies.settings.get().customPrompts, launchAtLogin: dependencies.settings.get().launchAtLogin, onboardingStatus: dependencies.settings.get().onboardingStatus, history: dependencies.settings.get().history, ocrLanguageCode: dependencies.settings.get().ocrLanguageCode, tempLocation: dependencies.screenshots.directory, appVersion: app.getVersion() })
+  const buildSettingsState = (): SettingsViewState => ({ appearance: dependencies.appearance.getState(), profiles: dependencies.providers.listProfiles(), chatGptRuntime: dependencies.providers.getChatGptRuntimeStatus(), shortcuts: dependencies.shortcuts.getState(), recipeShortcuts: dependencies.shortcuts.getRecipeState(), customPrompts: dependencies.settings.get().customPrompts, recipes: dependencies.settings.get().recipes, launchAtLogin: dependencies.settings.get().launchAtLogin, onboardingStatus: dependencies.settings.get().onboardingStatus, history: dependencies.settings.get().history, ocrLanguageCode: dependencies.settings.get().ocrLanguageCode, tempLocation: dependencies.screenshots.directory, appVersion: app.getVersion() })
   const broadcastSettings = (): void => {
     const state = buildSettingsState()
     for (const window of BrowserWindow.getAllWindows()) {
@@ -67,6 +69,79 @@ export function registerIpc(dependencies: IpcDependencies): void {
     if (!settings.customPrompts.some((item) => item.id === promptId)) throw new Error('Custom prompt not found.')
     await dependencies.settings.update({ customPrompts: settings.customPrompts.filter((item) => item.id !== promptId) })
   }), 'validation')
+  handle(IPC.settingsSaveRecipe, (_event, value) => mutate(async () => {
+    const recipe = requireCaptureRecipe(value)
+    const current = dependencies.settings.get().recipes
+    const index = current.findIndex((item) => item.id === recipe.id)
+    if (index < 0 && current.length >= 50) throw new Error('Capture recipe limit reached.')
+    const previous = current[index]
+    const nextRecipe = previous && recipeMaterial(previous) !== recipeMaterial(recipe)
+      ? { ...recipe, autoSend: false, autoSendConsentVersion: 0 as const }
+      : recipe
+    const recipes = [...current]
+    if (index >= 0) recipes[index] = nextRecipe
+    else recipes.push(nextRecipe)
+    await dependencies.shortcuts.setRecipes(recipes)
+  }), 'validation')
+  handle(IPC.settingsDuplicateRecipe, (_event, value) => mutate(async () => {
+    const id = requireId(value)
+    const current = dependencies.settings.get().recipes
+    const recipe = current.find((item) => item.id === id)
+    if (!recipe) throw new Error('Capture recipe not found.')
+    if (current.length >= 50) throw new Error('Capture recipe limit reached.')
+    await dependencies.shortcuts.setRecipes([...current, {
+      ...structuredClone(recipe), id: randomUUID(), name: `${recipe.name} copy`.slice(0, 80), enabled: false,
+      shortcut: null, autoSend: false, autoSendConsentVersion: 0
+    }])
+  }), 'validation')
+  handle(IPC.settingsDeleteRecipe, (_event, value) => mutate(async () => {
+    const id = requireId(value)
+    const current = dependencies.settings.get().recipes
+    if (!current.some((item) => item.id === id)) throw new Error('Capture recipe not found.')
+    await dependencies.shortcuts.setRecipes(current.filter((item) => item.id !== id))
+  }), 'validation')
+  handle(IPC.settingsReorderRecipes, (_event, value) => mutate(async () => {
+    if (!Array.isArray(value) || !value.every((id) => typeof id === 'string')) throw new Error('Invalid recipe order.')
+    const current = dependencies.settings.get().recipes
+    if (value.length !== current.length || new Set(value).size !== current.length || value.some((id) => !current.some((item) => item.id === id))) throw new Error('Recipe order is incomplete.')
+    await dependencies.shortcuts.setRecipes(value.map((id) => current.find((item) => item.id === id)!))
+  }), 'validation')
+  handle(IPC.settingsExportRecipes, async (event) => {
+    const owner = BrowserWindow.fromWebContents(event.sender) ?? undefined
+    const options = {
+      title: 'Export capture recipes', defaultPath: 'fovea-capture-recipes.json',
+      filters: [{ name: 'Fovea capture recipes', extensions: ['json'] }]
+    }
+    const result = owner ? await dialog.showSaveDialog(owner, options) : await dialog.showSaveDialog(options)
+    if (result.canceled || !result.filePath) return false
+    const payload = {
+      schemaVersion: 1,
+      recipes: dependencies.settings.get().recipes.map((recipe) => ({ ...recipe, enabled: false, autoSend: false, autoSendConsentVersion: 0 }))
+    }
+    const temporary = `${result.filePath}.tmp`
+    await writeFile(temporary, JSON.stringify(payload, null, 2), { encoding: 'utf8', mode: 0o600 })
+    await rename(temporary, result.filePath)
+    return true
+  }, 'validation')
+  handle(IPC.settingsImportRecipes, async (event) => {
+    const owner = BrowserWindow.fromWebContents(event.sender) ?? undefined
+    const options: OpenDialogOptions = {
+      title: 'Import capture recipes', properties: ['openFile'],
+      filters: [{ name: 'Fovea capture recipes', extensions: ['json'] }]
+    }
+    const result = owner ? await dialog.showOpenDialog(owner, options) : await dialog.showOpenDialog(options)
+    if (result.canceled || !result.filePaths[0]) return 0
+    const parsed = JSON.parse(await readFile(result.filePaths[0], 'utf8')) as { schemaVersion?: unknown; recipes?: unknown }
+    if (parsed.schemaVersion !== 1 || !Array.isArray(parsed.recipes)) throw new Error('This is not a supported Fovea recipe export.')
+    const current = dependencies.settings.get().recipes
+    const available = Math.max(0, 50 - current.length)
+    const imported = parsed.recipes.slice(0, available).map((value) => ({
+      ...requireCaptureRecipe(value), id: randomUUID(), enabled: false, autoSend: false, autoSendConsentVersion: 0 as const
+    }))
+    await dependencies.shortcuts.setRecipes([...current, ...imported])
+    broadcastSettings()
+    return imported.length
+  }, 'validation')
   handle(IPC.settingsSetOnboardingStatus, (_event, status) => mutate(() => dependencies.settings.update({ onboardingStatus: requireOnboardingOutcome(status) })), 'validation')
   handle(IPC.settingsSetPrivateMode, (_event, enabled) => mutate(() => {
     if (typeof enabled !== 'boolean') throw new Error('Invalid private mode setting.')
@@ -156,6 +231,42 @@ export function registerIpc(dependencies: IpcDependencies): void {
     if (!Array.isArray(operations)) throw new Error('Invalid screenshot edits.')
     return dependencies.questions.applyAttachmentEdits(requireId(id), requireId(attachmentId), operations as ImageEditOperation[])
   }, 'validation')
+  handle(IPC.questionImportClipboardImage, (event, value) => {
+    const id = requireId(value)
+    if (!dependencies.questions.owns(id, event.sender.id)) throw new Error('Images can only be attached from their question window.')
+    const image = clipboard.readImage()
+    if (image.isEmpty()) throw new Error('The clipboard does not contain an image.')
+    return dependencies.questions.importClipboardImage(id, image.toPNG())
+  }, 'validation')
+  handle(IPC.questionPickImages, async (event, value) => {
+    const id = requireId(value)
+    if (!dependencies.questions.owns(id, event.sender.id)) throw new Error('Images can only be attached from their question window.')
+    const owner = BrowserWindow.fromWebContents(event.sender)
+    if (!owner) throw new Error('The question window is unavailable.')
+    const result = await dialog.showOpenDialog(owner, {
+      title: 'Attach images', properties: ['openFile', 'multiSelections'],
+      filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }]
+    })
+    if (result.canceled) return { added: 0, failures: [], cancelled: true }
+    return dependencies.questions.importImagePaths(id, result.filePaths)
+  }, 'validation')
+  handle(IPC.questionImportDroppedFiles, (event, value, rawPaths) => {
+    const id = requireId(value)
+    if (!dependencies.questions.owns(id, event.sender.id)) throw new Error('Images can only be attached from their question window.')
+    if (!Array.isArray(rawPaths) || rawPaths.length < 1 || rawPaths.length > 20 || !rawPaths.every((path) => typeof path === 'string' && path.length > 0 && path.length <= 32_767)) throw new Error('Drop local image files only.')
+    return dependencies.questions.importImagePaths(id, rawPaths)
+  }, 'validation')
+  handle(IPC.questionExportPreview, async (event, value) => {
+    const id = requireId(value)
+    if (!dependencies.questions.owns(id, event.sender.id)) throw new Error('A conversation can only be exported from its question window.')
+    return conversationExportPreview(await dependencies.questions.getExportRecord(id))
+  })
+  handle(IPC.questionExport, async (event, value, rawOptions) => {
+    const id = requireId(value)
+    if (!dependencies.questions.owns(id, event.sender.id)) throw new Error('A conversation can only be exported from its question window.')
+    const owner = BrowserWindow.fromWebContents(event.sender) ?? undefined
+    return exportConversation(owner, await dependencies.questions.getExportRecord(id), requireExportOptions(rawOptions))
+  }, 'validation')
   handle(IPC.questionSend, (_event, id, text, preferWebSearch = false) => {
     if (typeof preferWebSearch !== 'boolean') throw new Error('Invalid web-search preference.')
     return dependencies.questions.send(requireId(id), requireString(text, 10_000), preferWebSearch)
@@ -170,6 +281,16 @@ export function registerIpc(dependencies: IpcDependencies): void {
   handle(IPC.historyOpen, (_event, id) => dependencies.questions.openHistory(requireId(id)))
   handle(IPC.historyDelete, (_event, id) => dependencies.history.delete(requireId(id)))
   handle(IPC.historyClear, () => dependencies.history.clear())
+  handle(IPC.historyExportPreview, (_event, value) => {
+    const record = dependencies.history.get(requireId(value))
+    if (!record) throw new Error('That saved conversation no longer exists.')
+    return conversationExportPreview(historyExportRecord(record))
+  })
+  handle(IPC.historyExport, (event, value, rawOptions) => {
+    const record = dependencies.history.get(requireId(value))
+    if (!record) throw new Error('That saved conversation no longer exists.')
+    return exportConversation(BrowserWindow.fromWebContents(event.sender) ?? undefined, historyExportRecord(record), requireExportOptions(rawOptions))
+  }, 'validation')
   handle(IPC.applicationOpenSettings, () => showSettingsWindow())
   handle(IPC.clipboardWriteText, (_event, value) => {
     const text = requireString(value, 200_000)
@@ -204,6 +325,76 @@ function requireCaptureMode(value: unknown): CaptureMode { if (!['region', 'disp
 function requireOcrExternalActionKind(value: unknown): OcrExternalActionKind { if (!['url', 'email', 'phone'].includes(String(value))) throw new Error('Invalid OCR action.'); return value as OcrExternalActionKind }
 function requireOcrLanguagePreference(value: unknown): string { const code = requireString(value, 35); if (code && !/^[A-Za-z0-9-]{2,35}$/.test(code)) throw new Error('Invalid OCR language.'); return code }
 function requireApiProvider(value: unknown): Exclude<ProviderKind, 'chatgpt'> { if (!['openai', 'anthropic', 'openrouter'].includes(String(value))) throw new Error('Invalid API provider.'); return value as Exclude<ProviderKind, 'chatgpt'> }
-function requireSelection(value: unknown): ConversationSelection { if (!value || typeof value !== 'object') throw new Error('Invalid conversation selection.'); const item = value as Record<string, unknown>; return { profileId: requireId(item.profileId), provider: String(item.provider) as ProviderKind, modelId: requireString(item.modelId, 200), reasoningEffort: requireNullableString(item.reasoningEffort, 50) } }
+function requireSelection(value: unknown): ConversationSelection { if (!value || typeof value !== 'object') throw new Error('Invalid conversation selection.'); const item = value as Record<string, unknown>; const provider = String(item.provider); if (!['chatgpt', 'openai', 'anthropic', 'openrouter'].includes(provider)) throw new Error('Invalid provider selection.'); return { profileId: requireTrimmedString(item.profileId, 100), provider: provider as ProviderKind, modelId: requireTrimmedString(item.modelId, 200), reasoningEffort: requireNullableString(item.reasoningEffort, 50) } }
 function isRectangle(value: unknown): value is Rectangle { return Boolean(value && typeof value === 'object' && ['x','y','width','height'].every((key) => typeof (value as Record<string, unknown>)[key] === 'number' && Number.isFinite((value as Record<string, unknown>)[key]))) }
 function requireInteger(value: unknown, minimum: number, maximum: number): number { if (typeof value !== 'number' || !Number.isInteger(value) || value < minimum || value > maximum) throw new Error('Invalid number.'); return value }
+
+function requireCaptureRecipe(value: unknown): CaptureRecipe {
+  if (!value || typeof value !== 'object') throw new Error('Invalid capture recipe.')
+  const item = value as Record<string, unknown>
+  const providerValue = item.provider
+  if (!providerValue || typeof providerValue !== 'object') throw new Error('Invalid recipe provider.')
+  const providerItem = providerValue as Record<string, unknown>
+  const provider = providerItem.mode === 'current-default'
+    ? { mode: 'current-default' as const }
+    : providerItem.mode === 'fixed'
+      ? { mode: 'fixed' as const, selection: requireSelection(providerItem.selection) }
+      : (() => { throw new Error('Invalid recipe provider.') })()
+  const captureMode = requireCaptureMode(item.captureMode)
+  const shortcut = requireAccelerator(item.shortcut)
+  const extractText = item.extractText === true
+  const ocrLanguageCode = item.ocrLanguageCode === undefined
+    ? undefined
+    : requireOcrLanguagePreference(item.ocrLanguageCode)
+  if (!extractText && ocrLanguageCode) throw new Error('A recipe OCR language requires local text extraction.')
+  const autoSend = item.autoSend === true
+  const consent = item.autoSendConsentVersion === 1 ? 1 : 0
+  if (autoSend && consent !== 1) throw new Error('Auto-send requires explicit per-recipe consent.')
+  return {
+    id: requireTrimmedString(item.id, 100),
+    name: requireTrimmedString(item.name, 80),
+    enabled: item.enabled === true,
+    captureMode,
+    prompt: requireTrimmedString(item.prompt, 10_000),
+    preferWebSearch: item.preferWebSearch === true,
+    extractText,
+    ...(ocrLanguageCode ? { ocrLanguageCode } : {}),
+    provider,
+    shortcut,
+    autoSend,
+    autoSendConsentVersion: consent
+  }
+}
+
+function recipeMaterial(recipe: CaptureRecipe): string {
+  return JSON.stringify({
+    captureMode: recipe.captureMode,
+    prompt: recipe.prompt,
+    preferWebSearch: recipe.preferWebSearch,
+    extractText: recipe.extractText,
+    ocrLanguageCode: recipe.ocrLanguageCode ?? null,
+    provider: recipe.provider
+  })
+}
+
+function requireExportOptions(value: unknown): ConversationExportOptions {
+  if (!value || typeof value !== 'object') throw new Error('Invalid export options.')
+  const options = value as Record<string, unknown>
+  if (!['markdown', 'json'].includes(String(options.format))) throw new Error('Invalid export format.')
+  if (typeof options.includeScreenshots !== 'boolean' || typeof options.includeProviderMetadata !== 'boolean') throw new Error('Invalid export privacy options.')
+  return { format: options.format as ConversationExportOptions['format'], includeScreenshots: options.includeScreenshots, includeProviderMetadata: options.includeProviderMetadata }
+}
+
+function historyExportRecord(record: ReturnType<ConversationHistoryStore['get']> & {}): ConversationExportRecord {
+  if (!record) throw new Error('Conversation history is unavailable.')
+  return {
+    id: record.id,
+    title: record.title,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+    exchanges: structuredClone(record.exchanges),
+    segments: structuredClone(record.segments),
+    selection: record.selection ? structuredClone(record.selection) : null,
+    attachments: record.attachments.map((attachment) => ({ ...attachment, ocr: null }))
+  }
+}

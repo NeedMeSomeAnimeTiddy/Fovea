@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fovea.local/schemas/conversation-export-v1.json",
+  "title": "Fovea conversation export",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "exportedAt", "conversation"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "exportedAt": { "type": "string", "format": "date-time" },
+    "conversation": { "$ref": "#/$defs/conversation" }
+  },
+  "$defs": {
+    "selection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "modelId", "reasoningEffort"],
+      "properties": {
+        "provider": { "enum": ["chatgpt", "openai", "anthropic", "openrouter"] },
+        "modelId": { "type": "string" },
+        "reasoningEffort": { "type": ["string", "null"] }
+      }
+    },
+    "conversation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "createdAt", "updatedAt", "segments", "exchanges", "attachments"],
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "selection": { "$ref": "#/$defs/selection" },
+        "segments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "startedAt", "disclosure"],
+            "properties": {
+              "id": { "type": "string" },
+              "startedAt": { "type": "string", "format": "date-time" },
+              "disclosure": { "type": "string" },
+              "selection": { "$ref": "#/$defs/selection" }
+            }
+          }
+        },
+        "exchanges": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "question", "answer", "phase", "segmentId", "createdAt", "completedAt", "source", "automatic", "retryOf", "attachmentIds", "ocr", "webSearch", "error"],
+            "properties": {
+              "id": { "type": "string" },
+              "question": { "type": "string" },
+              "answer": { "type": "string" },
+              "phase": { "enum": ["preparing", "streaming", "completed", "failed", "stopped"] },
+              "segmentId": { "type": "string" },
+              "createdAt": { "type": ["string", "null"] },
+              "completedAt": { "type": ["string", "null"] },
+              "source": { "enum": ["ai", "ocr"] },
+              "automatic": { "type": "boolean" },
+              "retryOf": { "type": ["string", "null"] },
+              "attachmentIds": { "type": "array", "items": { "type": "string" } },
+              "ocr": { "type": ["object", "null"] },
+              "webSearch": { "type": ["object", "null"] },
+              "error": { "type": ["object", "null"] }
+            }
+          }
+        },
+        "attachments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "edited", "file", "ocr"],
+            "properties": {
+              "id": { "type": "string" },
+              "edited": { "type": "boolean" },
+              "file": { "type": ["string", "null"] },
+              "ocr": { "type": ["object", "null"] }
+            }
+          }
+        }
+      }
+    }
+  }
+}

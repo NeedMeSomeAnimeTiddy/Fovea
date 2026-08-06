@@ -25,6 +25,12 @@ describe('floating UI geometry contracts', () => {
     )
   })
 
+  it('reserves response-header space for export, pin, minimize, and close', () => {
+    expect(questionCss).toMatch(
+      /\.response-card__header\s*\{[^}]*padding:[^;]*calc\(\(var\(--fovea-control-target-compact\) \* 4\) \+ var\(--fovea-space-8\)\)/s
+    )
+  })
+
   it('keeps tooltips on one safely truncated line', () => {
     expect(componentsCss).toMatch(
       /\.fui-tooltip\s*\{[^}]*overflow:\s*hidden;[^}]*text-overflow:\s*ellipsis;[^}]*white-space:\s*nowrap;/s

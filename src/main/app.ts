@@ -122,9 +122,16 @@ async function startApplication(): Promise<void> {
     })
   }
   const captureSafely = (mode: Parameters<CaptureService['begin']>[0]): void => { void capture.begin(mode).catch((error) => showSafeError(error, 'capture-failed')) }
+  const runRecipeSafely = (recipeId: string): void => {
+    const recipe = settings.get().recipes.find((item) => item.id === recipeId && item.enabled)
+    if (!recipe) return
+    void capture.begin(recipe.captureMode, {
+      onCompleted: (completed) => questions.open(completed, recipe)
+    }).catch((error) => showSafeError(error, 'capture-failed'))
+  }
   const shortcuts = new ShortcutManager(globalShortcut, settings, {
     region: () => captureSafely('region'), display: () => captureSafely('display'), window: () => captureSafely('window'), 'repeat-last': () => captureSafely('repeat-last'), settings: openSettingsSafely
-  })
+  }, runRecipeSafely)
   shortcuts.initialise()
   tray = new TrayController(async (mode) => capture.begin(mode), shortcuts, providers, settings)
   tray.initialise()

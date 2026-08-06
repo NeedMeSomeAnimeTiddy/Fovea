@@ -41,6 +41,72 @@ export interface CustomPrompt {
   prompt: string
 }
 
+export type RecipeSelection =
+  | { mode: 'current-default' }
+  | { mode: 'fixed'; selection: ConversationSelection }
+
+export interface CaptureRecipe {
+  id: string
+  name: string
+  enabled: boolean
+  captureMode: CaptureMode
+  prompt: string
+  preferWebSearch: boolean
+  extractText: boolean
+  ocrLanguageCode?: string
+  provider: RecipeSelection
+  shortcut: string | null
+  autoSend: boolean
+  autoSendConsentVersion: 0 | 1
+}
+
+export interface RecipeShortcutBindingState {
+  recipeId: string
+  name: string
+  accelerator: string | null
+  registered: boolean
+  error?: string
+  conflictOwner?: string
+}
+
+export interface QuestionDraft {
+  text: string
+  preferWebSearch: boolean
+  recipeName?: string
+  captureMode?: CaptureMode
+  extractText?: boolean
+  ocrLanguageCode?: string
+  autoSend: boolean
+}
+
+export interface ImageImportFailure {
+  name: string
+  message: string
+}
+
+export interface ImageImportResult {
+  added: number
+  failures: ImageImportFailure[]
+  cancelled: boolean
+}
+
+export type ConversationExportFormat = 'markdown' | 'json'
+
+export interface ConversationExportOptions {
+  format: ConversationExportFormat
+  includeScreenshots: boolean
+  includeProviderMetadata: boolean
+}
+
+export interface ConversationExportPreview {
+  title: string
+  messageCount: number
+  screenshotCount: number
+  ocrCharacterCount: number
+  providerTransitionCount: number
+  excerpt: string
+}
+
 export interface AppearanceState {
   preference: AppearancePreference
   resolved: ResolvedAppearance
@@ -241,6 +307,8 @@ export interface ConversationExchange {
   answer: string
   phase: ResponsePhase
   segmentId: string
+  createdAt?: string
+  completedAt?: string
   source?: 'ai' | 'ocr'
   ocr?: {
     confidence: number

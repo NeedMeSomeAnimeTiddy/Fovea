@@ -10,6 +10,7 @@ import { DirectApiProvider } from '../src/main/providers/direct-api-provider'
 import { CodexAppServerProvider } from '../src/main/providers/codex-app-server/codex-app-server-provider'
 import { parseSse } from '../src/main/providers/sse'
 import { acceleratorFromKeyInput, isCompleteAccelerator } from '../src/shared/shortcut-accelerator'
+import type { CaptureRecipe } from '../src/shared/types/app'
 
 class FakeCryptography implements SecretCryptography {
   reEncrypt = false
@@ -210,5 +211,37 @@ describe('independent shortcut registration', () => {
     await manager.reset()
     expect(active).toEqual(new Set(['CommandOrControl+Alt+Shift+Space']))
     expect(settings.get().shortcuts).toEqual({ region: 'CommandOrControl+Alt+Shift+Space', display: null, window: null, 'repeat-last': null, settings: null })
+  })
+
+  it('registers enabled recipe shortcuts and rejects conflicts atomically', async () => {
+    const { settings } = await stores()
+    const callbacks = new Map<string, () => void>()
+    const registrar: ShortcutRegistrar = {
+      register: vi.fn((accelerator, callback) => {
+        if (callbacks.has(accelerator)) return false
+        callbacks.set(accelerator, callback)
+        return true
+      }),
+      unregister: vi.fn((accelerator) => { callbacks.delete(accelerator) })
+    }
+    const handler = (): void => undefined
+    const runRecipe = vi.fn()
+    const manager = new ShortcutManager(registrar, settings, { region: handler, display: handler, window: handler, 'repeat-last': handler, settings: handler }, runRecipe)
+    manager.initialise()
+    const recipe: CaptureRecipe = {
+      id: 'review', name: 'Review', enabled: true, captureMode: 'region', prompt: 'Review this.',
+      preferWebSearch: false, extractText: false, provider: { mode: 'current-default' },
+      shortcut: 'Ctrl+Alt+1', autoSend: false, autoSendConsentVersion: 0
+    }
+
+    await manager.setRecipes([recipe])
+    expect(manager.getRecipeState()).toEqual([expect.objectContaining({ recipeId: 'review', registered: true })])
+    callbacks.get('Ctrl+Alt+1')?.()
+    expect(runRecipe).toHaveBeenCalledWith('review')
+
+    const conflicting = { ...recipe, shortcut: 'CommandOrControl+Alt+Shift+Space' }
+    await expect(manager.setRecipes([conflicting])).rejects.toThrow(/region capture/i)
+    expect(settings.get().recipes[0]?.shortcut).toBe('Ctrl+Alt+1')
+    expect(callbacks.has('Ctrl+Alt+1')).toBe(true)
   })
 })

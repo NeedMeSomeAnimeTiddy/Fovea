@@ -4,6 +4,7 @@ import type {
   ConversationExchange,
   ConversationSegment,
   ConversationSelection,
+  QuestionDraft,
   ProviderModelCapability,
   ProviderProfileSummary,
   ResponsePhase
@@ -35,6 +36,8 @@ export interface QuestionSessionState {
   historyId: string
   createdAt: string
   ocrContextByExchangeId: Map<string, string>
+  draft: QuestionDraft | null
+  launchError: string | null
 }
 
 export function questionSessionSnapshot(
@@ -59,6 +62,8 @@ export function questionSessionSnapshot(
     models: structuredClone(session.models),
     disclosure: session.disclosure,
     busy: session.busy,
-    pinned: session.pinned
+    pinned: session.pinned,
+    draft: session.draft ? structuredClone(session.draft) : null,
+    launchError: session.launchError
   }
 }

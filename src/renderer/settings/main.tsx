@@ -2,7 +2,7 @@ import { StrictMode, useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import type { SettingsViewState } from '@shared/contracts/ipc'
 import { acceleratorFromKeyInput } from '../../shared/shortcut-accelerator'
-import type { ConversationHistorySummary, CustomPrompt, ProviderKind, ProviderModelCapability, ShortcutAction, SpectralEdgeState } from '@shared/types/app'
+import type { CaptureRecipe, ConversationExportOptions, ConversationExportPreview, ConversationHistorySummary, CustomPrompt, ProviderKind, ProviderModelCapability, ShortcutAction, SpectralEdgeState } from '@shared/types/app'
 import type { AppError, AppRecoveryKind } from '@shared/types/app-error'
 import {
   Badge,
@@ -23,15 +23,17 @@ import { initialiseAppearance } from '../appearance'
 import { AppStatusNotice, appErrorFromUnknown } from '../status/status-presentation'
 import { WindowFrame } from '../window-chrome/WindowFrame'
 import { OnboardingFlow } from './OnboardingFlow'
+import { ConversationExportDialog } from '../export/ConversationExportDialog'
 import '../design-system/index.css'
 import './settings.css'
 
-const CATEGORIES = ['Account', 'Models', 'Prompts', 'Capture', 'Appearance', 'History', 'Privacy', 'About'] as const
+const CATEGORIES = ['Account', 'Models', 'Prompts', 'Recipes', 'Capture', 'Appearance', 'History', 'Privacy', 'About'] as const
 type Category = typeof CATEGORIES[number]
 const CATEGORY_DETAILS: Record<Category, string> = {
   Account: 'Connect and manage the AI services you trust.',
   Models: 'Choose the visual model used by each profile.',
   Prompts: 'Keep your most useful follow-up questions close.',
+  Recipes: 'Combine capture, prompt, provider, and privacy choices into repeatable workflows.',
   Capture: 'Set shortcuts, local OCR languages, and how Fovea starts.',
   Appearance: 'Make Fovea feel at home on this PC.',
   History: 'Search and reopen conversations stored on this PC.',
@@ -54,6 +56,7 @@ function SettingsApp(): React.JSX.Element {
   const [historyQuery, setHistoryQuery] = useState('')
   const [historyItems, setHistoryItems] = useState<ConversationHistorySummary[]>([])
   const [historyRefresh, setHistoryRefresh] = useState(0)
+  const [historyExport, setHistoryExport] = useState<{ id: string; preview: ConversationExportPreview } | null>(null)
 
   useEffect(() => { void initialiseAppearance(); void window.fovea.settings.get().then(setState).catch((reason) => setError(appErrorFromUnknown(reason))); return window.fovea.settings.onChanged(setState) }, [])
   useEffect(() => {
@@ -66,7 +69,7 @@ function SettingsApp(): React.JSX.Element {
     }, 120)
     return () => { active = false; clearTimeout(timer) }
   }, [category, historyQuery, historyRefresh])
-  const run = async (operation: () => Promise<unknown>, success = '', label = 'Saving changes…', edgeState: SpectralEdgeState = 'thinking'): Promise<void> => { setWorking(true); setActivity({ label, edgeState }); setError(null); setNotice(''); try { await operation(); setState(await window.fovea.settings.get()); if (success) setNotice(success) } catch (reason) { setError(appErrorFromUnknown(reason)) } finally { setWorking(false); setActivity(null) } }
+  const run = async (operation: () => Promise<unknown>, success = '', label = 'Saving changes…', edgeState: SpectralEdgeState = 'thinking'): Promise<boolean> => { setWorking(true); setActivity({ label, edgeState }); setError(null); setNotice(''); try { const result = await operation(); setState(await window.fovea.settings.get()); if (success && result !== false && result !== 0) setNotice(success); return true } catch (reason) { setError(appErrorFromUnknown(reason)); return false } finally { setWorking(false); setActivity(null) } }
   const recover = (recovery: AppRecoveryKind): void => {
     if (recovery === 'authenticate' || recovery === 'choose-provider' || recovery === 'open-settings') setCategory('Account')
     if (recovery === 'retry') { setError(null); void window.fovea.settings.get().then(setState).catch((reason) => setError(appErrorFromUnknown(reason))) }
@@ -112,6 +115,31 @@ function SettingsApp(): React.JSX.Element {
   const exitOnboarding = (): void => {
     setTourOpen(false)
     setCategory('Account')
+  }
+  const openHistoryExport = async (id: string): Promise<void> => {
+    setError(null)
+    try { setHistoryExport({ id, preview: await window.fovea.history.exportPreview(id) }) }
+    catch (reason) { setError(appErrorFromUnknown(reason)) }
+  }
+  const exportHistory = async (options: ConversationExportOptions): Promise<void> => {
+    if (!historyExport) return
+    const id = historyExport.id
+    setWorking(true)
+    setActivity({ label: 'Exporting conversation…', edgeState: 'thinking' })
+    setError(null)
+    setNotice('')
+    try {
+      const exported = await window.fovea.history.exportConversation(id, options)
+      if (exported) {
+        setHistoryExport(null)
+        setNotice('Conversation exported.')
+      }
+    } catch (reason) {
+      setError(appErrorFromUnknown(reason))
+    } finally {
+      setWorking(false)
+      setActivity(null)
+    }
   }
 
   return <WindowFrame title={onboardingOpen ? 'Welcome to Fovea' : 'Settings'} edgeState={edgeState} showTitlebar={false} showResizeRegions={false}>
@@ -271,9 +299,10 @@ function SettingsApp(): React.JSX.Element {
       </>}
       {category === 'Models' && <Card as="section" className="settings-section"><h2>Profile defaults</h2>{state.profiles.length === 0 && <StatusBanner title="No provider profiles" tone="warning">Add a provider from the Account page before choosing a model.</StatusBanner>}{state.profiles.map((profile) => { const available = models[profile.id] ?? []; return <div className="model-row" key={profile.id}><div><strong>{profile.name}</strong><small>Only confirmed image-capable models are offered.</small></div><Select label="Default model" value={profile.defaultModelId ?? ''} onFocus={() => { if (!models[profile.id]) void window.fovea.profiles.models(profile.id).then((items) => setModels((current) => ({ ...current, [profile.id]: items }))).catch((reason) => setError(appErrorFromUnknown(reason))) }} onChange={(event) => void run(() => window.fovea.profiles.setDefaults(profile.id, event.target.value || null, null), '', 'Saving model…')}><option value="">Choose automatically</option>{available.map((model) => <option key={model.id} value={model.id}>{model.displayName}</option>)}</Select></div> })}</Card>}
       {category === 'Prompts' && <CustomPromptsSettings prompts={state.customPrompts} working={working} onSave={(id, label, prompt) => run(() => window.fovea.settings.saveCustomPrompt(id, label, prompt), id ? 'Prompt updated.' : 'Prompt added.')} onDelete={(id) => run(() => window.fovea.settings.deleteCustomPrompt(id), 'Prompt deleted.')} />}
+      {category === 'Recipes' && <RecipeSettings state={state} working={working} onRun={run} />}
       {category === 'Capture' && <><Card as="section" className="settings-section"><h2>Global shortcuts</h2><p className="muted">Click a shortcut then press a key combination. Suggested: Display +D, Window +W, Settings +S, Repeat +R.</p>{state.shortcuts.map((shortcut) => <ShortcutRecorder key={shortcut.action} action={shortcut.action} value={shortcut.accelerator} error={shortcut.error} onSave={(value) => run(() => window.fovea.settings.setShortcut(shortcut.action, value))} />)}<Button variant="secondary" onClick={() => void run(() => window.fovea.settings.resetShortcuts())}>Reset shortcuts</Button></Card><OcrLanguageSettings working={working} onOpen={() => void run(() => window.fovea.settings.openOcrLanguages(), 'Windows language settings opened.')} /><Card as="section" className="settings-section"><Switch label="Launch Fovea when Windows starts" checked={state.launchAtLogin} onChange={(event) => void run(() => window.fovea.settings.setLaunchAtLogin(event.target.checked))} /></Card></>}
       {category === 'Appearance' && <Card as="section" className="settings-section"><h2>Colour mode</h2><div className="appearance-options">{(['light','dark','system'] as const).map((item) => <button className={state.appearance.preference === item ? 'selected' : ''} key={item} onClick={() => void run(() => window.fovea.settings.setAppearance(item))}><span className={`theme-preview ${item}`} />{item[0]!.toUpperCase()+item.slice(1)}</button>)}</div><p className="muted">System follows the Windows app theme. Reduced-motion preferences are respected automatically.</p></Card>}
-      {category === 'History' && <HistorySettings items={historyItems} query={historyQuery} working={working} onQuery={setHistoryQuery} onRefresh={() => setHistoryRefresh((value) => value + 1)} onRun={run} />}
+      {category === 'History' && <HistorySettings items={historyItems} query={historyQuery} working={working} onQuery={setHistoryQuery} onRefresh={() => setHistoryRefresh((value) => value + 1)} onRun={run} onExport={(id) => void openHistoryExport(id)} />}
       {category === 'Privacy' && <>
         <Card as="section" className="settings-section">
           <h2>Conversation history</h2>
@@ -293,6 +322,7 @@ function SettingsApp(): React.JSX.Element {
       {category === 'About' && <AboutSettings appVersion={state.appVersion} onOpenTour={() => setTourOpen(true)} />}
     </section>
   </main>}
+    {historyExport && <ConversationExportDialog preview={historyExport.preview} busy={working} onCancel={() => setHistoryExport(null)} onExport={exportHistory} />}
   </WindowFrame>
 }
 
@@ -302,7 +332,7 @@ interface ProviderProfileRowProps {
     success?: string,
     label?: string,
     edgeState?: SpectralEdgeState
-  ): Promise<void>
+  ): Promise<boolean>
   onTest(profileId: string): Promise<void>
   profile: SettingsViewState['profiles'][number]
   working: boolean
@@ -513,8 +543,8 @@ export function CustomPromptsSettings({
 }: {
   prompts: CustomPrompt[]
   working: boolean
-  onSave(id: string | null, label: string, prompt: string): Promise<void>
-  onDelete(id: string): Promise<void>
+  onSave(id: string | null, label: string, prompt: string): Promise<unknown>
+  onDelete(id: string): Promise<unknown>
 }): React.JSX.Element {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [label, setLabel] = useState('')
@@ -532,8 +562,7 @@ export function CustomPromptsSettings({
   }
   const save = async (): Promise<void> => {
     if (!label.trim() || !prompt.trim()) return
-    await onSave(editingId, label, prompt)
-    reset()
+    if (await onSave(editingId, label, prompt) !== false) reset()
   }
 
   return <>
@@ -559,18 +588,157 @@ export function CustomPromptsSettings({
   </>
 }
 
-function ShortcutRecorder({ action, value, error, onSave }: { action: ShortcutAction; value: string | null; error?: string; onSave(value: string | null): Promise<void> }): React.JSX.Element {
+const RECIPE_PROMPT_STARTERS = [
+  { label: 'Analyse this capture', prompt: 'Analyse this capture' },
+  { label: 'Troubleshoot an error', prompt: 'Explain the visible error, identify the most likely cause, and give me the safest next steps.' },
+  { label: 'Summarise', prompt: 'Summarise the important information in this capture.' },
+  { label: 'Review the interface', prompt: 'Review this interface and point out anything confusing, incorrect, or worth improving.' }
+]
+
+function RecipeSettings({
+  state,
+  working,
+  onRun
+}: {
+  state: SettingsViewState
+  working: boolean
+  onRun(operation: () => Promise<unknown>, success?: string, label?: string, edgeState?: SpectralEdgeState): Promise<boolean>
+}): React.JSX.Element {
+  const [draft, setDraft] = useState<CaptureRecipe | null>(null)
+  const [availableModels, setAvailableModels] = useState<ProviderModelCapability[]>([])
+  const fixedSelection = draft?.provider.mode === 'fixed' ? draft.provider.selection : null
+  const fixedModel = fixedSelection ? availableModels.find((model) => model.id === fixedSelection.modelId) : undefined
+  const shortcutState = (id: string) => state.recipeShortcuts.find((item) => item.recipeId === id)
+  const begin = (recipe?: CaptureRecipe): void => {
+    const next = recipe ? structuredClone(recipe) : newRecipe()
+    setDraft(next)
+    if (next.provider.mode === 'fixed') void loadModels(next.provider.selection.profileId)
+    else setAvailableModels([])
+  }
+  const loadModels = async (profileId: string): Promise<void> => {
+    try { setAvailableModels(await window.fovea.profiles.models(profileId)) }
+    catch { setAvailableModels([]) }
+  }
+  const chooseFixedProfile = (profileId: string): void => {
+    const profile = state.profiles.find((item) => item.id === profileId)
+    if (!profile || !draft) return
+    void loadModels(profileId)
+    setDraft({
+      ...draft,
+      provider: {
+        mode: 'fixed',
+        selection: {
+          profileId,
+          provider: profile.provider,
+          modelId: profile.defaultModelId ?? '',
+          reasoningEffort: profile.defaultReasoningEffort
+        }
+      }
+    })
+  }
+  const save = async (): Promise<void> => {
+    if (!draft?.name.trim() || !draft.prompt.trim()) return
+    if (draft.provider.mode === 'fixed' && !draft.provider.selection.modelId) return
+    if (await onRun(() => window.fovea.settings.saveRecipe(draft), draft.autoSend ? 'Recipe saved with auto-send consent.' : 'Recipe saved.')) setDraft(null)
+  }
+  const setAutoSend = (enabled: boolean): void => {
+    if (!draft) return
+    if (enabled && !window.confirm('Auto-send uploads the captured image, selected OCR text, and prompt to this recipe’s chosen provider immediately after capture. Enable it for this recipe?')) return
+    setDraft({ ...draft, autoSend: enabled, autoSendConsentVersion: enabled ? 1 : 0 })
+  }
+  const move = (index: number, offset: number): void => {
+    const target = index + offset
+    if (target < 0 || target >= state.recipes.length) return
+    const ids = state.recipes.map((item) => item.id)
+    const [id] = ids.splice(index, 1)
+    ids.splice(target, 0, id!)
+    void onRun(() => window.fovea.settings.reorderRecipes(ids), 'Recipe order updated.')
+  }
+
+  return <>
+    <Card as="section" className="settings-section">
+      <div className="history-section__heading"><h2>Capture recipes</h2><Button disabled={working || state.recipes.length >= 50} size="compact" onClick={() => begin()}>New recipe</Button></div>
+      <p className="muted">Recipes open a fully reviewable draft. Auto-send is optional, recipe-specific, and revoked after material changes.</p>
+      {state.recipes.length === 0
+        ? <p className="muted">No capture recipes yet.</p>
+        : <div className="prompt-list">{state.recipes.map((recipe, index) => {
+            const binding = shortcutState(recipe.id)
+            return <div className="prompt-row" key={recipe.id}>
+              <div><strong>{recipe.name}</strong><small>{captureModeLabel(recipe.captureMode)} · {recipe.shortcut ?? 'No shortcut'} · {recipe.enabled ? binding?.registered ? 'active' : binding?.error ?? 'enabled' : 'disabled'}{recipe.autoSend ? ' · auto-send' : ''}</small></div>
+              <div className="prompt-row__actions">
+                <Button disabled={working || index === 0} size="compact" variant="ghost" onClick={() => move(index, -1)}>Up</Button>
+                <Button disabled={working || index === state.recipes.length - 1} size="compact" variant="ghost" onClick={() => move(index, 1)}>Down</Button>
+                <Button disabled={working} size="compact" variant="secondary" onClick={() => begin(recipe)}>Edit</Button>
+                <Button disabled={working} size="compact" variant="secondary" onClick={() => void onRun(() => window.fovea.settings.duplicateRecipe(recipe.id), 'Recipe duplicated.')}>Duplicate</Button>
+                <Button disabled={working} size="compact" variant={recipe.enabled ? 'ghost' : 'secondary'} onClick={() => void onRun(() => window.fovea.settings.saveRecipe({ ...recipe, enabled: !recipe.enabled }), recipe.enabled ? 'Recipe disabled.' : 'Recipe enabled.')}>{recipe.enabled ? 'Disable' : 'Enable'}</Button>
+                <Button disabled={working} size="compact" variant="danger" onClick={() => void onRun(() => window.fovea.settings.deleteRecipe(recipe.id), 'Recipe deleted.')}>Delete</Button>
+              </div>
+            </div>
+          })}</div>}
+      <div className="prompt-form__actions">
+        <Button disabled={working || state.recipes.length === 0} variant="secondary" onClick={() => void onRun(() => window.fovea.settings.exportRecipes(), 'Recipes exported.')}>Export</Button>
+        <Button disabled={working || state.recipes.length >= 50} variant="secondary" onClick={() => void onRun(() => window.fovea.settings.importRecipes(), 'Recipes imported disabled for review.')}>Import</Button>
+      </div>
+    </Card>
+    {draft && <Card as="section" className="settings-section">
+      <h2>{state.recipes.some((item) => item.id === draft.id) ? 'Edit recipe' : 'New recipe'}</h2>
+      <div className="prompt-form">
+        <TextInput label="Name" maxLength={80} value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
+        <Select label="Capture mode" value={draft.captureMode} onChange={(event) => setDraft({ ...draft, captureMode: event.target.value as CaptureRecipe['captureMode'] })}>
+          <option value="region">Region</option><option value="display">Current display</option><option value="window">Focused window</option><option value="repeat-last">Repeat last capture</option>
+        </Select>
+        <Select label="Prompt starter" value="" onChange={(event) => { const prompt = [...RECIPE_PROMPT_STARTERS, ...state.customPrompts].find((item) => item.label === event.target.value)?.prompt; if (prompt) setDraft({ ...draft, prompt }) }}>
+          <option value="">Choose a built-in or saved prompt…</option>
+          {RECIPE_PROMPT_STARTERS.map((item) => <option key={`built-in:${item.label}`} value={item.label}>{item.label}</option>)}
+          {state.customPrompts.map((item) => <option key={item.id} value={item.label}>{item.label}</option>)}
+        </Select>
+        <TextArea label="Prompt" maxLength={10_000} rows={4} value={draft.prompt} onChange={(event) => setDraft({ ...draft, prompt: event.target.value })} />
+        <Select label="Provider and model" value={draft.provider.mode === 'current-default' ? '' : draft.provider.selection.profileId} onChange={(event) => event.target.value ? chooseFixedProfile(event.target.value) : setDraft({ ...draft, provider: { mode: 'current-default' } })}>
+          <option value="">Use current default when run</option>{state.profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}
+        </Select>
+        {draft.provider.mode === 'fixed' && <Select label="Model" value={draft.provider.selection.modelId} onChange={(event) => setDraft({ ...draft, provider: { mode: 'fixed', selection: { ...(draft.provider as Extract<CaptureRecipe['provider'], { mode: 'fixed' }>).selection, modelId: event.target.value, reasoningEffort: availableModels.find((item) => item.id === event.target.value)?.defaultReasoningEffort ?? null } } })}>
+          <option value="">Choose model…</option>{availableModels.map((model) => <option key={model.id} value={model.id}>{model.displayName}</option>)}
+        </Select>}
+        {draft.provider.mode === 'fixed' && fixedSelection && fixedModel && fixedModel.supportedReasoningEfforts.length > 0 && <Select label="Thinking effort" value={fixedSelection.reasoningEffort ?? ''} onChange={(event) => setDraft({ ...draft, provider: { mode: 'fixed', selection: { ...fixedSelection, reasoningEffort: event.target.value || null } } })}>
+          <option value="">Default</option>{fixedModel.supportedReasoningEfforts.map((effort) => <option key={effort} value={effort}>{effort}</option>)}
+        </Select>}
+        <RecipeShortcutRecorder value={draft.shortcut} onChange={(shortcut) => setDraft({ ...draft, shortcut })} />
+        <Switch label="Run local OCR and include selected text with the request" checked={draft.extractText} onChange={(event) => setDraft({ ...draft, extractText: event.target.checked, ...(event.target.checked ? {} : { ocrLanguageCode: undefined }) })} />
+        {draft.extractText && <TextInput label="OCR language code (optional)" maxLength={35} placeholder="Automatic" value={draft.ocrLanguageCode ?? ''} onChange={(event) => setDraft({ ...draft, ocrLanguageCode: event.target.value || undefined })} />}
+        <Switch label="Prefer web search for this request" checked={draft.preferWebSearch} onChange={(event) => setDraft({ ...draft, preferWebSearch: event.target.checked })} />
+        <Switch label="Auto-send after capture" checked={draft.autoSend} onChange={(event) => setAutoSend(event.target.checked)} />
+        <Switch label="Recipe enabled" checked={draft.enabled} onChange={(event) => setDraft({ ...draft, enabled: event.target.checked })} />
+        <div className="prompt-form__actions"><Button variant="secondary" onClick={() => setDraft(null)}>Cancel</Button><Button disabled={working || !draft.name.trim() || !draft.prompt.trim() || (draft.provider.mode === 'fixed' && !draft.provider.selection.modelId)} onClick={() => void save()}>Save recipe</Button></div>
+      </div>
+    </Card>}
+  </>
+}
+
+function RecipeShortcutRecorder({ value, onChange }: { value: string | null; onChange(value: string | null): void }): React.JSX.Element {
+  const [recording, setRecording] = useState(false)
+  return <div className="shortcut-row"><div><strong>Global shortcut</strong><small>Optional; built-in shortcuts keep priority.</small></div><button className={recording ? 'shortcut-input recording' : 'shortcut-input'} onClick={() => setRecording(true)} onBlur={() => setRecording(false)} onKeyDown={(event) => { if (!recording) return; event.preventDefault(); if (event.key === 'Escape') { setRecording(false); return } if (event.key === 'Backspace' || event.key === 'Delete') { onChange(null); setRecording(false); return } const accelerator = acceleratorFromKeyInput(event); if (!accelerator) return; onChange(accelerator); setRecording(false) }}>{recording ? 'Press shortcut…' : value ?? 'Unassigned'}</button></div>
+}
+
+function newRecipe(): CaptureRecipe {
+  return { id: crypto.randomUUID(), name: '', enabled: true, captureMode: 'region', prompt: 'Analyse this capture', preferWebSearch: false, extractText: false, provider: { mode: 'current-default' }, shortcut: null, autoSend: false, autoSendConsentVersion: 0 }
+}
+
+function captureModeLabel(mode: CaptureRecipe['captureMode']): string {
+  return ({ region: 'Region', display: 'Current display', window: 'Focused window', 'repeat-last': 'Repeat last' })[mode]
+}
+
+function ShortcutRecorder({ action, value, error, onSave }: { action: ShortcutAction; value: string | null; error?: string; onSave(value: string | null): Promise<unknown> }): React.JSX.Element {
   const [recording, setRecording] = useState(false)
   return <div className="shortcut-row"><div><strong>{actionLabel(action)}</strong>{error && <small className="error-text">{error}</small>}</div><button className={recording ? 'shortcut-input recording' : 'shortcut-input'} onClick={() => setRecording(true)} onBlur={() => setRecording(false)} onKeyDown={(event) => { if (!recording) return; event.preventDefault(); if (event.key === 'Escape') { setRecording(false); return } if (event.key === 'Backspace' || event.key === 'Delete') { void onSave(null); setRecording(false); return } const accelerator = acceleratorFromKeyInput(event); if (!accelerator) return; void onSave(accelerator); setRecording(false) }}>{recording ? 'Press shortcut…' : value ?? 'Unassigned'}</button></div>
 }
 function actionLabel(action: ShortcutAction): string { return ({ region: 'Region capture', display: 'Current display', window: 'Focused window', 'repeat-last': 'Repeat last', settings: 'Open Settings' })[action] }
-function HistorySettings({ items, query, working, onQuery, onRefresh, onRun }: { items: ConversationHistorySummary[]; query: string; working: boolean; onQuery(value: string): void; onRefresh(): void; onRun(operation: () => Promise<unknown>, success?: string, label?: string, edgeState?: SpectralEdgeState): Promise<void> }): React.JSX.Element {
+function HistorySettings({ items, query, working, onQuery, onRefresh, onRun, onExport }: { items: ConversationHistorySummary[]; query: string; working: boolean; onQuery(value: string): void; onRefresh(): void; onRun(operation: () => Promise<unknown>, success?: string, label?: string, edgeState?: SpectralEdgeState): Promise<boolean>; onExport(id: string): void }): React.JSX.Element {
   return <Card as="section" className="settings-section history-section">
     <div className="history-section__heading"><h2>Saved conversations</h2><Button size="compact" variant="ghost" onClick={onRefresh}>Refresh</Button></div>
     <TextInput label="Search history" placeholder="Search questions and answers" value={query} onChange={(event) => onQuery(event.target.value)} />
     {items.length === 0
       ? <p className="muted">{query ? 'No saved conversations match this search.' : 'No conversations have been saved yet.'}</p>
-      : <div className="history-list">{items.map((item) => <div className="history-row" key={item.id}><div><strong>{item.title}</strong><small>{formatHistoryDate(item.updatedAt)} · {item.messageCount} {item.messageCount === 1 ? 'message' : 'messages'}{item.hasScreenshots ? ' · screenshots retained' : ''}</small></div><div className="history-row__actions"><Button disabled={working} size="compact" variant="secondary" onClick={() => void onRun(() => window.fovea.history.open(item.id), '', 'Opening conversation…')}>Open</Button><Button disabled={working} size="compact" variant="danger" onClick={() => void onRun(async () => { await window.fovea.history.delete(item.id); onRefresh() }, 'Conversation deleted.')}>Delete</Button></div></div>)}</div>}
+      : <div className="history-list">{items.map((item) => <div className="history-row" key={item.id}><div><strong>{item.title}</strong><small>{formatHistoryDate(item.updatedAt)} · {item.messageCount} {item.messageCount === 1 ? 'message' : 'messages'}{item.hasScreenshots ? ' · screenshots retained' : ''}</small></div><div className="history-row__actions"><Button disabled={working} size="compact" variant="secondary" onClick={() => void onRun(() => window.fovea.history.open(item.id), '', 'Opening conversation…')}>Open</Button><Button disabled={working} size="compact" variant="secondary" onClick={() => onExport(item.id)}>Export</Button><Button disabled={working} size="compact" variant="danger" onClick={() => void onRun(async () => { await window.fovea.history.delete(item.id); onRefresh() }, 'Conversation deleted.')}>Delete</Button></div></div>)}</div>}
     <Button disabled={working || items.length === 0} variant="danger" onClick={() => { if (window.confirm('Delete all saved conversation history? This cannot be undone.')) void onRun(async () => { const count = await window.fovea.history.clear(); onRefresh(); return count }, 'All conversation history deleted.', 'Clearing history…') }}>Clear all history</Button>
   </Card>
 }
@@ -580,6 +748,7 @@ function SettingsIcon({ category }: { category: Category }): React.JSX.Element {
     Account: <><circle cx="12" cy="8" r="3.25" /><path d="M5.5 19c.7-3.8 2.8-5.7 6.5-5.7s5.8 1.9 6.5 5.7" /></>,
     Models: <><rect x="5" y="5" width="14" height="14" rx="3" /><path d="M9 2v3m6-3v3M9 19v3m6-3v3M2 9h3m-3 6h3m14-6h3m-3 6h3" /><circle cx="12" cy="12" r="2.5" /></>,
     Prompts: <><path d="M4 5.5h16v11H9l-5 4v-15Z" /><path d="M8 9h8m-8 3.5h6" /></>,
+    Recipes: <><path d="M5 4h14v16H5z" /><path d="M8 8h8M8 12h5M8 16h7" /><path d="m15 11 2 2 3-4" /></>,
     Capture: <><path d="M4 8V5a1 1 0 0 1 1-1h3m8 0h3a1 1 0 0 1 1 1v3m0 8v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3" /><rect x="7.5" y="7.5" width="9" height="9" rx="2" /></>,
     Appearance: <><circle cx="12" cy="12" r="4" /><path d="M12 2v2m0 16v2M2 12h2m16 0h2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4m0-14.2-1.4 1.4M6.3 17.7l-1.4 1.4" /></>,
     History: <><path d="M4 12a8 8 0 1 0 2.3-5.7L4 8.6" /><path d="M4 4v4.6h4.6M12 7.5V12l3 2" /></>,

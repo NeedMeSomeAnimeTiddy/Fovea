@@ -1,10 +1,13 @@
 # Fovea prototype
 
-Fovea is a Windows-first Electron prototype for selecting part of the screen,
-receiving an automatic visual answer, and asking focused follow-up questions. OpenAI,
-Anthropic, and OpenRouter API-key profiles work with the minimal installer. ChatGPT
-subscription sign-in is an explicit optional download of the official Codex CLI
-`0.144.4`, which runs `codex app-server` locally over JSONL/stdin/stdout.
+Fovea is a Windows-first Electron prototype for capturing a region, display, or
+focused window, receiving a visual answer, and asking focused follow-up questions.
+It supports multi-monitor capture, repeat-last capture, reusable capture recipes,
+local image paste/drop/import, a tray menu, searchable local history, and private
+Markdown or versioned JSON exports. OpenAI, Anthropic, and OpenRouter API-key
+profiles work with the minimal installer. ChatGPT subscription sign-in is an
+explicit optional download of the official Codex CLI `0.144.4`, which runs
+`codex app-server` locally over JSONL/stdin/stdout.
 
 The application is currently packaged and displayed under its original temporary
 name, **Fovea**. This repository is the new Fovea home; product-name rebranding
@@ -13,6 +16,30 @@ repository preparation.
 
 The integration follows the current official [Codex App Server documentation](https://developers.openai.com/codex/app-server)
 and pins the official [OpenAI Codex 0.144.4 release](https://github.com/openai/codex/releases/tag/rust-v0.144.4).
+
+## Shipped workflows
+
+Capability audit last updated: **4 August 2026**.
+
+- Capture a region, current display, or focused window from the tray, Settings,
+  or a configurable global shortcut. Repeat-last reuses the last capture mode.
+- Ask through ChatGPT subscription sign-in or direct OpenAI, Anthropic, and
+  OpenRouter profiles. A conversation can switch profiles and models between turns.
+- Paste, drop, or pick PNG, JPEG, and WebP images into an open conversation. Fovea
+  validates and decodes each image in the main process and works from managed
+  temporary copies; original files are never modified. Imports are capped at 10
+  images per conversation, 20 MiB per source, 25 MiB after normalization, 40
+  megapixels, and 16,384 pixels per side.
+- Save conversations locally with configurable retention and separately opt in to
+  screenshot retention. Private mode suppresses history writes without disabling
+  explicit export of the open conversation.
+- Export an active or saved conversation as readable Markdown or
+  [versioned JSON](docs/conversation-export.schema.json).
+  Screenshot files and provider/model metadata are independent, off-by-default
+  options shown in a preview before writing.
+- Create ordered capture recipes that combine a capture mode, prompt, provider/model
+  choice, web preference, optional local OCR, and shortcut. Auto-send is opt-in and
+  requires a separate confirmation; imported recipes are disabled and lose consent.
 
 ## Setup and commands
 
@@ -220,7 +247,9 @@ evaluations, and the runtime doctor before packaging.
 2. In Settings, either add an API-key profile or explicitly install the optional
    ChatGPT runtime, review its disclosed size, click **Sign in with ChatGPT**, and
    finish the browser flow. Confirm the account and plan appear.
-3. Confirm an image-capable model is selected, then press `Ctrl+Shift+Space`.
+3. Confirm an image-capable model is selected, then press the default
+   `Ctrl+Alt+Shift+Space` shortcut. Repeat with a second display if available, then
+   use the tray menu for current-display, focused-window, and repeat-last capture.
 4. Toggle **Extract text locally** in the capture bar, make a selection, and
    confirm the recognised text appears in the normal response panel. Try Stop,
    Copy, and any detected URL, email, phone, QR-code, or barcode action.
@@ -229,22 +258,36 @@ evaluations, and the runtime doctor before packaging.
    its preset **Ask** questions, and confirm that exact question opens in the
    response window with the boxed region.
 6. Enable **Edit before sending**, then drag a rectangle at least 24 × 24
-    logical pixels on the primary display.
+   logical pixels on each available display.
 7. Confirm the selection stays on the frozen screen and the icon toolbar
    appears at the top. Try an annotation and solid redaction, then press Send
    and confirm the compact response window analyses the edited derivative.
 8. Open **Ask**, choose a contextual suggestion, then use **Custom question**
    and confirm both questions and answers remain visible in the flowing
    conversation.
-9. Add another snip, choose **Edit**, try arrows, rectangles, drawing, text,
-   blur, and solid redaction, then undo/redo and save the edited copy. Confirm
-   the edited draft is the image sent with the next question.
-10. Expand **Show details**, then try the icon actions for View capture, Stop,
-   Regenerate, Copy, and New capture. Press `Esc` in the capture viewer and
-   confirm the response window remains open.
-11. Close the panel and confirm its PNG disappears from the temporary path shown
-   in Settings. In **History**, search for and reopen the conversation, then
-   delete it. **Clean temporary files** removes any remaining temporary PNGs.
+9. Paste an image into the conversation, drop several PNG/JPEG/WebP files, and
+   use **Choose images**. Confirm previews appear, an unsupported or corrupt file
+   reports a per-file error, originals remain unchanged, and edit/OCR/remove work.
+10. Add another snip, choose **Edit**, try arrows, rectangles, drawing, text,
+    blur, and solid redaction, then undo/redo and save the edited copy. Confirm
+    the edited draft is the image sent with the next question.
+11. Expand **Show details**, then try the icon actions for View capture, Stop,
+    Regenerate, Copy, and New capture. Press `Esc` in the capture viewer and
+    confirm the response window remains open.
+12. Export the open conversation first without optional metadata, then with
+    screenshots and provider/model metadata. Inspect both Markdown and JSON output,
+    cancel once at the save dialog, and confirm cancellation leaves no partial files.
+13. Create a disabled recipe, duplicate and reorder it, resolve a deliberate
+    shortcut conflict, then enable and run it. Confirm it opens with the prompt and
+    options visible before Send. Enable auto-send only after reviewing its warning;
+    changing the prompt or provider must revoke that consent.
+14. Close the panel and confirm its managed images disappear from the temporary
+    path shown in Settings. In **History**, search for and reopen the conversation,
+    export it, then delete it. Confirm private mode prevents a new conversation from
+    entering History while still allowing explicit export from its open panel.
+15. Run at least one turn on every configured path: ChatGPT, OpenAI, Anthropic,
+    and OpenRouter. Where a credential or runtime is unavailable, confirm the UI
+    reports that limitation without losing the conversation draft.
 
 ## Architecture and security
 
@@ -277,12 +320,9 @@ unredacted temporary source is deleted once the derivative replaces it.
 
 ## Known limitations
 
-- Capture is intentionally limited to the primary display. DPI scaling is
-  handled using the captured bitmap's physical-to-logical ratio, but mixed-DPI
-  multi-monitor selection is not implemented yet.
-- The prototype has no tray UI. Closing Settings leaves the process running so
-  the global shortcut continues to work; quit it from Task Manager or the
-  development terminal.
+- Mixed-DPI multi-monitor capture depends on Windows' reported display scale and
+  should be smoke-tested on the target hardware even though every display is
+  available for capture.
 - Windows sandbox availability still depends on the host Windows configuration.
   Even if sandbox initialization fails, approval requests are never surfaced or
   accepted and the assistant is explicitly instructed not to use tools.
@@ -302,3 +342,7 @@ unredacted temporary source is deleted once the derivative replaces it.
 Third-party licensing for the optional Codex runtime is in `resources/licences/`.
 Screenshots are sent only through the provider profile selected for that conversation.
 There is no analytics, telemetry, backend, or Fovea account.
+
+Pull requests use [the repository template](.github/pull_request_template.md) to
+require a lightweight documentation-impact check whenever shipped behavior,
+manual verification, privacy, packaging, or known limitations change.

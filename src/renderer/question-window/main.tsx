@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode
 import { createRoot } from 'react-dom/client'
 import { createPortal } from 'react-dom'
 import type { QuestionViewState } from '@shared/contracts/ipc'
-import type { ConversationExchange, ConversationSelection, CustomPrompt, OcrEntity, ProviderModelCapability, QuestionAttachment, ResponsePhase } from '@shared/types/app'
+import type { ConversationExchange, ConversationExportOptions, ConversationExportPreview, ConversationSelection, CustomPrompt, ImageImportResult, OcrEntity, ProviderModelCapability, QuestionAttachment, QuestionDraft, ResponsePhase } from '@shared/types/app'
 import type { ProviderEvent } from '@shared/types/provider'
 import type { AppError, AppRecoveryKind } from '@shared/types/app-error'
 import {
@@ -28,6 +28,7 @@ import {
 } from './QuestionResponse'
 import { ScreenshotEditor } from './ScreenshotEditor'
 import { ResponseStreamBuffer } from './response-stream-buffer'
+import { ConversationExportDialog } from '../export/ConversationExportDialog'
 import '../design-system/index.css'
 import 'highlight.js/styles/github-dark.css'
 import './question.css'
@@ -53,12 +54,16 @@ export function QuestionApp(): React.JSX.Element {
   const [expandedModelId, setExpandedModelId] = useState<string | null>(null)
   const [editor, setEditor] = useState<{ attachmentId: string; imageDataUrl: string } | null>(null)
   const [editorSaving, setEditorSaving] = useState(false)
+  const [dropActive, setDropActive] = useState(false)
+  const [exportPreview, setExportPreview] = useState<ConversationExportPreview | null>(null)
+  const [exportBusy, setExportBusy] = useState(false)
   const askRef = useRef<HTMLDivElement>(null)
   const modelRef = useRef<HTMLDivElement>(null)
   const captureRef = useRef<HTMLDivElement>(null)
   const responseContentRef = useRef<HTMLDivElement>(null)
   const stickToBottom = useRef(true)
   const stateReady = useRef(false)
+  const draftApplied = useRef(false)
   const updateLatest = useCallback((update: (exchange: ConversationExchange) => ConversationExchange): void => {
     setState((current) => current
       ? { ...current, exchanges: current.exchanges.map((item, index) => index === current.exchanges.length - 1 ? update(item) : item) }
@@ -131,6 +136,27 @@ export function QuestionApp(): React.JSX.Element {
     return window.fovea.settings.onChanged((settings) => setCustomPrompts(settings.customPrompts))
   }, [])
   useEffect(() => () => responseStream.dispose(), [responseStream])
+  useEffect(() => {
+    if (!state?.draft || draftApplied.current || state.draft.autoSend) return
+    draftApplied.current = true
+    setText(state.draft.text)
+    setPreferWebSearch(state.draft.preferWebSearch)
+    setAskOpen(true)
+    setCustomOpen(true)
+  }, [state?.draft])
+  const finishImport = useCallback(async (result: ImageImportResult): Promise<void> => {
+    if (result.added) await refresh()
+    if (result.failures.length) setError(appErrorFromUnknown(new Error(result.failures.map((failure) => `${failure.name}: ${failure.message}`).join('\n'))))
+  }, [refresh])
+  useEffect(() => {
+    const paste = (event: ClipboardEvent): void => {
+      if (!state || state.busy || ![...(event.clipboardData?.items ?? [])].some((item) => item.kind === 'file' && item.type.startsWith('image/'))) return
+      event.preventDefault()
+      void window.fovea.question.importClipboardImage(sessionId).then(finishImport).catch((reason) => setError(appErrorFromUnknown(reason)))
+    }
+    document.addEventListener('paste', paste)
+    return () => document.removeEventListener('paste', paste)
+  }, [finishImport, sessionId, state])
 
   const latestExchange = state?.exchanges.at(-1)
   const latestVisibleLength = (latestExchange?.metadata?.summary.length ?? 0) + (latestExchange?.answer.length ?? 0)
@@ -261,6 +287,21 @@ export function QuestionApp(): React.JSX.Element {
       setError(appErrorFromUnknown(reason))
     }
   }
+  const pickImages = async (): Promise<void> => {
+    setError(null)
+    setCaptureMenuOpen(false)
+    try { await finishImport(await window.fovea.question.pickImages(sessionId)) }
+    catch (reason) { setError(appErrorFromUnknown(reason)) }
+  }
+  const dropImages = async (files: File[]): Promise<void> => {
+    setDropActive(false)
+    if (!files.length) {
+      setError(appErrorFromUnknown(new Error('Drop local PNG, JPEG, or WebP image files only.')))
+      return
+    }
+    try { await finishImport(await window.fovea.question.importDroppedFiles(sessionId, files)) }
+    catch (reason) { setError(appErrorFromUnknown(reason)) }
+  }
   const removeAttachment = async (attachmentId: string): Promise<void> => {
     setError(null)
     try {
@@ -331,6 +372,22 @@ export function QuestionApp(): React.JSX.Element {
       void refresh()
     }
   }
+  const openExport = async (): Promise<void> => {
+    setError(null)
+    try { setExportPreview(await window.fovea.question.exportPreview(sessionId)) }
+    catch (reason) { setError(appErrorFromUnknown(reason)) }
+  }
+  const exportConversation = async (options: ConversationExportOptions): Promise<void> => {
+    setExportBusy(true)
+    try {
+      const exported = await window.fovea.question.exportConversation(sessionId, options)
+      if (exported) {
+        setExportPreview(null)
+        setCopyStatus('Conversation exported')
+      }
+    } catch (reason) { setError(appErrorFromUnknown(reason)) }
+    finally { setExportBusy(false) }
+  }
   const recover = (recovery: AppRecoveryKind): void => {
     if (recovery === 'open-settings' || recovery === 'authenticate' || recovery === 'choose-provider') {
       void window.fovea.application.openSettings()
@@ -377,12 +434,19 @@ export function QuestionApp(): React.JSX.Element {
       showCompactControls
       showResizeRegions={false}
       showTitlebar={false}
-      titlebarActions={<QuestionTitlebarActions pinned={state.pinned} onTogglePinned={() => void togglePinned()} />}
+      titlebarActions={<QuestionTitlebarActions pinned={state.pinned} onExport={() => void openExport()} onTogglePinned={() => void togglePinned()} />}
     >
-      <main className="response-shell">
+      <main
+        className={dropActive ? 'response-shell response-shell--drop-active' : 'response-shell'}
+        onDragEnter={(event) => { if (event.dataTransfer.types.includes('Files')) { event.preventDefault(); setDropActive(true) } }}
+        onDragOver={(event) => { if (event.dataTransfer.types.includes('Files')) { event.preventDefault(); event.dataTransfer.dropEffect = 'copy' } }}
+        onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropActive(false) }}
+        onDrop={(event) => { event.preventDefault(); void dropImages([...event.dataTransfer.files]) }}
+      >
+        {dropActive && <div className="image-drop-target" role="status">Drop images to attach them locally</div>}
         <ToastViewport className="question-toasts" placement="top">
           {state.disclosure && (
-            <Toast duration={8000} resetKey={state.disclosure} title="Provider changed">
+            <Toast duration={8000} resetKey={state.disclosure} title={state.draft?.recipeName ? 'Capture recipe ready' : 'Provider changed'}>
               {state.disclosure}
             </Toast>
           )}
@@ -434,16 +498,21 @@ export function QuestionApp(): React.JSX.Element {
         {!state.selection && !showingLocalOcr
           ? (
               <section className="setup-card">
-                <StatusBanner title={state.profiles.length ? 'No compatible AI model' : 'Connect an AI provider'} tone="warning">
-                  {state.profiles.length
+                <StatusBanner title={state.launchError ? 'Capture recipe paused' : state.profiles.length ? 'No compatible AI model' : 'Connect an AI provider'} tone="warning">
+                  {state.launchError ?? (state.profiles.length
                     ? 'Choose an image-capable model in Settings.'
-                    : 'Connect a provider once, then every capture can be answered automatically.'}
+                    : 'Connect a provider once, then every capture can be answered automatically.')}
                 </StatusBanner>
                 <Button onClick={() => void window.fovea.application.openSettings()}>Open Settings</Button>
               </section>
             )
           : (
               <section className="response-card" aria-label={showingLocalOcr ? 'Extracted text' : 'AI response'}>
+                {state.draft?.recipeName && !state.draft.autoSend && (
+                  <StatusBanner title={`Recipe: ${state.draft.recipeName}`} tone="info">
+                    {recipeDraftSummary(state.draft)} Review the prompt, attachment, provider, model, and thinking effort before Send.
+                  </StatusBanner>
+                )}
                 <header className="response-card__header">
                   <FriendlyStatus phase={state.phase} source={latestExchange?.source} />
                   {state.selection && <div className="ask-wrap" ref={askRef}>
@@ -533,6 +602,7 @@ export function QuestionApp(): React.JSX.Element {
                       <CaptureMenu
                         addDisabled={state.busy || hasPendingWebSearch}
                         onAdd={() => void addSnip()}
+                        onChooseImages={() => void pickImages()}
                         onNewChat={() => void newChat()}
                       />
                     )}
@@ -627,6 +697,7 @@ export function QuestionApp(): React.JSX.Element {
             }}
           />
         )}
+        {exportPreview && <ConversationExportDialog preview={exportPreview} busy={exportBusy} onCancel={() => setExportPreview(null)} onExport={exportConversation} />}
         <div className="fui-sr-only" aria-live="polite">{copyStatus}</div>
       </main>
     </WindowFrame>
@@ -740,10 +811,12 @@ export const AttachmentThumbnail = memo(function AttachmentThumbnail({
 export function CaptureMenu({
   addDisabled,
   onAdd,
+  onChooseImages = () => undefined,
   onNewChat
 }: {
   addDisabled: boolean
   onAdd(): void
+  onChooseImages?(): void
   onNewChat(): void
 }): React.JSX.Element {
   return (
@@ -751,6 +824,10 @@ export function CaptureMenu({
       <button disabled={addDisabled} onClick={onAdd} role="menuitem" type="button">
         <Icon name="capture" />
         <span><strong>Add a screenshot</strong><small>Attach it to this chat</small></span>
+      </button>
+      <button disabled={addDisabled} onClick={onChooseImages} role="menuitem" type="button">
+        <Icon name="attachment" />
+        <span><strong>Choose images</strong><small>PNG, JPEG, or WebP files</small></span>
       </button>
       <button onClick={onNewChat} role="menuitem" type="button">
         <Icon name="new-chat" />
@@ -935,6 +1012,13 @@ export function ModelMenu({
       })}
     </div>
   )
+}
+
+function recipeDraftSummary(draft: QuestionDraft): string {
+  const mode = ({ region: 'Region capture', display: 'Current-display capture', window: 'Focused-window capture', 'repeat-last': 'Repeat-last capture' })[draft.captureMode ?? 'region']
+  const web = draft.preferWebSearch ? 'web search preferred' : 'web search off'
+  const ocr = draft.extractText ? `local OCR on${draft.ocrLanguageCode ? ` (${draft.ocrLanguageCode})` : ''}` : 'local OCR off'
+  return `${mode}; ${web}; ${ocr}.`
 }
 
 function thinkingEffortLabel(effort: string | null | undefined): string {
