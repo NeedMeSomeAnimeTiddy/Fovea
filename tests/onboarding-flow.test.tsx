@@ -177,6 +177,7 @@ function makeState(patch: Partial<SettingsViewState> = {}): SettingsViewState {
     customPrompts: [],
     recipes: [],
     launchAtLogin: false,
+    shellIntegration: { enabled: false, supported: true, registered: false },
     onboardingStatus: 'pending',
     history: { privateMode: false, retentionDays: 30, retainScreenshots: false },
     tempLocation: 'C:\\temp',

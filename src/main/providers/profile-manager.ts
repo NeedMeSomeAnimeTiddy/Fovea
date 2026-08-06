@@ -1,7 +1,13 @@
 import { randomUUID } from 'node:crypto'
 import type { ProviderKind, ProviderProfileSummary } from '@shared/types/app'
+import { normaliseBaseUrl } from '@shared/provider-endpoint'
 import type { CredentialStore } from '../storage/credential-store'
 import type { SettingsStore, StoredProviderProfile } from '../storage/settings-store'
+
+export interface CustomEndpoint {
+  baseUrl?: string
+  modelIds?: string[]
+}
 
 export class ProfileManager {
   constructor(
@@ -20,16 +26,29 @@ export class ProfileManager {
     return profile
   }
 
-  async createApiKey(provider: Exclude<ProviderKind, 'chatgpt'>, name: string, apiKey: string): Promise<ProviderProfileSummary> {
+  async createApiKey(
+    provider: Exclude<ProviderKind, 'chatgpt'>,
+    name: string,
+    apiKey: string,
+    endpoint: CustomEndpoint = {}
+  ): Promise<ProviderProfileSummary> {
     const cleanName = validateName(name)
     const cleanKey = apiKey.trim()
     if (!cleanKey || cleanKey.length > 2_048) throw new Error('Enter a valid API key.')
+    if (provider !== 'custom' && (endpoint.baseUrl || endpoint.modelIds?.length)) {
+      throw new Error('Only a custom profile can define its own API address.')
+    }
+    // Rejected here as well as in the renderer so a malformed address never reaches the store.
+    const baseUrl = provider === 'custom' ? normaliseBaseUrl(endpoint.baseUrl ?? '') : undefined
+    const modelIds = provider === 'custom' && endpoint.modelIds?.length ? endpoint.modelIds : undefined
     const id = randomUUID()
     const profile: StoredProviderProfile = {
       id,
       name: cleanName,
       provider,
       authentication: 'api-key',
+      ...(baseUrl ? { baseUrl } : {}),
+      ...(modelIds ? { modelIds } : {}),
       defaultModelId: null,
       defaultReasoningEffort: null,
       health: 'unknown'
@@ -132,6 +151,7 @@ function toSummary(profile: StoredProviderProfile, defaultProfileId: string | nu
     name: profile.name,
     provider: profile.provider,
     authentication: profile.authentication,
+    baseUrl: profile.baseUrl,
     authenticationState: profile.provider === 'chatgpt'
       ? profile.health === 'available' ? 'signed-in' : profile.health === 'unavailable' ? 'error' : 'signed-out'
       : hasCredential ? 'signed-in' : 'signed-out',

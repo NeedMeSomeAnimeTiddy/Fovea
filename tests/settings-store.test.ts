@@ -14,6 +14,94 @@ async function settingsPath(): Promise<string> {
   return join(root, 'settings.v2.json')
 }
 
+describe('SettingsStore custom provider profiles', () => {
+  const customProfile = {
+    id: 'custom-1',
+    name: 'DeepSeek',
+    provider: 'custom',
+    authentication: 'api-key',
+    baseUrl: 'https://api.deepseek.com/v1/',
+    modelIds: ['deepseek-v4-flash', 'deepseek-v4-flash', ''],
+    defaultModelId: null,
+    defaultReasoningEffort: null,
+    health: 'unknown'
+  }
+
+  it('keeps a custom profile and tidies its address and model list', async () => {
+    const path = await settingsPath()
+    await writeFile(path, JSON.stringify({ version: 3, profiles: [customProfile] }))
+    const store = new SettingsStore(path)
+    await store.load()
+
+    const [profile] = store.get().profiles
+    expect(profile?.baseUrl).toBe('https://api.deepseek.com/v1')
+    expect(profile?.modelIds).toEqual(['deepseek-v4-flash'])
+  })
+
+  it('drops a custom profile whose address could never be reached', async () => {
+    const path = await settingsPath()
+    await writeFile(path, JSON.stringify({
+      version: 3,
+      profiles: [
+        { ...customProfile, id: 'no-url', baseUrl: undefined },
+        { ...customProfile, id: 'plaintext', baseUrl: 'http://api.deepseek.com/v1' },
+        { ...customProfile, id: 'nonsense', baseUrl: 'not a url' }
+      ]
+    }))
+    const store = new SettingsStore(path)
+    await store.load()
+
+    expect(store.get().profiles).toEqual([])
+  })
+
+  it('does not let a built-in profile carry an address of its own', async () => {
+    const path = await settingsPath()
+    await writeFile(path, JSON.stringify({
+      version: 3,
+      profiles: [{ ...customProfile, id: 'openai-1', provider: 'openai', baseUrl: 'https://evil.example/v1', modelIds: ['x'] }]
+    }))
+    const store = new SettingsStore(path)
+    await store.load()
+
+    const [profile] = store.get().profiles
+    expect(profile?.provider).toBe('openai')
+    expect(profile?.baseUrl).toBeUndefined()
+    expect(profile?.modelIds).toBeUndefined()
+  })
+})
+
+describe('SettingsStore Explorer integration', () => {
+  it('defaults to off and survives a round trip', async () => {
+    const path = await settingsPath()
+    const store = new SettingsStore(path)
+    await store.load()
+    expect(store.get().shellIntegrationEnabled).toBe(false)
+
+    await store.update({ shellIntegrationEnabled: true })
+    const reloaded = new SettingsStore(path)
+    await reloaded.load()
+    expect(reloaded.get().shellIntegrationEnabled).toBe(true)
+  })
+
+  it('treats a settings file written before this feature as off', async () => {
+    const path = await settingsPath()
+    // A version-3 file from an older build simply has no such key.
+    await writeFile(path, JSON.stringify({ version: 3, launchAtLogin: true }))
+    const store = new SettingsStore(path)
+    await store.load()
+    expect(store.get().shellIntegrationEnabled).toBe(false)
+    expect(store.get().launchAtLogin).toBe(true)
+  })
+
+  it('rejects a non-boolean value from a tampered file', async () => {
+    const path = await settingsPath()
+    await writeFile(path, JSON.stringify({ version: 3, shellIntegrationEnabled: 'yes' }))
+    const store = new SettingsStore(path)
+    await store.load()
+    expect(store.get().shellIntegrationEnabled).toBe(false)
+  })
+})
+
 describe('SettingsStore custom prompts', () => {
   it('persists custom prompts in their saved order', async () => {
     const path = await settingsPath()

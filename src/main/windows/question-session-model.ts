@@ -35,6 +35,8 @@ export interface QuestionSessionState {
   pinned: boolean
   historyId: string
   createdAt: string
+  /** Text recovered locally from imported files, resent with every turn. Empty for captures. */
+  documentContext: string
   ocrContextByExchangeId: Map<string, string>
   draft: QuestionDraft | null
   launchError: string | null

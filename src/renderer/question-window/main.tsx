@@ -33,12 +33,33 @@ import '../design-system/index.css'
 import 'highlight.js/styles/github-dark.css'
 import './question.css'
 
-const FALLBACK_SUGGESTIONS = [
+/**
+ * Shown before anything has been asked, where the model has never seen the file and so cannot
+ * offer grounded follow-ups. These have to work for whatever someone right-clicked, so they open
+ * the subject rather than assuming there is a task in it.
+ */
+const OPENING_SUGGESTIONS = [
+  'What is this?',
+  'Describe what this shows.',
+  'Summarise any text in it.',
+  'What is worth noticing here?'
+]
+/** Used after an answer that carried no suggestions of its own. */
+const FOLLOW_UP_SUGGESTIONS = [
   'What do the most important visible details mean?',
   'Is anything in this image unusual or incorrect?',
   'What is the most useful next step based on this image?',
   'What could a web search verify about what is shown?'
 ]
+
+/**
+ * A reply names its own follow-ups; these lists only fill the gap when it did not, or when
+ * nothing has been asked yet.
+ */
+export function suggestionsFor(latestExchange?: ConversationExchange): string[] {
+  if (latestExchange?.metadata?.suggestedQuestions.length) return latestExchange.metadata.suggestedQuestions
+  return latestExchange ? FOLLOW_UP_SUGGESTIONS : OPENING_SUGGESTIONS
+}
 export function QuestionApp(): React.JSX.Element {
   const sessionId = useMemo(() => new URLSearchParams(location.search).get('session') ?? '', [])
   const [state, setState] = useState<QuestionViewState | null>(null)
@@ -417,10 +438,10 @@ export function QuestionApp(): React.JSX.Element {
   const hasPendingWebSearch = state.exchanges.some((exchange) => exchange.webSearch?.status === 'requested')
   const showingLocalOcr = latestExchange?.source === 'ocr'
   const missingModels = state.profiles.length > 0 && !state.selection && !showingLocalOcr
-  const suggestions = latestExchange?.metadata?.suggestedQuestions.length
-    ? latestExchange.metadata.suggestedQuestions
-    : FALLBACK_SUGGESTIONS
-  const askDisabled = state.busy || hasPendingWebSearch || !state.selection || !latestExchange
+  const suggestions = suggestionsFor(latestExchange)
+  // A conversation opened from Explorer's "Ask a question..." starts with nothing asked yet, so
+  // asking must not depend on an exchange already existing.
+  const askDisabled = state.busy || hasPendingWebSearch || !state.selection
   const selectedModel = state.models.find((model) => model.id === state.selection?.modelId)
   const modelLabel = selectedModel && state.selection
     ? `${selectedModel.displayName} · ${thinkingEffortLabel(state.selection.reasoningEffort)} thinking`
@@ -538,6 +559,7 @@ export function QuestionApp(): React.JSX.Element {
                         busy={state.busy}
                         customPrompts={customPrompts}
                         customOpen={customOpen}
+                        opening={!latestExchange}
                         preferWebSearch={preferWebSearch}
                         suggestions={suggestions}
                         text={text}
@@ -568,7 +590,9 @@ export function QuestionApp(): React.JSX.Element {
                           onResolveWebSearch={resolveWebSearch}
                         />
                       )
-                    : <AnswerSkeleton />}
+                    : state.busy
+                      ? <AnswerSkeleton />
+                      : <EmptyConversation disabled={askDisabled} onAsk={() => { setModelOpen(false); setCustomOpen(false); setAskOpen(true) }} />}
                 </div>
 
                 <AttachmentStrip
@@ -736,9 +760,10 @@ export function AttachmentStrip({
     const top = above >= 12 ? above : Math.min(innerHeight - menuHeight - 12, bounds.bottom + 8)
     setMenu({ attachmentId, index, left, top })
   }, [])
+  // Attachments can now be imported pictures or PDF pages, so the wording stays neutral.
   return (
-    <section className="attachment-strip" aria-label="Conversation screenshots">
-      <span className="attachment-strip__label">{attachments.length} {attachments.length === 1 ? 'screenshot' : 'screenshots'}</span>
+    <section className="attachment-strip" aria-label="Conversation images">
+      <span className="attachment-strip__label">{attachments.length} {attachments.length === 1 ? 'image' : 'images'}</span>
       <div className="attachment-strip__items">
         {attachments.map((attachment, index) => (
           <AttachmentThumbnail
@@ -837,10 +862,31 @@ export function CaptureMenu({
   )
 }
 
+/**
+ * Shown when a conversation has been opened but nothing asked yet, which only happens for the
+ * Explorer "Ask a question..." action. Every other entry point starts with an exchange already
+ * running, where a loading skeleton is the right thing to show instead.
+ */
+export function EmptyConversation({
+  disabled,
+  onAsk
+}: {
+  disabled: boolean
+  onAsk(): void
+}): React.JSX.Element {
+  return (
+    <div className="empty-conversation">
+      <p>This file is attached and ready.</p>
+      <Button disabled={disabled} size="compact" onClick={onAsk}>Ask a question</Button>
+    </div>
+  )
+}
+
 export function AskMenu({
   busy,
   customPrompts = [],
   customOpen,
+  opening = false,
   preferWebSearch,
   suggestions,
   text,
@@ -852,6 +898,8 @@ export function AskMenu({
   busy: boolean
   customPrompts?: CustomPrompt[]
   customOpen: boolean
+  /** True before anything has been asked, where the list opens the subject rather than following on. */
+  opening?: boolean
   preferWebSearch: boolean
   suggestions: string[]
   text: string
@@ -863,7 +911,7 @@ export function AskMenu({
   return (
     <div className="ask-menu" id="ask-menu" role="menu" aria-label="Questions about this capture">
       {customPrompts.length > 0 && <>
-        <div className="ask-menu__heading">Saved prompts</div>
+        <div className="ask-menu__heading">{opening ? 'Your saved prompts' : 'Saved prompts'}</div>
         <div className="ask-menu__suggestions ask-menu__saved">
           {customPrompts.map((item) => (
             <button
@@ -878,7 +926,7 @@ export function AskMenu({
           ))}
         </div>
       </>}
-      <div className="ask-menu__heading">You could ask…</div>
+      <div className="ask-menu__heading">{opening ? 'Start with…' : 'You could ask…'}</div>
       <div className="ask-menu__suggestions">
         {suggestions.map((suggestion) => (
           <button

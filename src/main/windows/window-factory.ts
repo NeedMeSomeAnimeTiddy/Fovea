@@ -7,7 +7,8 @@ const rendererDirectory = {
   settings: 'settings',
   overlay: 'capture-overlay',
   question: 'question-window',
-  preview: 'image-preview'
+  preview: 'image-preview',
+  'document-render': 'document-render'
 } as const
 const windowMaterials = new WeakMap<BrowserWindow, WindowMaterial>()
 
@@ -33,7 +34,7 @@ export function getCreatedWindowMaterial(window: BrowserWindow): WindowMaterial 
 
 export async function loadRenderer(
   window: BrowserWindow,
-  page: 'settings' | 'overlay' | 'question' | 'preview',
+  page: 'settings' | 'overlay' | 'question' | 'preview' | 'document-render',
   query: Record<string, string> = {}
 ): Promise<void> {
   const directory = rendererDirectory[page]

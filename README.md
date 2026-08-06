@@ -241,6 +241,93 @@ has staged full Python runtimes. `npm run release:check` runs type checking,
 linting, unit tests, asset validation, the production build, stored Analyze
 evaluations, and the runtime doctor before packaging.
 
+### OpenAI-compatible providers
+
+Settings → Account groups the provider picker into **Built in** (OpenAI,
+Anthropic, OpenRouter), **OpenAI-compatible**, and **On this computer**.
+Everything outside the first group is stored as a custom profile: choosing one
+only prefills its documented address, which stays editable.
+
+| Provider | Address |
+| --- | --- |
+| DeepSeek | `https://api.deepseek.com/v1` |
+| Google Gemini | `https://generativelanguage.googleapis.com/v1beta/openai` |
+| xAI (Grok) | `https://api.x.ai/v1` |
+| Mistral | `https://api.mistral.ai/v1` |
+| Groq | `https://api.groq.com/openai/v1` |
+| Together AI | `https://api.together.ai/v1` |
+| Fireworks AI | `https://api.fireworks.ai/inference/v1` |
+| DeepInfra | `https://api.deepinfra.com/v1/openai` |
+| Cerebras | `https://api.cerebras.ai/v1` |
+| Moonshot (Kimi) | `https://api.moonshot.ai/v1` |
+| Z.AI (GLM) | `https://api.z.ai/api/paas/v4` |
+| Alibaba (Qwen) | `https://dashscope-intl.aliyuncs.com/compatible-mode/v1` |
+| Ollama | `http://localhost:11434/v1` |
+| LM Studio | `http://localhost:1234/v1` |
+| vLLM | `http://localhost:8000/v1` |
+
+**Other (OpenAI-compatible)** takes any address you type. Local servers accept
+any token, so the key field is prefilled with a placeholder for those. Endpoints
+without `GET /models` can declare a comma-separated model list instead.
+
+Fovea sends a picture with every request, so a profile is only useful with a
+vision-capable model. Fovea cannot detect that in advance for these addresses,
+so it offers every model the endpoint reports; picking a text-only one is
+reported as **This model cannot read images** rather than a raw protocol error.
+Not every provider above serves a vision model — DeepSeek's hosted V4 API and
+Cerebras are text-only at the time of writing. To use DeepSeek's open-weight
+vision models (DeepSeek-VL2, Janus, DeepSeek-OCR), serve them locally with vLLM
+or Ollama and use the **On this computer** entry instead.
+
+The address must be `https://`; plain `http://` is accepted only for `localhost`
+and loopback addresses, because the API key and every screenshot travel to that
+host. Credentials embedded in the URL and query strings are rejected.
+
+Fovea cannot inspect an unknown endpoint's capabilities, so unlike the built-in
+providers it does not filter the model list to confirmed image-capable models —
+every model the endpoint reports is offered, and choosing a text-only one
+surfaces that endpoint's own error. Custom profiles use chat completions with
+`image_url` content parts; the OpenRouter web-search tool is never sent to them.
+
+### Windows right-click menu
+
+Settings → Capture → **Add Fovea to the Windows right-click menu** adds an
+**Analyse with Fovea** entry for pictures and PDF files in File Explorer and on
+the Desktop. Fovea writes only per-user `HKCU\Software\Classes\
+SystemFileAssociations` keys, so no elevation is needed and turning the switch
+off removes them again. On Windows 11 the entry appears under **Show more
+options**.
+
+The entry opens a submenu:
+
+| Action | What it does |
+| --- | --- |
+| **Analyse** | Opens the response window and answers automatically. |
+| **Extract text** | Reads the text locally. No provider request, no key, works offline. |
+| **Ask a question...** | Attaches the file and waits, so you write the first question. |
+| **Ask: &lt;name&gt;** | One entry per saved prompt, asking that question about the file. |
+| **Search the web about this** | Answers with web search preferred. Needs a provider that supports it. |
+
+Prompts saved in Settings → Prompts appear below the fixed actions in their
+saved order, and the menu is rewritten whenever one is added, edited, or
+deleted. Only the prompt's identifier travels on the command line; its text is
+looked up locally, so a prompt deleted since the menu was written simply opens
+an empty conversation.
+
+The prompts sit beside the actions rather than in a submenu of their own because
+static registry verbs support exactly one level of cascade. Nesting further
+requires a COM shell extension loaded into Explorer, which this app does not
+ship.
+
+Choosing one opens the normal response window with the file already attached;
+an existing Fovea keeps running and simply opens another conversation. Pictures
+are converted to PNG locally and capped at
+2000 pixels on the long edge. A PDF has its first five pages drawn as images,
+and text is read from up to fifty pages and sent as clearly labelled untrusted
+reference data. Selecting several files opens one conversation containing all of
+them, up to eight files. Fovea reads only the files that were right-clicked, and
+the originals are never modified, moved, or deleted.
+
 ## Manual test
 
 1. Run `npm run dev`, or install the generated NSIS package.
@@ -326,6 +413,10 @@ unredacted temporary source is deleted once the derivative replaces it.
 - Windows sandbox availability still depends on the host Windows configuration.
   Even if sandbox initialization fails, approval requests are never surfaced or
   accepted and the assistant is explicitly instructed not to use tools.
+- The Explorer entry appears in the Windows 11 legacy menu under **Show more
+  options** rather than at the top level. The modern menu requires an
+  MSIX-packaged app with a signed `IExplorerCommand` handler, which the unsigned
+  NSIS installer cannot provide.
 - The installer is unsigned, has no auto-update support, and packages only the
   architecture used for the build. Optional ChatGPT runtime downloads are pinned
   independently for x64 and ARM64.

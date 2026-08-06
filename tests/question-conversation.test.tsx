@@ -3,7 +3,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ConversationExchange } from '../src/shared/types/app'
-import { AttachmentStrip, CaptureMenu, ConversationTimeline, ocrEntityExternalAction } from '../src/renderer/question-window/main'
+import { AttachmentStrip, CaptureMenu, ConversationTimeline, EmptyConversation, ocrEntityExternalAction } from '../src/renderer/question-window/main'
 import { takeStreamingBatch } from '../src/renderer/question-window/response-stream-buffer'
 
 afterEach(cleanup)
@@ -35,6 +35,23 @@ const exchanges: ConversationExchange[] = [
     }
   }
 ]
+
+describe('conversation opened with nothing asked yet', () => {
+  it('invites a question instead of showing a skeleton that never resolves', () => {
+    const onAsk = vi.fn()
+    render(<EmptyConversation disabled={false} onAsk={onAsk} />)
+
+    const button = screen.getByRole('button', { name: 'Ask a question' })
+    expect(button.hasAttribute('disabled')).toBe(false)
+    fireEvent.click(button)
+    expect(onAsk).toHaveBeenCalledTimes(1)
+  })
+
+  it('disables the invitation while the session cannot ask', () => {
+    render(<EmptyConversation disabled onAsk={vi.fn()} />)
+    expect(screen.getByRole('button', { name: 'Ask a question' }).hasAttribute('disabled')).toBe(true)
+  })
+})
 
 describe('response conversation timeline', () => {
   it('keeps the automatic answer and follow-up visible as one flowing conversation', () => {
@@ -78,7 +95,7 @@ describe('response conversation timeline', () => {
       />
     )
 
-    expect(screen.getByRole('region', { name: 'Conversation screenshots' })).toBeTruthy()
+    expect(screen.getByRole('region', { name: 'Conversation images' })).toBeTruthy()
     expect(screen.getAllByRole('button', { name: /Screenshot \d options/ })).toHaveLength(2)
 
     fireEvent.click(screen.getByRole('button', { name: 'Screenshot 1 options' }))

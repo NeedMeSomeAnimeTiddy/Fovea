@@ -1,7 +1,14 @@
 import { StrictMode, useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import type { SettingsViewState } from '@shared/contracts/ipc'
+import type { SettingsViewState, ShellIntegrationState } from '@shared/contracts/ipc'
 import { acceleratorFromKeyInput } from '../../shared/shortcut-accelerator'
+import {
+  PROVIDER_CHOICES,
+  PROVIDER_CHOICE_GROUP_LABELS,
+  normaliseBaseUrl,
+  parseModelIds,
+  providerChoice
+} from '../../shared/provider-endpoint'
 import type { CaptureRecipe, ConversationExportOptions, ConversationExportPreview, ConversationHistorySummary, CustomPrompt, ProviderKind, ProviderModelCapability, ShortcutAction, SpectralEdgeState } from '@shared/types/app'
 import type { AppError, AppRecoveryKind } from '@shared/types/app-error'
 import {
@@ -44,9 +51,12 @@ const CATEGORY_DETAILS: Record<Category, string> = {
 function SettingsApp(): React.JSX.Element {
   const [state, setState] = useState<SettingsViewState | null>(null)
   const [category, setCategory] = useState<Category>('Account')
-  const [provider, setProvider] = useState<Exclude<ProviderKind, 'chatgpt'>>('openai')
+  const [choiceId, setChoiceId] = useState('openai')
+  const choice = providerChoice(choiceId)
   const [profileName, setProfileName] = useState('OpenAI')
   const [apiKey, setApiKey] = useState('')
+  const [baseUrl, setBaseUrl] = useState('')
+  const [modelIds, setModelIds] = useState('')
   const [models, setModels] = useState<Record<string, ProviderModelCapability[]>>({})
   const [error, setError] = useState<AppError | null>(null)
   const [notice, setNotice] = useState('')
@@ -250,16 +260,24 @@ function SettingsApp(): React.JSX.Element {
           <div className="add-grid">
             <Select
               label="Provider"
-              value={provider}
+              value={choiceId}
               onChange={(event) => {
-                const value = event.target.value as typeof provider
-                setProvider(value)
-                setProfileName(value === 'openrouter' ? 'OpenRouter' : value === 'anthropic' ? 'Anthropic' : 'OpenAI')
+                const next = providerChoice(event.target.value)
+                setChoiceId(next.id)
+                setProfileName(next.name)
+                setBaseUrl(next.baseUrl ?? '')
+                // Local servers accept any token; showing one beats a confusing empty requirement.
+                setApiKey(next.group === 'local' ? 'local' : '')
+                setModelIds('')
               }}
             >
-              <option value="openai">OpenAI API</option>
-              <option value="anthropic">Anthropic</option>
-              <option value="openrouter">OpenRouter</option>
+              {(['built-in', 'compatible', 'local'] as const).map((group) => (
+                <optgroup key={group} label={PROVIDER_CHOICE_GROUP_LABELS[group]}>
+                  {PROVIDER_CHOICES.filter((item) => item.group === group).map((item) => (
+                    <option key={item.id} value={item.id}>{item.label}</option>
+                  ))}
+                </optgroup>
+              ))}
             </Select>
             <TextInput label="Profile name" value={profileName} onChange={(event) => setProfileName(event.target.value)} />
             <div className="key-field">
@@ -272,16 +290,50 @@ function SettingsApp(): React.JSX.Element {
                 onChange={(event) => setApiKey(event.target.value)}
               />
             </div>
+            {choice.kind === 'custom' && (
+              <>
+                <TextInput
+                  autoComplete="off"
+                  label="API address"
+                  placeholder="https://api.deepseek.com/v1"
+                  value={baseUrl}
+                  onChange={(event) => setBaseUrl(event.target.value)}
+                />
+                <TextInput
+                  autoComplete="off"
+                  label="Model IDs (optional)"
+                  placeholder="Leave empty to list what the API offers"
+                  value={modelIds}
+                  onChange={(event) => setModelIds(event.target.value)}
+                />
+              </>
+            )}
             <Button
-              disabled={working || !apiKey.trim()}
+              disabled={working || !apiKey.trim() || (choice.kind === 'custom' && !baseUrl.trim())}
               onClick={() => void run(async () => {
-                await window.fovea.profiles.createApiKey(provider, profileName, apiKey)
+                await window.fovea.profiles.createApiKey(
+                  choice.kind,
+                  profileName,
+                  apiKey,
+                  choice.kind === 'custom'
+                    ? { baseUrl: normaliseBaseUrl(baseUrl), modelIds: parseModelIds(modelIds) }
+                    : undefined
+                )
                 setApiKey('')
+                setBaseUrl('')
+                setModelIds('')
               }, 'Encrypted profile added.', 'Checking credentials…', 'authenticating')}
             >
               Add API profile
             </Button>
           </div>
+          {choice.kind === 'custom' && (
+            <StatusBanner title="Check the address before adding" tone="warning">
+              Your API key and every screenshot you send are delivered to this address. Fovea cannot
+              check whether a model at an outside address accepts images, so every model the API
+              reports is offered — pick one you know can read pictures.
+            </StatusBanner>
+          )}
           <div className="divider">or</div>
           <Button
             variant="secondary"
@@ -300,7 +352,7 @@ function SettingsApp(): React.JSX.Element {
       {category === 'Models' && <Card as="section" className="settings-section"><h2>Profile defaults</h2>{state.profiles.length === 0 && <StatusBanner title="No provider profiles" tone="warning">Add a provider from the Account page before choosing a model.</StatusBanner>}{state.profiles.map((profile) => { const available = models[profile.id] ?? []; return <div className="model-row" key={profile.id}><div><strong>{profile.name}</strong><small>Only confirmed image-capable models are offered.</small></div><Select label="Default model" value={profile.defaultModelId ?? ''} onFocus={() => { if (!models[profile.id]) void window.fovea.profiles.models(profile.id).then((items) => setModels((current) => ({ ...current, [profile.id]: items }))).catch((reason) => setError(appErrorFromUnknown(reason))) }} onChange={(event) => void run(() => window.fovea.profiles.setDefaults(profile.id, event.target.value || null, null), '', 'Saving model…')}><option value="">Choose automatically</option>{available.map((model) => <option key={model.id} value={model.id}>{model.displayName}</option>)}</Select></div> })}</Card>}
       {category === 'Prompts' && <CustomPromptsSettings prompts={state.customPrompts} working={working} onSave={(id, label, prompt) => run(() => window.fovea.settings.saveCustomPrompt(id, label, prompt), id ? 'Prompt updated.' : 'Prompt added.')} onDelete={(id) => run(() => window.fovea.settings.deleteCustomPrompt(id), 'Prompt deleted.')} />}
       {category === 'Recipes' && <RecipeSettings state={state} working={working} onRun={run} />}
-      {category === 'Capture' && <><Card as="section" className="settings-section"><h2>Global shortcuts</h2><p className="muted">Click a shortcut then press a key combination. Suggested: Display +D, Window +W, Settings +S, Repeat +R.</p>{state.shortcuts.map((shortcut) => <ShortcutRecorder key={shortcut.action} action={shortcut.action} value={shortcut.accelerator} error={shortcut.error} onSave={(value) => run(() => window.fovea.settings.setShortcut(shortcut.action, value))} />)}<Button variant="secondary" onClick={() => void run(() => window.fovea.settings.resetShortcuts())}>Reset shortcuts</Button></Card><OcrLanguageSettings working={working} onOpen={() => void run(() => window.fovea.settings.openOcrLanguages(), 'Windows language settings opened.')} /><Card as="section" className="settings-section"><Switch label="Launch Fovea when Windows starts" checked={state.launchAtLogin} onChange={(event) => void run(() => window.fovea.settings.setLaunchAtLogin(event.target.checked))} /></Card></>}
+      {category === 'Capture' && <><Card as="section" className="settings-section"><h2>Global shortcuts</h2><p className="muted">Click a shortcut then press a key combination. Suggested: Display +D, Window +W, Settings +S, Repeat +R.</p>{state.shortcuts.map((shortcut) => <ShortcutRecorder key={shortcut.action} action={shortcut.action} value={shortcut.accelerator} error={shortcut.error} onSave={(value) => run(() => window.fovea.settings.setShortcut(shortcut.action, value))} />)}<Button variant="secondary" onClick={() => void run(() => window.fovea.settings.resetShortcuts())}>Reset shortcuts</Button></Card><OcrLanguageSettings working={working} onOpen={() => void run(() => window.fovea.settings.openOcrLanguages(), 'Windows language settings opened.')} /><Card as="section" className="settings-section"><Switch label="Launch Fovea when Windows starts" checked={state.launchAtLogin} onChange={(event) => void run(() => window.fovea.settings.setLaunchAtLogin(event.target.checked))} /></Card><ShellIntegrationSettings state={state.shellIntegration} onChange={(enabled) => void run(() => window.fovea.settings.setShellIntegration(enabled))} /></>}
       {category === 'Appearance' && <Card as="section" className="settings-section"><h2>Colour mode</h2><div className="appearance-options">{(['light','dark','system'] as const).map((item) => <button className={state.appearance.preference === item ? 'selected' : ''} key={item} onClick={() => void run(() => window.fovea.settings.setAppearance(item))}><span className={`theme-preview ${item}`} />{item[0]!.toUpperCase()+item.slice(1)}</button>)}</div><p className="muted">System follows the Windows app theme. Reduced-motion preferences are respected automatically.</p></Card>}
       {category === 'History' && <HistorySettings items={historyItems} query={historyQuery} working={working} onQuery={setHistoryQuery} onRefresh={() => setHistoryRefresh((value) => value + 1)} onRun={run} onExport={(id) => void openHistoryExport(id)} />}
       {category === 'Privacy' && <>
@@ -391,7 +443,7 @@ function ProviderProfileRow({
           </Badge>
           {profile.isDefault && <Badge tone="info">Default</Badge>}
         </div>
-        <small>{profile.accountLabel ?? profile.healthMessage ?? profile.authenticationState}</small>
+        <small>{profile.baseUrl ?? profile.accountLabel ?? profile.healthMessage ?? profile.authenticationState}</small>
       </div>
 
       <div className="profile-actions">
@@ -502,7 +554,8 @@ function providerLabel(provider: ProviderKind): string {
     anthropic: 'Anthropic',
     chatgpt: 'ChatGPT',
     openai: 'OpenAI',
-    openrouter: 'OpenRouter'
+    openrouter: 'OpenRouter',
+    custom: 'Custom'
   })[provider]
 }
 
@@ -531,6 +584,40 @@ export function OcrLanguageSettings({
       <Button disabled={working} variant="secondary" onClick={onOpen}>
         Manage OCR languages
       </Button>
+    </Card>
+  )
+}
+
+export function ShellIntegrationSettings({
+  state,
+  onChange
+}: {
+  state: ShellIntegrationState
+  onChange(enabled: boolean): void
+}): React.JSX.Element {
+  return (
+    <Card as="section" className="settings-section">
+      <h2>Windows right-click menu</h2>
+      <p className="muted">
+        Adds <strong>Analyse with Fovea</strong> when you right-click a picture or a PDF in File Explorer.
+        On Windows 11 it appears under <strong>Show more options</strong>.
+      </p>
+      <Switch
+        label="Add Fovea to the Windows right-click menu"
+        checked={state.enabled}
+        disabled={!state.supported}
+        onChange={(event) => onChange(event.target.checked)}
+      />
+      {!state.supported && (
+        <StatusBanner title="Windows only" tone="info">
+          The Explorer right-click menu is available on Windows.
+        </StatusBanner>
+      )}
+      {state.supported && state.enabled && !state.registered && (
+        <StatusBanner title="Menu entry needs repairing" tone="warning">
+          The right-click entry is missing or out of date. Turn this off and on again to rewrite it.
+        </StatusBanner>
+      )}
     </Card>
   )
 }

@@ -5,13 +5,16 @@ import { IPC, isWindowResizeEdge, type SettingsViewState } from '@shared/contrac
 import type { AppearancePreference, CaptureMode, CaptureRecipe, ConversationExportOptions, ConversationSelection, ImageEditOperation, OcrExternalActionKind, OnboardingStatus, ProviderKind, ShortcutAction } from '@shared/types/app'
 import type { Rectangle } from '@shared/types/geometry'
 import type { AppErrorCode } from '@shared/types/app-error'
+import { MAX_BASE_URL_LENGTH, MAX_CUSTOM_MODEL_IDS, normaliseBaseUrl } from '@shared/provider-endpoint'
 import { toIpcResult } from '../errors/app-error'
 import { conversationExportPreview, exportConversation, type ConversationExportRecord } from '../export/conversation-export-service'
+import type { CustomEndpoint } from '../providers/profile-manager'
 import { ocrEntityExternalTarget } from '../external/ocr-entity-target'
 import type { AppearanceController } from '../appearance/appearance-controller'
 import type { CaptureService } from '../capture/capture-service'
 import type { OnboardingController } from '../onboarding/onboarding-controller'
 import type { ProviderRegistry } from '../providers/provider-registry'
+import type { ExplorerIntegration } from '../shell/explorer-integration'
 import type { ShortcutManager } from '../shortcuts/shortcut-manager'
 import type { SettingsStore } from '../storage/settings-store'
 import type { TempScreenshotStore } from '../storage/temp-screenshot-store'
@@ -20,17 +23,29 @@ import type { QuestionSessions } from '../windows/question-sessions'
 import { ownsSettingsWebContents, showSettingsWindow } from '../windows/settings-window'
 import { resolveWindowChromeController, type WindowChromeController, type WindowChromeIpcEvent } from '../windows/window-chrome'
 
-export interface IpcDependencies { providers: ProviderRegistry; settings: SettingsStore; screenshots: TempScreenshotStore; history: ConversationHistoryStore; capture: CaptureService; onboarding: OnboardingController; questions: QuestionSessions; shortcuts: ShortcutManager; appearance: AppearanceController }
+export interface IpcDependencies { providers: ProviderRegistry; settings: SettingsStore; screenshots: TempScreenshotStore; history: ConversationHistoryStore; capture: CaptureService; onboarding: OnboardingController; questions: QuestionSessions; shortcuts: ShortcutManager; appearance: AppearanceController; explorer: ExplorerIntegration }
 
 export function registerIpc(dependencies: IpcDependencies): void {
   ipcMain.on(IPC.appearanceGet, (event) => { event.returnValue = dependencies.appearance.getState() })
-  const buildSettingsState = (): SettingsViewState => ({ appearance: dependencies.appearance.getState(), profiles: dependencies.providers.listProfiles(), chatGptRuntime: dependencies.providers.getChatGptRuntimeStatus(), shortcuts: dependencies.shortcuts.getState(), recipeShortcuts: dependencies.shortcuts.getRecipeState(), customPrompts: dependencies.settings.get().customPrompts, recipes: dependencies.settings.get().recipes, launchAtLogin: dependencies.settings.get().launchAtLogin, onboardingStatus: dependencies.settings.get().onboardingStatus, history: dependencies.settings.get().history, ocrLanguageCode: dependencies.settings.get().ocrLanguageCode, tempLocation: dependencies.screenshots.directory, appVersion: app.getVersion() })
+  // Reading the registry is asynchronous, so the last verified result is cached for the sync snapshot.
+  let shellRegistered = false
+  const buildSettingsState = (): SettingsViewState => ({ appearance: dependencies.appearance.getState(), profiles: dependencies.providers.listProfiles(), chatGptRuntime: dependencies.providers.getChatGptRuntimeStatus(), shortcuts: dependencies.shortcuts.getState(), recipeShortcuts: dependencies.shortcuts.getRecipeState(), customPrompts: dependencies.settings.get().customPrompts, recipes: dependencies.settings.get().recipes, launchAtLogin: dependencies.settings.get().launchAtLogin, shellIntegration: { enabled: dependencies.settings.get().shellIntegrationEnabled, supported: process.platform === 'win32', registered: shellRegistered }, onboardingStatus: dependencies.settings.get().onboardingStatus, history: dependencies.settings.get().history, ocrLanguageCode: dependencies.settings.get().ocrLanguageCode, tempLocation: dependencies.screenshots.directory, appVersion: app.getVersion() })
   const broadcastSettings = (): void => {
     const state = buildSettingsState()
     for (const window of BrowserWindow.getAllWindows()) {
       if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send(IPC.settingsChanged, state)
     }
   }
+  const refreshShellIntegration = async (): Promise<void> => {
+    shellRegistered = await dependencies.explorer.verify() === 'registered'
+  }
+  /** The Ask submenu lists the saved prompts, so editing one has to rewrite the menu. */
+  const rewriteShellIntegration = async (): Promise<void> => {
+    if (!dependencies.settings.get().shellIntegrationEnabled) return
+    await dependencies.explorer.enable()
+    await refreshShellIntegration()
+  }
+  void refreshShellIntegration().then(broadcastSettings).catch(() => undefined)
   dependencies.providers.on('status', broadcastSettings)
   const mutate = async (operation: () => Promise<unknown>): Promise<void> => { await operation(); broadcastSettings() }
   const handle = (
@@ -45,7 +60,14 @@ export function registerIpc(dependencies: IpcDependencies): void {
   handle(IPC.settingsOpenOcrLanguages, () => shell.openExternal('ms-settings:regionlanguage'))
   handle(IPC.settingsSetAppearance, (_event, value) => mutate(() => dependencies.appearance.setPreference(requireAppearance(value))), 'validation')
   handle(IPC.settingsSetLaunchAtLogin, (_event, enabled) => mutate(async () => { if (typeof enabled !== 'boolean') throw new Error('Invalid launch setting.'); app.setLoginItemSettings({ openAtLogin: enabled, path: process.execPath }); await dependencies.settings.update({ launchAtLogin: enabled }) }), 'validation')
-  handle(IPC.settingsSetShortcut, (_event, action, accelerator) => mutate(() => dependencies.shortcuts.set(requireShortcutAction(action), requireAccelerator(accelerator))), 'validation')
+  handle(IPC.settingsSetShellIntegration, (_event, enabled) => mutate(async () => {
+    if (typeof enabled !== 'boolean') throw new Error('Invalid context-menu setting.')
+    if (enabled) await dependencies.explorer.enable()
+    else await dependencies.explorer.disable()
+    await dependencies.settings.update({ shellIntegrationEnabled: enabled })
+    await refreshShellIntegration()
+  }), 'validation')
+  handle(IPC.settingsSetShortcut,(_event, action, accelerator) => mutate(() => dependencies.shortcuts.set(requireShortcutAction(action), requireAccelerator(accelerator))), 'validation')
   handle(IPC.settingsResetShortcuts, () => mutate(() => dependencies.shortcuts.reset()))
   handle(IPC.settingsSaveCustomPrompt, (_event, id, label, prompt) => mutate(async () => {
     const settings = dependencies.settings.get()
@@ -62,12 +84,14 @@ export function registerIpc(dependencies: IpcDependencies): void {
     if (index >= 0) customPrompts[index] = nextPrompt
     else customPrompts.push(nextPrompt)
     await dependencies.settings.update({ customPrompts })
+    await rewriteShellIntegration()
   }), 'validation')
   handle(IPC.settingsDeleteCustomPrompt, (_event, id) => mutate(async () => {
     const promptId = requireId(id)
     const settings = dependencies.settings.get()
     if (!settings.customPrompts.some((item) => item.id === promptId)) throw new Error('Custom prompt not found.')
     await dependencies.settings.update({ customPrompts: settings.customPrompts.filter((item) => item.id !== promptId) })
+    await rewriteShellIntegration()
   }), 'validation')
   handle(IPC.settingsSaveRecipe, (_event, value) => mutate(async () => {
     const recipe = requireCaptureRecipe(value)
@@ -164,7 +188,7 @@ export function registerIpc(dependencies: IpcDependencies): void {
   handle(IPC.settingsDeleteTemp, () => dependencies.screenshots.cleanup())
 
   handle(IPC.profilesList, () => dependencies.providers.listProfiles())
-  handle(IPC.profilesCreateApiKey, async (_event, provider, name, apiKey) => { const result = await dependencies.providers.profiles.createApiKey(requireApiProvider(provider), requireString(name, 80), requireString(apiKey, 2048)); broadcastSettings(); return result }, 'validation')
+  handle(IPC.profilesCreateApiKey, async (_event, provider, name, apiKey, endpoint) => { const result = await dependencies.providers.profiles.createApiKey(requireApiProvider(provider), requireString(name, 80), requireString(apiKey, 2048), requireCustomEndpoint(endpoint)); broadcastSettings(); return result }, 'validation')
   handle(IPC.profilesCreateChatGpt, async (_event, name) => { const result = await dependencies.providers.profiles.createChatGpt(name === undefined ? undefined : requireString(name, 80)); broadcastSettings(); return result }, 'validation')
   handle(IPC.profilesRename, (_event, id, name) => mutate(() => dependencies.providers.profiles.rename(requireId(id), requireString(name, 80))), 'validation')
   handle(IPC.profilesAuthenticate, (_event, id) => mutate(() => dependencies.providers.authenticate(requireId(id))), 'authentication-required')
@@ -324,8 +348,22 @@ function requireShortcutAction(value: unknown): ShortcutAction { if (!['region',
 function requireCaptureMode(value: unknown): CaptureMode { if (!['region', 'display', 'window', 'repeat-last'].includes(String(value))) throw new Error('Invalid capture mode.'); return value as CaptureMode }
 function requireOcrExternalActionKind(value: unknown): OcrExternalActionKind { if (!['url', 'email', 'phone'].includes(String(value))) throw new Error('Invalid OCR action.'); return value as OcrExternalActionKind }
 function requireOcrLanguagePreference(value: unknown): string { const code = requireString(value, 35); if (code && !/^[A-Za-z0-9-]{2,35}$/.test(code)) throw new Error('Invalid OCR language.'); return code }
-function requireApiProvider(value: unknown): Exclude<ProviderKind, 'chatgpt'> { if (!['openai', 'anthropic', 'openrouter'].includes(String(value))) throw new Error('Invalid API provider.'); return value as Exclude<ProviderKind, 'chatgpt'> }
-function requireSelection(value: unknown): ConversationSelection { if (!value || typeof value !== 'object') throw new Error('Invalid conversation selection.'); const item = value as Record<string, unknown>; const provider = String(item.provider); if (!['chatgpt', 'openai', 'anthropic', 'openrouter'].includes(provider)) throw new Error('Invalid provider selection.'); return { profileId: requireTrimmedString(item.profileId, 100), provider: provider as ProviderKind, modelId: requireTrimmedString(item.modelId, 200), reasoningEffort: requireNullableString(item.reasoningEffort, 50) } }
+function requireApiProvider(value: unknown): Exclude<ProviderKind, 'chatgpt'> { if (!['openai', 'anthropic', 'openrouter', 'custom'].includes(String(value))) throw new Error('Invalid API provider.'); return value as Exclude<ProviderKind, 'chatgpt'> }
+function requireCustomEndpoint(value: unknown): CustomEndpoint {
+  if (value === undefined || value === null) return {}
+  if (typeof value !== 'object') throw new Error('Invalid API address.')
+  const candidate = value as Record<string, unknown>
+  const modelIds = candidate.modelIds
+  if (modelIds !== undefined && (!Array.isArray(modelIds) || modelIds.length > MAX_CUSTOM_MODEL_IDS || !modelIds.every((id) => typeof id === 'string' && id.trim().length > 0 && id.length <= 200))) {
+    throw new Error('Invalid model identifiers.')
+  }
+  return {
+    // normaliseBaseUrl enforces https, rejects embedded credentials, and strips query strings.
+    ...(candidate.baseUrl === undefined ? {} : { baseUrl: normaliseBaseUrl(requireString(candidate.baseUrl, MAX_BASE_URL_LENGTH)) }),
+    ...(modelIds === undefined ? {} : { modelIds: modelIds as string[] })
+  }
+}
+function requireSelection(value: unknown): ConversationSelection { if (!value || typeof value !== 'object') throw new Error('Invalid conversation selection.'); const item = value as Record<string, unknown>; const provider = String(item.provider); if (!['chatgpt', 'openai', 'anthropic', 'openrouter', 'custom'].includes(provider)) throw new Error('Invalid provider selection.'); return { profileId: requireTrimmedString(item.profileId, 100), provider: provider as ProviderKind, modelId: requireTrimmedString(item.modelId, 200), reasoningEffort: requireNullableString(item.reasoningEffort, 50) } }
 function isRectangle(value: unknown): value is Rectangle { return Boolean(value && typeof value === 'object' && ['x','y','width','height'].every((key) => typeof (value as Record<string, unknown>)[key] === 'number' && Number.isFinite((value as Record<string, unknown>)[key]))) }
 function requireInteger(value: unknown, minimum: number, maximum: number): number { if (typeof value !== 'number' || !Number.isInteger(value) || value < minimum || value > maximum) throw new Error('Invalid number.'); return value }
 

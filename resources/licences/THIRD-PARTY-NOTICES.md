@@ -22,6 +22,11 @@ Fovea also bundles Tesseract.js 7.0.0 and tesseract.js-core 7.0.0 for local
 optical character recognition. Both packages are licensed under the Apache
 License 2.0; the complete licence text is included as `CODEX-LICENSE.txt`.
 
+Fovea bundles PDF.js (`pdfjs-dist` 6.2.108) from
+https://github.com/mozilla/pdf.js to draw and read PDF files opened from the
+Windows right-click menu. It is licensed under the Apache License 2.0; the
+complete licence text is included as `CODEX-LICENSE.txt`.
+
 Fovea bundles `@zxing/library` 0.21.3 from
 https://github.com/zxing-js/library for local QR-code and barcode detection.
 Its distributed licence file contains the Apache License 2.0 and the
