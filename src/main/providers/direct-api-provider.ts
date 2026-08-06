@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises'
+import { extname } from 'node:path'
 import type { ProviderKind, ProviderModelCapability } from '@shared/types/app'
 import type { ProviderEvent, VisionTurnInput } from '@shared/types/provider'
 import { createAppError, FoveaError } from '../errors/app-error'
@@ -46,7 +47,10 @@ export class DirectApiProvider {
   }
 
   async *send(apiKey: string, input: VisionTurnInput, signal?: AbortSignal): AsyncIterable<ProviderEvent> {
-    const images = await Promise.all((input.imagePaths ?? []).map(async (imagePath) => (await readFile(imagePath)).toString('base64')))
+    const images = await Promise.all((input.imagePaths ?? []).map(async (imagePath) => ({
+      data: (await readFile(imagePath)).toString('base64'),
+      mediaType: imageMediaType(imagePath)
+    })))
     const response = await requestSafely(this.request, this.sendEndpoint(), {
       method: 'POST',
       headers: { ...this.headers(apiKey), 'content-type': 'application/json' },
@@ -113,7 +117,7 @@ export class DirectApiProvider {
     return [{ id, displayName: typeof item.name === 'string' ? item.name : id, provider: this.kind, inputModalities: ['text', 'image'], supportedReasoningEfforts: [], isDefault: false }]
   }
 
-  private requestBody(input: VisionTurnInput, images: string[]): Record<string, unknown> {
+  private requestBody(input: VisionTurnInput, images: Array<{ data: string; mediaType: string }>): Record<string, unknown> {
     const instructions = input.webSearchPreferred
       ? WEB_SEARCH_PREFERRED_INSTRUCTION
       : input.webSearchAllowed ? WEB_SEARCH_APPROVED_INSTRUCTION : WEB_SEARCH_REQUEST_INSTRUCTION
@@ -126,12 +130,12 @@ export class DirectApiProvider {
         ...(input.reasoningEffort ? { reasoning: { effort: input.reasoningEffort } } : {}),
          input: [{ role: 'user', content: [
            { type: 'input_text', text: input.text },
-           ...images.map((image) => ({ type: 'input_image', image_url: `data:image/png;base64,${image}` }))
+           ...images.map((image) => ({ type: 'input_image', image_url: `data:${image.mediaType};base64,${image.data}` }))
          ] }]
       }
     }
     const content = [
-      ...images.map((image) => ({ type: 'image', source: { type: 'base64', media_type: 'image/png', data: image } })),
+      ...images.map((image) => ({ type: 'image', source: { type: 'base64', media_type: image.mediaType, data: image.data } })),
       { type: 'text', text: input.text }
     ]
     if (this.kind === 'anthropic') return { model: input.modelId, max_tokens: 4096, stream: true, system: instructions, ...(input.webSearchAllowed ? { tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 3 }] } : {}), messages: [{ role: 'user', content }] }
@@ -139,7 +143,7 @@ export class DirectApiProvider {
      // web-search tool is an OpenRouter extension, so a custom endpoint never receives it.
      return { model: input.modelId, stream: true, ...(input.webSearchAllowed && this.kind === 'openrouter' ? { tools: [{ type: 'openrouter:web_search' }] } : {}), messages: [{ role: 'system', content: instructions }, { role: 'user', content: [
        { type: 'text', text: input.text },
-       ...images.map((image) => ({ type: 'image_url', image_url: { url: `data:image/png;base64,${image}` } }))
+       ...images.map((image) => ({ type: 'image_url', image_url: { url: `data:${image.mediaType};base64,${image.data}` } }))
      ] }] }
   }
 
@@ -152,6 +156,13 @@ export class DirectApiProvider {
     const choices = payload.choices as Array<{ delta?: { content?: unknown } }> | undefined
     return typeof choices?.[0]?.delta?.content === 'string' ? choices[0].delta.content : ''
   }
+}
+
+function imageMediaType(path: string): 'image/png' | 'image/jpeg' | 'image/webp' {
+  const extension = extname(path).toLocaleLowerCase()
+  if (extension === '.jpg' || extension === '.jpeg') return 'image/jpeg'
+  if (extension === '.webp') return 'image/webp'
+  return 'image/png'
 }
 
 async function requireOk(response: Response): Promise<void> {

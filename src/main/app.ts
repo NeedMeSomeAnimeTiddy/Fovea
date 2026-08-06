@@ -126,14 +126,16 @@ async function startApplication(): Promise<void> {
     uiAutomation,
     screenshotDetector
   )
-  const questions = new QuestionSessions(providers, screenshots, (destination) => capture.begin('region', destination), undefined, history, settings, imageEditor, ocr)
-  services.questions = questions
+  // Built before the sessions so they can share one ingestion path: the Explorer context menu
+  // and images dropped, pasted, or picked into a conversation all normalise the same way.
   const files = new FileAnalysisService(
     screenshots,
-    (analysis) => questions.openFiles(analysis),
+    (analysis) => services.questions!.openFiles(analysis),
     (message) => showSafeError(message, 'capture-failed'),
     new PdfIngestionService()
   )
+  const questions = new QuestionSessions(providers, screenshots, (destination) => capture.begin('region', destination), undefined, history, settings, imageEditor, ocr, files)
+  services.questions = questions
   const explorer = new ExplorerIntegration(
     {
       executablePath: process.execPath,
@@ -157,9 +159,16 @@ async function startApplication(): Promise<void> {
     })
   }
   const captureSafely = (mode: Parameters<CaptureService['begin']>[0]): void => { void capture.begin(mode).catch((error) => showSafeError(error, 'capture-failed')) }
+  const runRecipeSafely = (recipeId: string): void => {
+    const recipe = settings.get().recipes.find((item) => item.id === recipeId && item.enabled)
+    if (!recipe) return
+    void capture.begin(recipe.captureMode, {
+      onCompleted: (completed) => questions.open(completed, recipe)
+    }).catch((error) => showSafeError(error, 'capture-failed'))
+  }
   const shortcuts = new ShortcutManager(globalShortcut, settings, {
     region: () => captureSafely('region'), display: () => captureSafely('display'), window: () => captureSafely('window'), 'repeat-last': () => captureSafely('repeat-last'), settings: openSettingsSafely
-  })
+  }, runRecipeSafely)
   shortcuts.initialise()
   tray = new TrayController(async (mode) => capture.begin(mode), shortcuts, providers, settings)
   tray.initialise()

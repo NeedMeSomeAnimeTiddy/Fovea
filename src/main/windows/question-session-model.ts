@@ -4,6 +4,7 @@ import type {
   ConversationExchange,
   ConversationSegment,
   ConversationSelection,
+  QuestionDraft,
   ProviderModelCapability,
   ProviderProfileSummary,
   ResponsePhase
@@ -37,6 +38,8 @@ export interface QuestionSessionState {
   /** Text recovered locally from imported files, resent with every turn. Empty for captures. */
   documentContext: string
   ocrContextByExchangeId: Map<string, string>
+  draft: QuestionDraft | null
+  launchError: string | null
 }
 
 export function questionSessionSnapshot(
@@ -61,6 +64,8 @@ export function questionSessionSnapshot(
     models: structuredClone(session.models),
     disclosure: session.disclosure,
     busy: session.busy,
-    pinned: session.pinned
+    pinned: session.pinned,
+    draft: session.draft ? structuredClone(session.draft) : null,
+    launchError: session.launchError
   }
 }

@@ -1,6 +1,6 @@
 import { DatabaseSync, type SQLOutputValue } from 'node:sqlite'
 import { chmod, copyFile, mkdir, readFile, rename, rm, stat } from 'node:fs/promises'
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname, extname, join } from 'node:path'
 import type {
   ConversationExchange,
   ConversationHistorySummary,
@@ -423,7 +423,8 @@ export class ConversationHistoryStore {
         retained.push({ ...previous, edited: source.edited })
         continue
       }
-      const extension = basename(source.imagePath).toLocaleLowerCase().endsWith('.png') ? '.png' : '.png'
+      const candidateExtension = extname(basename(source.imagePath)).toLocaleLowerCase()
+      const extension = ['.png', '.jpg', '.jpeg', '.webp'].includes(candidateExtension) ? candidateExtension : '.png'
       const destination = join(this.imageDirectory, `${safeFilePart(conversationId)}-${safeFilePart(source.id)}${extension}`)
       await copyFile(source.imagePath, destination)
       await chmod(destination, 0o600).catch(() => undefined)

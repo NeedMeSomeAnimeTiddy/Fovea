@@ -143,6 +143,67 @@ describe('SettingsStore custom prompts', () => {
   })
 })
 
+describe('SettingsStore capture recipes', () => {
+  it('persists ordered recipes without storing credentials', async () => {
+    const path = await settingsPath()
+    const store = new SettingsStore(path)
+    await store.load()
+    await store.update({
+      recipes: [{
+        id: 'accessibility-review',
+        name: 'Accessibility review',
+        enabled: true,
+        captureMode: 'region',
+        prompt: 'Review this interface for accessibility problems.',
+        preferWebSearch: false,
+        extractText: true,
+        ocrLanguageCode: 'en-GB',
+        provider: { mode: 'current-default' },
+        shortcut: 'CommandOrControl+Alt+1',
+        autoSend: false,
+        autoSendConsentVersion: 0
+      }]
+    })
+
+    const saved = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>
+    expect(saved).not.toHaveProperty('apiKey')
+    expect(JSON.stringify(saved)).not.toContain('credential')
+    const reloaded = new SettingsStore(path)
+    await reloaded.load()
+    expect(reloaded.get().recipes).toHaveLength(1)
+    expect(reloaded.get().recipes[0]).toMatchObject({
+      id: 'accessibility-review',
+      name: 'Accessibility review',
+      extractText: true,
+      provider: { mode: 'current-default' }
+    })
+  })
+
+  it('disables auto-send unless its current consent is present', async () => {
+    const path = await settingsPath()
+    await writeFile(path, JSON.stringify({
+      version: 4,
+      recipes: [{
+        id: 'imported',
+        name: 'Imported',
+        enabled: true,
+        captureMode: 'display',
+        prompt: 'Describe this.',
+        preferWebSearch: true,
+        extractText: false,
+        provider: { mode: 'current-default' },
+        shortcut: null,
+        autoSend: true,
+        autoSendConsentVersion: 0
+      }]
+    }))
+
+    const store = new SettingsStore(path)
+    await store.load()
+    expect(store.get().recipes[0]).toMatchObject({ autoSend: false, autoSendConsentVersion: 0 })
+  })
+})
+
 describe('SettingsStore onboarding status', () => {
   it('defaults fresh settings to pending', async () => {
     const path = await settingsPath()
@@ -198,7 +259,7 @@ describe('SettingsStore history privacy', () => {
     await store.load()
 
     expect(store.get()).toMatchObject({
-      version: 3,
+      version: 4,
       appearance: 'dark',
       history: { privateMode: false, retentionDays: 30, retainScreenshots: false }
     })

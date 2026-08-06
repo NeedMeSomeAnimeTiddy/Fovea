@@ -25,7 +25,9 @@ describe('typed question session snapshot', () => {
       historyId: 'history-1',
       createdAt: '2026-08-04T00:00:00.000Z',
       documentContext: '',
-      ocrContextByExchangeId: new Map()
+      ocrContextByExchangeId: new Map(),
+      draft: null,
+      launchError: null
     }
 
     const snapshot = questionSessionSnapshot(state, [])

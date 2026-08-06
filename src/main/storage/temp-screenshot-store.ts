@@ -10,9 +10,13 @@ export class TempScreenshotStore {
   }
 
   async save(png: Buffer): Promise<string> {
+    return this.saveImage(png, 'png')
+  }
+
+  async saveImage(image: Buffer, extension: 'png' | 'jpg' | 'webp'): Promise<string> {
     await this.initialise()
-    const path = join(this.directory, `snip-${Date.now()}-${randomUUID()}.png`)
-    await writeFile(path, png, { mode: 0o600 })
+    const path = join(this.directory, `snip-${Date.now()}-${randomUUID()}.${extension}`)
+    await writeFile(path, image, { mode: 0o600 })
     return path
   }
 
@@ -26,7 +30,7 @@ export class TempScreenshotStore {
     const now = Date.now()
     let removed = 0
     for (const entry of await readdir(this.directory, { withFileTypes: true })) {
-      if (!entry.isFile() || !/^snip-.*\.png$/i.test(entry.name)) continue
+      if (!entry.isFile() || !/^snip-.*\.(?:png|jpe?g|webp)$/i.test(entry.name)) continue
       const path = join(this.directory, entry.name)
       if (olderThanMs > 0) {
         const metadata = await stat(path)

@@ -1,0 +1,40 @@
+.export-dialog__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: var(--fovea-z-overlay);
+  display: grid;
+  place-items: center;
+  padding: var(--fovea-space-6);
+  background: var(--fovea-color-scrim);
+}
+
+.export-dialog {
+  width: min(32rem, 100%);
+  max-height: 100%;
+  overflow: auto;
+  display: grid;
+  gap: var(--fovea-space-4);
+}
+
+.export-dialog h2,
+.export-dialog p { margin: 0; }
+
+.export-dialog__preview {
+  display: grid;
+  gap: var(--fovea-space-2);
+  padding: var(--fovea-space-4);
+  border-radius: var(--fovea-radius-md);
+  background: var(--fovea-glass-fill-subtle);
+}
+
+.export-dialog__preview p {
+  max-height: 6rem;
+  overflow: auto;
+  color: var(--fovea-color-text-secondary);
+}
+
+.export-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--fovea-space-3);
+}

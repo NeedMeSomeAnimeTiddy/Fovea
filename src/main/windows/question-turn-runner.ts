@@ -161,6 +161,9 @@ export function setTurnPhase(
 ): void {
   session.phase = phase
   exchange.phase = phase
+  if (['completed', 'failed', 'stopped'].includes(phase) && !exchange.completedAt) {
+    exchange.completedAt = new Date().toISOString()
+  }
 }
 
 function parseWebSearchRequest(value: string): string | null {

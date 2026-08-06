@@ -2,6 +2,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import type {
   AppearancePreference,
+  CaptureRecipe,
   CustomPrompt,
   HistorySettings,
   OnboardingStatus,
@@ -31,7 +32,7 @@ export interface StoredProviderProfile {
 export type ShortcutSettings = Record<ShortcutAction, string | null>
 
 export interface AppSettings {
-  version: 3
+  version: 4
   appearance: AppearancePreference
   onboardingStatus: OnboardingStatus
   launchAtLogin: boolean
@@ -41,6 +42,7 @@ export interface AppSettings {
   profiles: StoredProviderProfile[]
   defaultProfileId: string | null
   customPrompts: CustomPrompt[]
+  recipes: CaptureRecipe[]
   history: HistorySettings
   ocrLanguageCode: string
 }
@@ -54,7 +56,7 @@ export const DEFAULT_SHORTCUTS: ShortcutSettings = {
 }
 
 const DEFAULTS: AppSettings = {
-  version: 3,
+  version: 4,
   appearance: 'light',
   onboardingStatus: 'pending',
   launchAtLogin: false,
@@ -63,6 +65,7 @@ const DEFAULTS: AppSettings = {
   profiles: [],
   defaultProfileId: null,
   customPrompts: [],
+  recipes: [],
   ocrLanguageCode: '',
   history: {
     privateMode: false,
@@ -74,6 +77,7 @@ const DEFAULTS: AppSettings = {
 const APPEARANCES = new Set<AppearancePreference>(['system', 'dark', 'light'])
 const ONBOARDING_STATUSES = new Set<OnboardingStatus>(['pending', 'skipped', 'completed'])
 const SHORTCUT_ACTIONS: ShortcutAction[] = ['region', 'display', 'window', 'repeat-last', 'settings']
+const CAPTURE_MODES = new Set(['region', 'display', 'window', 'repeat-last'])
 
 type StoredSettingsInput = Partial<AppSettings> & { onboardingCompleted?: unknown }
 
@@ -141,8 +145,15 @@ function sanitize(value: StoredSettingsInput): AppSettings {
           prompt: prompt.prompt.trim()
         }))
     : []
+  const recipes = Array.isArray(value.recipes)
+    ? value.recipes
+        .filter(isStoredRecipe)
+        .filter((recipe, index, items) => items.findIndex((item) => item.id === recipe.id) === index)
+        .slice(0, 50)
+        .map(sanitizeRecipe)
+    : []
   return {
-    version: 3,
+    version: 4,
     appearance: APPEARANCES.has(value.appearance as AppearancePreference)
       ? (value.appearance as AppearancePreference)
       : 'light',
@@ -157,11 +168,61 @@ function sanitize(value: StoredSettingsInput): AppSettings {
     profiles,
     defaultProfileId,
     customPrompts,
+    recipes,
     history: sanitizeHistorySettings(value.history),
     ocrLanguageCode: typeof value.ocrLanguageCode === 'string' && /^(?:|[A-Za-z0-9-]{2,35})$/.test(value.ocrLanguageCode)
       ? value.ocrLanguageCode
       : ''
   }
+}
+
+function isStoredRecipe(value: unknown): value is CaptureRecipe {
+  if (!value || typeof value !== 'object') return false
+  const recipe = value as Partial<CaptureRecipe>
+  if (
+    typeof recipe.id !== 'string' || recipe.id.length < 1 || recipe.id.length > 100 ||
+    typeof recipe.name !== 'string' || recipe.name.trim().length < 1 || recipe.name.length > 80 ||
+    !CAPTURE_MODES.has(String(recipe.captureMode)) ||
+    typeof recipe.prompt !== 'string' || recipe.prompt.trim().length < 1 || recipe.prompt.length > 10_000 ||
+    !recipe.provider || typeof recipe.provider !== 'object'
+  ) return false
+  if (recipe.provider.mode === 'current-default') return true
+  return recipe.provider.mode === 'fixed' && isConversationSelection(recipe.provider.selection)
+}
+
+function sanitizeRecipe(recipe: CaptureRecipe): CaptureRecipe {
+  const shortcut = typeof recipe.shortcut === 'string' && recipe.shortcut.trim().length <= 100
+    ? recipe.shortcut.trim()
+    : null
+  const extractText = recipe.extractText === true
+  const ocrLanguageCode = extractText && typeof recipe.ocrLanguageCode === 'string' && /^[A-Za-z0-9-]{2,35}$/.test(recipe.ocrLanguageCode)
+    ? recipe.ocrLanguageCode
+    : undefined
+  return {
+    id: recipe.id,
+    name: recipe.name.trim(),
+    enabled: recipe.enabled === true,
+    captureMode: recipe.captureMode,
+    prompt: recipe.prompt.trim(),
+    preferWebSearch: recipe.preferWebSearch === true,
+    extractText,
+    ...(ocrLanguageCode ? { ocrLanguageCode } : {}),
+    provider: structuredClone(recipe.provider),
+    shortcut,
+    autoSend: recipe.autoSend === true && recipe.autoSendConsentVersion === 1,
+    autoSendConsentVersion: recipe.autoSend === true && recipe.autoSendConsentVersion === 1 ? 1 : 0
+  }
+}
+
+function isConversationSelection(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false
+  const selection = value as { profileId?: unknown; provider?: unknown; modelId?: unknown; reasoningEffort?: unknown }
+  return Boolean(
+    typeof selection.profileId === 'string' && selection.profileId.length > 0 && selection.profileId.length <= 100 &&
+    ['chatgpt', 'openai', 'anthropic', 'openrouter'].includes(String(selection.provider)) &&
+    typeof selection.modelId === 'string' && selection.modelId.length > 0 && selection.modelId.length <= 200 &&
+    (selection.reasoningEffort === null || typeof selection.reasoningEffort === 'string')
+  )
 }
 
 function sanitizeHistorySettings(value: unknown): HistorySettings {

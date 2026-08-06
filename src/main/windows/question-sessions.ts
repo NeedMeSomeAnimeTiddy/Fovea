@@ -1,19 +1,21 @@
 import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { app, BrowserWindow, nativeImage, screen } from 'electron'
+import { basename, extname } from 'node:path'
 import { IPC, type QuestionViewState, type WindowMaterial } from '../../shared/contracts/ipc'
-import type { ConversationExchange, ConversationSegment, ConversationSelection, OcrLanguage, OcrResult, ProviderModelCapability, QuestionAttachment, ResponsePhase } from '@shared/types/app'
+import type { CaptureRecipe, ConversationExchange, ConversationSegment, ConversationSelection, ImageImportResult, OcrLanguage, OcrResult, ProviderModelCapability, QuestionAttachment, ResponsePhase } from '@shared/types/app'
 import type { ImageEditOperation } from '@shared/types/app'
 import type { ProviderEvent } from '@shared/types/provider'
 import { createAppError, FoveaError, toAppError } from '../errors/app-error'
 import type { CaptureDestination, CompletedCapture } from '../capture/capture-service'
-import type { AnalysedDocument, PreparedFileAnalysis } from '../files/file-analysis-service'
+import type { AnalysedDocument, FileAnalysisService, PreparedFileAnalysis } from '../files/file-analysis-service'
 import type { AnalyseAction } from '../shell/analyse-arguments'
 import type { ProviderRegistry } from '../providers/provider-registry'
 import type { TempScreenshotStore } from '../storage/temp-screenshot-store'
 import type { ConversationHistoryStore } from '../storage/conversation-history-store'
 import type { SettingsStore } from '../storage/settings-store'
 import { ImageEditorService } from '../capture/image-editor-service'
+import type { ConversationExportRecord } from '../export/conversation-export-service'
 import { OcrServiceError, UnavailableOcrService, type OcrService } from '../ocr/ocr-service'
 import { getWindowAppearanceOptions, selectWindowMaterial, type WindowSurfaceSizes } from './window-appearance'
 import { openBrowserWindowWithChrome, WINDOW_CHROME_READY_TIMEOUT_MS } from './window-chrome'
@@ -48,6 +50,8 @@ const WEB_SEARCH_APPROVED_PREFIX = '[FOVEA_WEB_SEARCH_APPROVED]'
 const WEB_SEARCH_PREFERRED_PREFIX = '[FOVEA_WEB_SEARCH_PREFERRED]'
 const INITIAL_QUESTION = 'Analyse this capture'
 const INITIAL_FILE_QUESTION = 'Analyse this file'
+/** Attachments one conversation can hold, however they arrived. */
+export const MAX_CONVERSATION_ATTACHMENTS = 10
 const RESPONSE_INSTRUCTION = `Respond as a clean productivity assistant for a non-technical user. First output exactly one compact metadata tag in this form, with valid JSON and no Markdown fence:
 <fovea-response>{"category":"a short internal category","summary":"a concise direct answer","suggestedQuestions":["four specific follow-up questions"]}</fovea-response>
 Never narrate or announce searching, browsing, tool use, analysis, or a plan. Even after an approved web search, begin directly with the metadata tag. The category is internal and must not be mentioned in the visible answer. The summary must give the most useful result first in plain language, normally in one to three sentences and at most 70 words. Supply exactly four short follow-up questions that the user can ask Fovea now and that are directly grounded in the current capture, the existing conversation, or facts a web search can verify. Never ask the user to share, upload, attach, provide, capture, or show another screen, screenshot, image, file, link, recording, or an earlier/later state. Do not suggest an action that this app cannot perform. After the tag, optionally provide useful Markdown detail that expands on the summary without repeating it. Do not add a visible category heading.`
@@ -65,16 +69,29 @@ export class QuestionSessions {
     private readonly history?: ConversationHistoryStore,
     private readonly settings?: SettingsStore,
     private readonly imageEditor = new ImageEditorService(screenshots),
-    private readonly ocr: OcrService = new UnavailableOcrService()
+    private readonly ocr: OcrService = new UnavailableOcrService(),
+    /** Shared with the Explorer context menu so every import applies the same rules. */
+    private readonly files?: Pick<FileAnalysisService, 'prepareFile' | 'prepareImage'>
   ) {}
 
-  async open(capture: CompletedCapture): Promise<void> {
+  async open(capture: CompletedCapture, recipe?: CaptureRecipe): Promise<void> {
     const id = randomUUID()
     const createdAt = new Date().toISOString()
-    const attachment = createSessionAttachment(capture.imagePath, 'sent', capture.edited === true)
-    const session: QuestionSessionState = { id, attachments: [attachment], window: null, previewWindow: null, previewAttachmentId: null, busy: false, cleaningUp: false, capturePending: false, phase: 'idle', selection: null, exchanges: [], segments: [], disclosure: null, models: [], initialization: Promise.resolve(), pinned: false, historyId: id, createdAt, documentContext: '', ocrContextByExchangeId: new Map() }
+    const attachment = createSessionAttachment(capture.imagePath, recipe ? 'draft' : 'sent', capture.edited === true)
+    const session: QuestionSessionState = { id, attachments: [attachment], window: null, previewWindow: null, previewAttachmentId: null, busy: false, cleaningUp: false, capturePending: false, phase: 'idle', selection: null, exchanges: [], segments: [], disclosure: null, models: [], initialization: Promise.resolve(), pinned: false, historyId: id, createdAt, documentContext: '', ocrContextByExchangeId: new Map(), draft: recipe ? { text: recipe.prompt, preferWebSearch: recipe.preferWebSearch, recipeName: recipe.name, captureMode: recipe.captureMode, extractText: recipe.extractText, ocrLanguageCode: recipe.ocrLanguageCode, autoSend: recipe.autoSend } : null, launchError: null }
     this.sessions.set(id, session)
-    session.initialization = this.selectInitial(session, capture.preferWebSearch === true, capture.extractText === true, capture.ocrLanguageCode, capture.initialQuestion)
+    session.initialization = recipe
+      ? this.selectRecipeInitial(session, recipe)
+      : this.selectInitial(session, capture.preferWebSearch === true, capture.extractText === true, capture.ocrLanguageCode, capture.initialQuestion)
+    if (recipe?.autoSend) {
+      void session.initialization.then(() => {
+        if (!session.launchError && session.selection && session.draft) return this.send(id, session.draft.text, session.draft.preferWebSearch)
+      }).catch((error) => {
+        session.launchError = error instanceof Error ? error.message : String(error)
+        session.busy = false
+        this.emitChanged(session)
+      })
+    }
     const material = selectWindowMaterial({ disableTransparentWindows: app.commandLine.hasSwitch('disable-transparent-windows') })
     try {
       const opened = await openBrowserWindowWithChrome({ kind: 'question', label: 'Question window', initialMaterial: material, surfaceSize: QUESTION_WINDOW_SIZES.surfaceSize, minimumSurfaceSize: QUESTION_WINDOW_SIZES.minimumSurfaceSize, screenSource: screen, timeoutMs: QUESTION_WINDOW_READY_TIMEOUT_MS, canMaximize: false, canResize: false, createWindow: (attempt) => this.createQuestionWindow(capture, session, attempt), loadRenderer: (window) => loadRenderer(window, 'question', { session: id }), isWindowCurrent: (window) => this.sessions.get(id) === session && session.window === window, beforeRetry: (window) => { if (session.window === window) session.window = null } })
@@ -108,7 +125,9 @@ export class QuestionSessions {
       historyId: record.id,
       createdAt: record.createdAt,
       documentContext: '',
-      ocrContextByExchangeId: new Map()
+      ocrContextByExchangeId: new Map(),
+      draft: null,
+      launchError: null
     }
     this.sessions.set(id, session)
     session.initialization = this.initialiseRestored(session)
@@ -162,7 +181,9 @@ export class QuestionSessions {
       historyId: id,
       createdAt,
       documentContext: buildDocumentContext(analysis.documents),
-      ocrContextByExchangeId: new Map()
+      ocrContextByExchangeId: new Map(),
+      draft: null,
+      launchError: null
     }
     this.sessions.set(id, session)
     session.initialization = this.selectInitialForFiles(session, analysis.notices, analysis.action, analysis.prompt)
@@ -191,6 +212,25 @@ export class QuestionSessions {
     return this.snapshot(await this.requireInitializedSession(id))
   }
 
+  async getExportRecord(id: string): Promise<ConversationExportRecord> {
+    const session = await this.requireInitializedSession(id)
+    return {
+      id: session.historyId,
+      title: historyTitle(session.exchanges),
+      createdAt: session.createdAt,
+      updatedAt: new Date().toISOString(),
+      exchanges: structuredClone(session.exchanges),
+      segments: session.segments.map((item) => structuredClone(item.segment)),
+      selection: session.selection ? structuredClone(session.selection) : null,
+      attachments: session.attachments.map((attachment) => ({
+        id: attachment.id,
+        imagePath: attachment.imagePath,
+        edited: attachment.edited,
+        ocr: attachment.ocrResult ? structuredClone(attachment.ocrResult) : null
+      }))
+    }
+  }
+
   async listOcrLanguages(): Promise<OcrLanguage[]> {
     return this.ocr.listLanguages?.() ?? []
   }
@@ -199,7 +239,29 @@ export class QuestionSessions {
     const session = await this.requireInitializedSession(id)
     const attachment = requireSessionAttachment(session.attachments, attachmentId)
     const png = await this.readImage(attachment.imagePath)
-    return `data:image/png;base64,${png.toString('base64')}`
+    return `data:${imageMimeType(attachment.imagePath)};base64,${png.toString('base64')}`
+  }
+
+  owns(id: string, webContentsId: number): boolean {
+    const session = this.sessions.get(id)
+    return Boolean(session?.window && !session.window.isDestroyed() && session.window.webContents.id === webContentsId)
+  }
+
+  async importImagePaths(id: string, paths: string[]): Promise<ImageImportResult> {
+    return this.importImages(id, paths.map((path) => ({
+      name: basename(path),
+      // A PDF dropped in contributes its pages, exactly as it would from the context menu.
+      load: async () => (await this.requireFiles().prepareFile(path)).imagePaths
+    })))
+  }
+
+  async importClipboardImage(id: string, png: Buffer): Promise<ImageImportResult> {
+    return this.importImages(id, [{ name: 'Clipboard image', load: async () => [await this.requireFiles().prepareImage(png)] }])
+  }
+
+  private requireFiles(): Pick<FileAnalysisService, 'prepareFile' | 'prepareImage'> {
+    if (!this.files) throw new Error('Attaching files is unavailable in this build.')
+    return this.files
   }
 
   async runOcr(id: string, attachmentId: string): Promise<OcrResult> {
@@ -424,11 +486,13 @@ export class QuestionSessions {
       answer: '',
       phase: 'connecting',
       segmentId: providerSegment.segment.id,
+      createdAt: new Date().toISOString(),
       ...(exchangeAttachmentIds.length ? { attachmentIds: exchangeAttachmentIds } : {}),
       ...(preferWebSearch ? { webSearch: { id: randomUUID(), query: question, status: 'searching' as const } } : {})
     }
     if (ocrContext) session.ocrContextByExchangeId.set(exchange.id, ocrContext)
     this.clearIncludedOcr(session)
+    session.draft = null
     session.exchanges.push(exchange); session.busy = true; this.setPhase(session, exchange, 'connecting')
     this.emitChanged(session)
     await this.runTurn(
@@ -464,7 +528,7 @@ export class QuestionSessions {
     if (!providerSegment) throw new Error('The regeneration provider context could not be created.')
     providerSegment.conversationId = conversationId
     const attachmentIds = session.attachments.filter((attachment) => attachment.status === 'sent').map((attachment) => attachment.id)
-    const exchange: ConversationExchange = { id: randomUUID(), question: target.question, answer: '', phase: 'connecting', segmentId: providerSegment.segment.id, attachmentIds, automatic: target.automatic, retryOf: target.id }
+    const exchange: ConversationExchange = { id: randomUUID(), question: target.question, answer: '', phase: 'connecting', segmentId: providerSegment.segment.id, attachmentIds, automatic: target.automatic, retryOf: target.id, createdAt: new Date().toISOString() }
     const ocrContext = session.ocrContextByExchangeId.get(target.id) ?? ''
     if (ocrContext) session.ocrContextByExchangeId.set(exchange.id, ocrContext)
     const previousExchanges = [...session.exchanges]
@@ -531,7 +595,10 @@ export class QuestionSessions {
     const exchange = session.exchanges.at(-1)
     session.phase = 'stopped'
     session.busy = false
-    if (exchange) exchange.phase = 'stopped'
+    if (exchange) {
+      exchange.phase = 'stopped'
+      exchange.completedAt ??= new Date().toISOString()
+    }
     if (exchange?.source === 'ocr') {
       const attachmentId = exchange.attachmentIds?.[0]
       if (attachmentId) await this.ocr.cancel?.(attachmentId)
@@ -574,6 +641,93 @@ export class QuestionSessions {
       if (segment) this.startInitialAnalysis(session, segment, preferWebSearch, initialQuestion ?? INITIAL_QUESTION, !initialQuestion)
     }
   }
+
+  private async importImages(
+    id: string,
+    candidates: Array<{ name: string; load(): Promise<string[]> }>
+  ): Promise<ImageImportResult> {
+    const session = await this.requireInitializedSession(id)
+    if (session.busy) throw new Error('Wait for the current answer or press Stop before attaching images.')
+    const failures: ImageImportResult['failures'] = []
+    let added = 0
+    for (const candidate of candidates) {
+      // Checked per candidate, since one PDF can contribute several pages.
+      if (session.attachments.length >= MAX_CONVERSATION_ATTACHMENTS) {
+        failures.push({ name: candidate.name, message: `A conversation can contain up to ${MAX_CONVERSATION_ATTACHMENTS} images.` })
+        continue
+      }
+      let imagePaths: string[]
+      try {
+        imagePaths = await candidate.load()
+      } catch (error) {
+        failures.push({ name: candidate.name, message: error instanceof Error ? error.message : String(error) })
+        continue
+      }
+      if (this.sessions.get(id) !== session || session.cleaningUp) {
+        await Promise.all(imagePaths.map((path) => this.screenshots.delete(path)))
+        break
+      }
+      const room = MAX_CONVERSATION_ATTACHMENTS - session.attachments.length
+      for (const imagePath of imagePaths.slice(room)) await this.screenshots.delete(imagePath)
+      if (imagePaths.length > room) {
+        failures.push({ name: candidate.name, message: `A conversation can contain up to ${MAX_CONVERSATION_ATTACHMENTS} images.` })
+      }
+      for (const imagePath of imagePaths.slice(0, room)) {
+        session.attachments.push(createSessionAttachment(imagePath, 'draft'))
+        added += 1
+      }
+    }
+    if (added) this.emitChanged(session)
+    return { added, failures, cancelled: false }
+  }
+  private async selectRecipeInitial(session: QuestionSessionState, recipe: CaptureRecipe): Promise<void> {
+    try {
+      const selection = recipe.provider.mode === 'fixed'
+        ? structuredClone(recipe.provider.selection)
+        : await this.defaultSelection()
+      if (!selection) throw new Error('Recipe paused: connect an image-capable provider before using this recipe.')
+      await this.providers.validateSelection(selection)
+      const models = await this.providers.listModels(selection.profileId)
+      if (!models.some((model) => model.id === selection.modelId)) {
+        throw new Error('Recipe paused: its selected model is no longer available. Edit the recipe to choose another model.')
+      }
+      session.models = models
+      session.selection = selection
+      this.startSegment(session, false, `Capture recipe “${recipe.name}” is ready for review.`)
+      if (recipe.extractText) {
+        const attachment = session.attachments[0]
+        if (!attachment) throw new Error('Recipe paused: the captured image is unavailable.')
+        const result = await this.recogniseAttachment(session, attachment, recipe.ocrLanguageCode)
+        if (!result.regions.length) {
+          if (recipe.autoSend) throw new Error('Recipe paused: local OCR found no text, so nothing was sent.')
+        } else {
+          attachment.ocrSelectedRegionIds = new Set(result.regions.map((region) => region.id))
+          attachment.ocr = this.readyOcrState(attachment, true)
+          this.emitChanged(session)
+        }
+      }
+    } catch (error) {
+      session.launchError = error instanceof Error ? error.message : String(error)
+      session.selection = null
+      session.models = []
+    }
+  }
+  private async defaultSelection(): Promise<ConversationSelection | null> {
+    const profiles = this.providers.listProfiles()
+    const profile = profiles.find((item) => item.isDefault) ?? profiles[0]
+    if (!profile) return null
+    const models = await this.safeModels(profile.id)
+    const model = models.find((item) => item.id === profile.defaultModelId) ?? models.find((item) => item.isDefault) ?? models[0]
+    if (!model) return null
+    return {
+      profileId: profile.id,
+      provider: profile.provider,
+      modelId: model.id,
+      reasoningEffort: profile.defaultReasoningEffort && model.supportedReasoningEfforts.includes(profile.defaultReasoningEffort)
+        ? profile.defaultReasoningEffort
+        : model.defaultReasoningEffort ?? null
+    }
+  }
   private async selectInitialForFiles(
     session: QuestionSessionState,
     notices: string[],
@@ -614,6 +768,7 @@ export class QuestionSessions {
       answer: '',
       phase: 'thinking',
       segmentId: 'local-ocr',
+      createdAt: new Date().toISOString(),
       source: 'ocr',
       attachmentIds: [attachment.id],
       automatic: true
@@ -667,6 +822,7 @@ export class QuestionSessions {
       answer: '',
       phase: 'connecting',
       segmentId: providerSegment.segment.id,
+      createdAt: new Date().toISOString(),
       attachmentIds,
       automatic,
       ...(preferWebSearch ? { webSearch: { id: randomUUID(), query: question, status: 'searching' as const } } : {})
@@ -982,4 +1138,11 @@ function historyTitle(exchanges: ConversationExchange[]): string {
   const firstUserQuestion = exchanges.find((exchange) => !exchange.automatic)?.question.trim()
   const firstSummary = exchanges.find((exchange) => exchange.metadata?.summary)?.metadata?.summary.trim()
   return (firstUserQuestion || firstSummary || 'Captured conversation').replace(/\s+/g, ' ').slice(0, 160)
+}
+
+function imageMimeType(path: string): 'image/png' | 'image/jpeg' | 'image/webp' {
+  const extension = extname(path).toLocaleLowerCase()
+  if (extension === '.jpg' || extension === '.jpeg') return 'image/jpeg'
+  if (extension === '.webp') return 'image/webp'
+  return 'image/png'
 }
