@@ -8,6 +8,9 @@ export type AnalysableKind = 'image' | 'pdf'
 
 /** Providers only accept PNG, and a capture-sized image keeps request cost predictable. */
 const MAX_IMAGE_EDGE = 2_000
+/** Read from the header before decoding, so a hostile image cannot cost real work first. */
+const MAX_IMAGE_DIMENSION = 16_384
+const MAX_IMAGE_PIXELS = 40_000_000
 const SIZE_LIMITS: Record<AnalysableKind, number> = {
   image: 25 * 1024 * 1024,
   pdf: 32 * 1024 * 1024
@@ -124,6 +127,25 @@ export class FileAnalysisService {
     }
   }
 
+  /**
+   * Normalises one file into attachable PNGs. Shared by the Explorer context menu and by images
+   * dropped, pasted, or picked into an existing conversation, so every route gets the same
+   * validation, limits, and conversion.
+   */
+  async prepareFile(path: string): Promise<{ imagePaths: string[]; document?: AnalysedDocument; notice?: string }> {
+    return this.prepare(path)
+  }
+
+  /** Clipboard content arrives as bytes, with no path to inspect. */
+  async prepareImage(content: Buffer): Promise<string> {
+    if (!content.length) throw new FileAnalysisError('That image is empty.')
+    if (content.length > SIZE_LIMITS.image) {
+      throw new FileAnalysisError(`That image is larger than the ${Math.round(SIZE_LIMITS.image / (1024 * 1024))} MB limit.`)
+    }
+    if (sniffAnalysableKind(content.subarray(0, 16)) !== 'image') throw new FileAnalysisError('That is not an image Fovea can read.')
+    return this.saveImage(content)
+  }
+
   private async prepare(path: string): Promise<{ imagePaths: string[]; document?: AnalysedDocument; notice?: string }> {
     // Resolve first: a shortcut or junction must be judged by what it actually points at.
     const resolved = await realpath(path).catch(() => {
@@ -179,6 +201,16 @@ export class FileAnalysisService {
   }
 
   private async saveImage(content: Buffer): Promise<string> {
+    const source = sharp(content, { failOn: 'error' })
+    const metadata = await source.metadata().catch(() => {
+      throw new FileAnalysisError('That image could not be read.')
+    })
+    const width = metadata.width ?? 0
+    const height = metadata.height ?? 0
+    if (width < 1 || height < 1) throw new FileAnalysisError('That image has invalid dimensions.')
+    if (width > MAX_IMAGE_DIMENSION || height > MAX_IMAGE_DIMENSION || width * height > MAX_IMAGE_PIXELS) {
+      throw new FileAnalysisError('That image is too large. The limit is 40 megapixels and 16,384 pixels per side.')
+    }
     const png = await sharp(content, { failOn: 'error' })
       // Honour EXIF orientation so a phone photo is not analysed sideways.
       .rotate()

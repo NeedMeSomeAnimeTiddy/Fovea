@@ -206,3 +206,49 @@ describe('FileAnalysisService', () => {
     expect(errors[0]).toContain('PDF analysis is unavailable')
   })
 })
+
+/**
+ * Images dropped, pasted, or picked into an existing conversation share this service with the
+ * Explorer context menu, so they get the same validation rather than a parallel implementation.
+ */
+describe('preparing images for an existing conversation', () => {
+  it('normalises clipboard bytes to a PNG in the temporary store', async () => {
+    const { store } = await workspace()
+    const { service } = harness(store)
+
+    const saved = await service.prepareImage(await sharp(await png(40, 30)).jpeg().toBuffer())
+
+    expect(saved.startsWith(store.directory)).toBe(true)
+    expect((await readFile(saved)).subarray(0, 8).toString('hex')).toBe('89504e470d0a1a0a')
+  })
+
+  it('rejects clipboard content that is empty or not an image', async () => {
+    const { store } = await workspace()
+    const { service } = harness(store)
+
+    await expect(service.prepareImage(Buffer.alloc(0))).rejects.toThrow(/empty/)
+    await expect(service.prepareImage(Buffer.from('MZ not an image', 'latin1'))).rejects.toThrow(/not an image/)
+  })
+
+  it('refuses an image beyond the pixel budget', async () => {
+    const { store } = await workspace()
+    const { service } = harness(store)
+    // 20000 wide exceeds the 16,384-per-side limit, read from the header before any decoding.
+    const huge = await sharp({ create: { width: 20_000, height: 4, channels: 3, background: '#000000' } }).png().toBuffer()
+
+    await expect(service.prepareImage(huge)).rejects.toThrow(/16,384 pixels per side/)
+  })
+
+  it('gives a dropped file the same treatment as a right-clicked one', async () => {
+    const { root, store } = await workspace()
+    const source = join(root, 'dropped.png')
+    await writeFile(source, await png(3_000, 1_000))
+    const { service } = harness(store)
+
+    const prepared = await service.prepareFile(source)
+
+    expect(prepared.imagePaths).toHaveLength(1)
+    const size = await sharp(prepared.imagePaths[0]!).metadata()
+    expect(size.width).toBe(2_000)
+  })
+})

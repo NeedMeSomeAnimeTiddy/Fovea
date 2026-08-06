@@ -126,14 +126,16 @@ async function startApplication(): Promise<void> {
     uiAutomation,
     screenshotDetector
   )
-  const questions = new QuestionSessions(providers, screenshots, (destination) => capture.begin('region', destination), undefined, history, settings, imageEditor, ocr)
-  services.questions = questions
+  // Built before the sessions so they can share one ingestion path: the Explorer context menu
+  // and images dropped, pasted, or picked into a conversation all normalise the same way.
   const files = new FileAnalysisService(
     screenshots,
-    (analysis) => questions.openFiles(analysis),
+    (analysis) => services.questions!.openFiles(analysis),
     (message) => showSafeError(message, 'capture-failed'),
     new PdfIngestionService()
   )
+  const questions = new QuestionSessions(providers, screenshots, (destination) => capture.begin('region', destination), undefined, history, settings, imageEditor, ocr, files)
+  services.questions = questions
   const explorer = new ExplorerIntegration(
     {
       executablePath: process.execPath,

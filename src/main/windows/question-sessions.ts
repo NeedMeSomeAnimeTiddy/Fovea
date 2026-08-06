@@ -8,14 +8,13 @@ import type { ImageEditOperation } from '@shared/types/app'
 import type { ProviderEvent } from '@shared/types/provider'
 import { createAppError, FoveaError, toAppError } from '../errors/app-error'
 import type { CaptureDestination, CompletedCapture } from '../capture/capture-service'
-import type { AnalysedDocument, PreparedFileAnalysis } from '../files/file-analysis-service'
+import type { AnalysedDocument, FileAnalysisService, PreparedFileAnalysis } from '../files/file-analysis-service'
 import type { AnalyseAction } from '../shell/analyse-arguments'
 import type { ProviderRegistry } from '../providers/provider-registry'
 import type { TempScreenshotStore } from '../storage/temp-screenshot-store'
 import type { ConversationHistoryStore } from '../storage/conversation-history-store'
 import type { SettingsStore } from '../storage/settings-store'
 import { ImageEditorService } from '../capture/image-editor-service'
-import { IMAGE_IMPORT_LIMITS, ImageImportService } from '../capture/image-import-service'
 import type { ConversationExportRecord } from '../export/conversation-export-service'
 import { OcrServiceError, UnavailableOcrService, type OcrService } from '../ocr/ocr-service'
 import { getWindowAppearanceOptions, selectWindowMaterial, type WindowSurfaceSizes } from './window-appearance'
@@ -51,6 +50,8 @@ const WEB_SEARCH_APPROVED_PREFIX = '[FOVEA_WEB_SEARCH_APPROVED]'
 const WEB_SEARCH_PREFERRED_PREFIX = '[FOVEA_WEB_SEARCH_PREFERRED]'
 const INITIAL_QUESTION = 'Analyse this capture'
 const INITIAL_FILE_QUESTION = 'Analyse this file'
+/** Attachments one conversation can hold, however they arrived. */
+export const MAX_CONVERSATION_ATTACHMENTS = 10
 const RESPONSE_INSTRUCTION = `Respond as a clean productivity assistant for a non-technical user. First output exactly one compact metadata tag in this form, with valid JSON and no Markdown fence:
 <fovea-response>{"category":"a short internal category","summary":"a concise direct answer","suggestedQuestions":["four specific follow-up questions"]}</fovea-response>
 Never narrate or announce searching, browsing, tool use, analysis, or a plan. Even after an approved web search, begin directly with the metadata tag. The category is internal and must not be mentioned in the visible answer. The summary must give the most useful result first in plain language, normally in one to three sentences and at most 70 words. Supply exactly four short follow-up questions that the user can ask Fovea now and that are directly grounded in the current capture, the existing conversation, or facts a web search can verify. Never ask the user to share, upload, attach, provide, capture, or show another screen, screenshot, image, file, link, recording, or an earlier/later state. Do not suggest an action that this app cannot perform. After the tag, optionally provide useful Markdown detail that expands on the summary without repeating it. Do not add a visible category heading.`
@@ -69,7 +70,8 @@ export class QuestionSessions {
     private readonly settings?: SettingsStore,
     private readonly imageEditor = new ImageEditorService(screenshots),
     private readonly ocr: OcrService = new UnavailableOcrService(),
-    private readonly imageImporter = new ImageImportService(screenshots)
+    /** Shared with the Explorer context menu so every import applies the same rules. */
+    private readonly files?: Pick<FileAnalysisService, 'prepareFile' | 'prepareImage'>
   ) {}
 
   async open(capture: CompletedCapture, recipe?: CaptureRecipe): Promise<void> {
@@ -246,11 +248,20 @@ export class QuestionSessions {
   }
 
   async importImagePaths(id: string, paths: string[]): Promise<ImageImportResult> {
-    return this.importImages(id, paths.map((path) => ({ name: basename(path), load: () => this.imageImporter.importPath(path) })))
+    return this.importImages(id, paths.map((path) => ({
+      name: basename(path),
+      // A PDF dropped in contributes its pages, exactly as it would from the context menu.
+      load: async () => (await this.requireFiles().prepareFile(path)).imagePaths
+    })))
   }
 
   async importClipboardImage(id: string, png: Buffer): Promise<ImageImportResult> {
-    return this.importImages(id, [{ name: 'Clipboard image', load: () => this.imageImporter.importBuffer(png) }])
+    return this.importImages(id, [{ name: 'Clipboard image', load: async () => [await this.requireFiles().prepareImage(png)] }])
+  }
+
+  private requireFiles(): Pick<FileAnalysisService, 'prepareFile' | 'prepareImage'> {
+    if (!this.files) throw new Error('Attaching files is unavailable in this build.')
+    return this.files
   }
 
   async runOcr(id: string, attachmentId: string): Promise<OcrResult> {
@@ -633,27 +644,39 @@ export class QuestionSessions {
 
   private async importImages(
     id: string,
-    candidates: Array<{ name: string; load(): Promise<{ imagePath: string; name: string }> }>
+    candidates: Array<{ name: string; load(): Promise<string[]> }>
   ): Promise<ImageImportResult> {
     const session = await this.requireInitializedSession(id)
     if (session.busy) throw new Error('Wait for the current answer or press Stop before attaching images.')
-    const available = Math.max(0, IMAGE_IMPORT_LIMITS.maximumFilesPerConversation - session.attachments.length)
     const failures: ImageImportResult['failures'] = []
     let added = 0
-    for (const candidate of candidates.slice(0, available)) {
+    for (const candidate of candidates) {
+      // Checked per candidate, since one PDF can contribute several pages.
+      if (session.attachments.length >= MAX_CONVERSATION_ATTACHMENTS) {
+        failures.push({ name: candidate.name, message: `A conversation can contain up to ${MAX_CONVERSATION_ATTACHMENTS} images.` })
+        continue
+      }
+      let imagePaths: string[]
       try {
-        const imported = await candidate.load()
-        if (this.sessions.get(id) !== session || session.cleaningUp) {
-          await this.screenshots.delete(imported.imagePath)
-          break
-        }
-        session.attachments.push(createSessionAttachment(imported.imagePath, 'draft'))
-        added += 1
+        imagePaths = await candidate.load()
       } catch (error) {
         failures.push({ name: candidate.name, message: error instanceof Error ? error.message : String(error) })
+        continue
+      }
+      if (this.sessions.get(id) !== session || session.cleaningUp) {
+        await Promise.all(imagePaths.map((path) => this.screenshots.delete(path)))
+        break
+      }
+      const room = MAX_CONVERSATION_ATTACHMENTS - session.attachments.length
+      for (const imagePath of imagePaths.slice(room)) await this.screenshots.delete(imagePath)
+      if (imagePaths.length > room) {
+        failures.push({ name: candidate.name, message: `A conversation can contain up to ${MAX_CONVERSATION_ATTACHMENTS} images.` })
+      }
+      for (const imagePath of imagePaths.slice(0, room)) {
+        session.attachments.push(createSessionAttachment(imagePath, 'draft'))
+        added += 1
       }
     }
-    for (const candidate of candidates.slice(available)) failures.push({ name: candidate.name, message: 'A conversation can contain up to 10 images.' })
     if (added) this.emitChanged(session)
     return { added, failures, cancelled: false }
   }
