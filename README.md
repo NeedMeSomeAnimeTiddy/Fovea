@@ -19,7 +19,7 @@ and pins the official [OpenAI Codex 0.144.4 release](https://github.com/openai/c
 
 ## Shipped workflows
 
-Capability audit last updated: **4 August 2026**.
+Capability audit last updated: **11 August 2026**.
 
 - Capture a region, current display, or focused window from the tray, Settings,
   or a configurable global shortcut. Repeat-last reuses the last capture mode.
@@ -40,6 +40,12 @@ Capability audit last updated: **4 August 2026**.
 - Create ordered capture recipes that combine a capture mode, prompt, provider/model
   choice, web preference, optional local OCR, and shortcut. Auto-send is opt-in and
   requires a separate confirmation; imported recipes are disabled and lose consent.
+- Review the exact provider, custom API address, model, and screenshots used by the
+  next request. Draft screenshots can be opened for redaction or removed before Send.
+- Compare synthetic renderer states with the Playwright visual workflow and use the
+  documented Windows 10/11 checklist for native transparency, scaling, and startup QA.
+- In marked, code-signed production x64 releases, opt in to stable GitHub Release
+  checks, review notes, then explicitly download and start the verified installer.
 
 ## Setup and commands
 
@@ -51,6 +57,8 @@ npm run dev
 npm run typecheck
 npm run lint
 npm test
+npx playwright install chromium
+npm run test:visual
 npm run ocr:benchmark -- capture.png
 npm run paddle:setup
 npm run ocr:benchmark:paddle -- capture.png
@@ -66,6 +74,14 @@ pinned SHA-256 digest, and generates the TypeScript app-server schema under
 `resources/codex-schema`. The binary and generated schema are ignored by Git and
 are not included in the minimal installer. `package:win` writes an NSIS installer
 under `dist/`, prints its largest files, and enforces the package-size budget.
+The ordinary local package remains unsigned and updater-disabled. See
+[the signed release procedure](docs/releases.md) for the separate fail-closed
+production x64 build and [the visual QA guide](docs/visual-qa.md) for baseline review.
+
+The root `npm test` command discovers only desktop Vitest files, while root lint
+also checks the Playwright harness. Playwright owns execution of `tests/visual/`
+through the `test:visual` commands. The nested `website/` project keeps its
+independent `npm test` and `npm run lint` commands and dependency set.
 
 ## Package-size budget
 
@@ -417,9 +433,11 @@ unredacted temporary source is deleted once the derivative replaces it.
   options** rather than at the top level. The modern menu requires an
   MSIX-packaged app with a signed `IExplorerCommand` handler, which the unsigned
   NSIS installer cannot provide.
-- The installer is unsigned, has no auto-update support, and packages only the
-  architecture used for the build. Optional ChatGPT runtime downloads are pinned
-  independently for x64 and ARM64.
+- Ordinary local installers are unsigned, updater-disabled, and package only the
+  architecture used for the build. The production update path is x64-only and still
+  requires signing credentials plus an installed N-to-N+1 acceptance run before its
+  first published rollout. Optional ChatGPT runtime downloads are pinned independently
+  for x64 and ARM64.
 - PaddleOCR is currently a development evaluation sidecar. The Python runtime
   and models are not included in the NSIS installer yet; packaged builds safely
   continue to Tesseract when that sidecar is absent.

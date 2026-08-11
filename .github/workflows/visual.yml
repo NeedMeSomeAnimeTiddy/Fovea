@@ -1,0 +1,89 @@
+name: Visual regression
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/visual.yml'
+      - 'docs/visual-qa.md'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'playwright.visual.config.ts'
+      - 'src/renderer/**'
+      - 'src/shared/**'
+      - 'tests/visual/**'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/visual.yml'
+      - 'docs/visual-qa.md'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'playwright.visual.config.ts'
+      - 'src/renderer/**'
+      - 'src/shared/**'
+      - 'tests/visual/**'
+  workflow_dispatch:
+    inputs:
+      update_baselines:
+        description: Produce baseline candidate artifact
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: visual-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    name: Chromium renderer baselines
+    runs-on: windows-2022
+    timeout-minutes: 25
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Install pinned Chromium
+        run: npx playwright install chromium
+
+      - name: Compare approved baselines
+        shell: pwsh
+        run: |
+          if ('${{ inputs.update_baselines }}' -eq 'true') {
+            npx playwright test --config playwright.visual.config.ts --update-snapshots
+          } else {
+            npx playwright test --config playwright.visual.config.ts
+          }
+
+      - name: Upload visual failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-failure-${{ github.run_id }}
+          if-no-files-found: ignore
+          retention-days: 14
+          path: |
+            test-results/visual
+            playwright-report/visual
+
+      - name: Upload baseline candidates
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.update_baselines }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-baseline-candidates-${{ github.run_id }}
+          if-no-files-found: error
+          retention-days: 7
+          path: tests/visual/__snapshots__

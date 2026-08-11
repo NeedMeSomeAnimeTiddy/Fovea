@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { createPortal } from 'react-dom'
-import type { QuestionViewState } from '@shared/contracts/ipc'
+import type { QuestionViewState, RequestDisclosureState } from '@shared/contracts/ipc'
 import type { ConversationExchange, ConversationExportOptions, ConversationExportPreview, ConversationSelection, CustomPrompt, ImageImportResult, OcrEntity, ProviderModelCapability, QuestionAttachment, QuestionDraft, ResponsePhase } from '@shared/types/app'
 import type { ProviderEvent } from '@shared/types/provider'
 import type { AppError, AppRecoveryKind } from '@shared/types/app-error'
@@ -446,6 +446,10 @@ export function QuestionApp(): React.JSX.Element {
   const modelLabel = selectedModel && state.selection
     ? `${selectedModel.displayName} · ${thinkingEffortLabel(state.selection.reasoningEffort)} thinking`
     : 'Choose model and thinking effort'
+  const requestAttachmentIds = new Set(state.requestDisclosure?.attachmentIds ?? [])
+  const conversationAttachments = state.requestDisclosure
+    ? state.attachments.filter((attachment) => !requestAttachmentIds.has(attachment.id))
+    : state.attachments
 
   return (
     <WindowFrame
@@ -595,13 +599,25 @@ export function QuestionApp(): React.JSX.Element {
                       : <EmptyConversation disabled={askDisabled} onAsk={() => { setModelOpen(false); setCustomOpen(false); setAskOpen(true) }} />}
                 </div>
 
-                <AttachmentStrip
-                  attachments={state.attachments}
-                  disabled={state.busy}
-                  onEdit={(attachmentId) => void editAttachment(attachmentId)}
-                  onPreview={(attachmentId) => void openPreview(attachmentId)}
-                  onRemove={(attachmentId) => void removeAttachment(attachmentId)}
-                />
+                {state.requestDisclosure && (
+                  <RequestDisclosure
+                    attachments={state.attachments}
+                    disclosure={state.requestDisclosure}
+                    disabled={state.busy}
+                    onEdit={(attachmentId) => void editAttachment(attachmentId)}
+                    onPreview={(attachmentId) => void openPreview(attachmentId)}
+                    onRemove={(attachmentId) => void removeAttachment(attachmentId)}
+                  />
+                )}
+                {conversationAttachments.length > 0 && (
+                  <AttachmentStrip
+                    attachments={conversationAttachments}
+                    disabled={state.busy}
+                    onEdit={(attachmentId) => void editAttachment(attachmentId)}
+                    onPreview={(attachmentId) => void openPreview(attachmentId)}
+                    onRemove={(attachmentId) => void removeAttachment(attachmentId)}
+                  />
+                )}
 
                 <footer className="response-actions">
                   <div className="capture-wrap" ref={captureRef}>
@@ -728,6 +744,81 @@ export function QuestionApp(): React.JSX.Element {
   )
 }
 
+export function RequestDisclosure({
+  disclosure,
+  attachments,
+  disabled,
+  onEdit,
+  onPreview,
+  onRemove
+}: {
+  disclosure: RequestDisclosureState
+  attachments: QuestionAttachment[]
+  disabled: boolean
+  onEdit(attachmentId: string): void
+  onPreview(attachmentId: string): void
+  onRemove(attachmentId: string): void
+}): React.JSX.Element {
+  const requestAttachments = disclosure.attachmentIds
+    .map((attachmentId) => attachments.find((attachment) => attachment.id === attachmentId))
+    .filter((attachment): attachment is QuestionAttachment => Boolean(attachment))
+
+  return (
+    <section className="request-disclosure" aria-label="Next request privacy">
+      <header className="request-disclosure__header">
+        <div>
+          <span>Next request</span>
+          <strong>{disclosure.profileName}</strong>
+        </div>
+        <small>{requestProviderLabel(disclosure.provider)} · {disclosure.modelName}</small>
+      </header>
+      {disclosure.baseUrl && <code className="request-disclosure__destination">{disclosure.baseUrl}</code>}
+      <p className="request-disclosure__warning">
+        Check screenshots for passwords, personal details, and private content. Fovea cannot identify every kind of sensitive information.
+      </p>
+      {requestAttachments.length > 0
+        ? (
+            <div className="request-disclosure__attachments" aria-label="Images shared with the next request" role="list">
+              {requestAttachments.map((attachment, index) => (
+                <div className="request-disclosure__attachment" key={attachment.id} role="listitem">
+                  <button
+                    aria-label={`Preview screenshot ${index + 1} shared with the next request`}
+                    className="request-disclosure__preview"
+                    type="button"
+                    onClick={() => onPreview(attachment.id)}
+                  >
+                    <img alt="" draggable={false} src={attachment.thumbnailDataUrl} />
+                    <span>{index + 1}</span>
+                  </button>
+                  {attachment.status === 'draft' && (
+                    <div className="request-disclosure__attachment-actions">
+                      <Button
+                        disabled={disabled}
+                        size="compact"
+                        variant="secondary"
+                        onClick={() => onEdit(attachment.id)}
+                      >
+                        Review / redact
+                      </Button>
+                      <Button
+                        disabled={disabled}
+                        size="compact"
+                        variant="ghost"
+                        onClick={() => onRemove(attachment.id)}
+                      >
+                        Remove
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )
+        : <p className="request-disclosure__empty">No screenshot files will be included with the next request.</p>}
+    </section>
+  )
+}
+
 export function AttachmentStrip({
   attachments,
   disabled,
@@ -832,6 +923,16 @@ export const AttachmentThumbnail = memo(function AttachmentThumbnail({
   previous.attachment.edited === next.attachment.edited &&
   previous.attachment.thumbnailDataUrl === next.attachment.thumbnailDataUrl
 ))
+
+function requestProviderLabel(provider: RequestDisclosureState['provider']): string {
+  return ({
+    chatgpt: 'ChatGPT',
+    openai: 'OpenAI API',
+    anthropic: 'Anthropic API',
+    openrouter: 'OpenRouter API',
+    custom: 'Custom API'
+  })[provider]
+}
 
 export function CaptureMenu({
   addDisabled,

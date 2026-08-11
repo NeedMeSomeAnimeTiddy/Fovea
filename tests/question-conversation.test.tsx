@@ -3,7 +3,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ConversationExchange } from '../src/shared/types/app'
-import { AttachmentStrip, CaptureMenu, ConversationTimeline, EmptyConversation, ocrEntityExternalAction } from '../src/renderer/question-window/main'
+import { AttachmentStrip, CaptureMenu, ConversationTimeline, EmptyConversation, RequestDisclosure, ocrEntityExternalAction } from '../src/renderer/question-window/main'
 import { takeStreamingBatch } from '../src/renderer/question-window/response-stream-buffer'
 
 afterEach(cleanup)
@@ -118,6 +118,47 @@ describe('response conversation timeline', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Screenshot 2 options, not sent yet' }))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Remove' }))
+    expect(remove).toHaveBeenCalledWith('draft')
+  })
+
+  it('shows the exact provider destination and request images with a draft redaction entry point', () => {
+    const preview = vi.fn()
+    const edit = vi.fn()
+    const remove = vi.fn()
+    render(
+      <RequestDisclosure
+        attachments={[
+          { id: 'sent', thumbnailDataUrl: 'data:image/png;base64,c2VudA==', status: 'sent', edited: false, ocr: { status: 'idle' } },
+          { id: 'draft', thumbnailDataUrl: 'data:image/png;base64,ZHJhZnQ=', status: 'draft', edited: false, ocr: { status: 'idle' } }
+        ]}
+        disclosure={{
+          profileId: 'custom-1',
+          profileName: 'Private gateway',
+          provider: 'custom',
+          baseUrl: 'https://gateway.example/v1',
+          modelId: 'vision-1',
+          modelName: 'Vision One',
+          attachmentIds: ['sent', 'draft']
+        }}
+        disabled={false}
+        onEdit={edit}
+        onPreview={preview}
+        onRemove={remove}
+      />
+    )
+
+    expect(screen.getByRole('region', { name: 'Next request privacy' })).toBeTruthy()
+    expect(screen.getByText('Private gateway')).toBeTruthy()
+    expect(screen.getByText('Custom API · Vision One')).toBeTruthy()
+    expect(screen.getByText('https://gateway.example/v1')).toBeTruthy()
+    expect(screen.getByText(/cannot identify every kind of sensitive information/i)).toBeTruthy()
+    expect(screen.getAllByRole('listitem')).toHaveLength(2)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Preview screenshot 1 shared with the next request' }))
+    expect(preview).toHaveBeenCalledWith('sent')
+    fireEvent.click(screen.getByRole('button', { name: 'Review / redact' }))
+    expect(edit).toHaveBeenCalledWith('draft')
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }))
     expect(remove).toHaveBeenCalledWith('draft')
   })
 

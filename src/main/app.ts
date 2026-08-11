@@ -1,6 +1,8 @@
 import { app, dialog, globalShortcut, safeStorage, shell } from 'electron'
-import { existsSync } from 'node:fs'
+import { autoUpdater } from 'electron-updater'
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { UPDATE_RELEASE_MARKER_FIELD } from '@shared/types/update'
 import { AppearanceController } from './appearance/appearance-controller'
 import { CaptureService } from './capture/capture-service'
 import { ImageEditorService } from './capture/image-editor-service'
@@ -28,6 +30,7 @@ import { QuestionSessions } from './windows/question-sessions'
 import { CodexRuntimeManager } from './runtime/codex-runtime-manager'
 import { showSettingsWindow } from './windows/settings-window'
 import { toAppError } from './errors/app-error'
+import { UpdateController } from './updates/update-controller'
 
 app.setName('Fovea')
 app.setPath('userData', join(app.getPath('appData'), 'Fovea'))
@@ -70,6 +73,22 @@ async function startApplication(): Promise<void> {
   )
   await Promise.all([settings.load(), credentials.load(), screenshots.initialise(), history.initialise()])
   await Promise.all([screenshots.cleanup(), history.applyRetention(settings.get().history.retentionDays)])
+
+  const updates = new UpdateController({
+    runtime: {
+      isPackaged: app.isPackaged,
+      platform: process.platform,
+      architecture: process.arch,
+      currentVersion: app.getVersion(),
+      ...(app.isPackaged ? { releaseMarker: readPackagedUpdateMarker() } : {})
+    },
+    preferences: {
+      getAutomaticChecks: () => settings.get().automaticUpdateChecks,
+      setAutomaticChecks: async (enabled) => { await settings.update({ automaticUpdateChecks: enabled }) }
+    },
+    updater: autoUpdater
+  })
+  updates.initialise()
 
   const appearance = new AppearanceController(settings)
   appearance.initialise()
@@ -170,10 +189,11 @@ async function startApplication(): Promise<void> {
     region: () => captureSafely('region'), display: () => captureSafely('display'), window: () => captureSafely('window'), 'repeat-last': () => captureSafely('repeat-last'), settings: openSettingsSafely
   }, runRecipeSafely)
   shortcuts.initialise()
-  tray = new TrayController(async (mode) => capture.begin(mode), shortcuts, providers, settings)
+  tray = new TrayController(async (mode) => capture.begin(mode), shortcuts, providers, settings, updates)
   tray.initialise()
   providers.on('status', () => tray?.refreshStatus())
-  registerIpc({ providers, settings, screenshots, history, capture, onboarding, questions, shortcuts, appearance, explorer })
+  updates.onStateChanged(() => tray?.refreshStatus())
+  registerIpc({ providers, settings, screenshots, history, capture, onboarding, questions, shortcuts, appearance, explorer, updates })
   capture.prewarm()
   app.setLoginItemSettings({ openAtLogin: settings.get().launchAtLogin, path: process.execPath })
   // The executable path changes when Fovea is reinstalled, so an enabled entry is re-asserted.
@@ -218,6 +238,7 @@ async function startApplication(): Promise<void> {
     capture.dispose()
     shortcuts.dispose()
     tray.dispose()
+    updates.dispose()
     appearance.dispose()
     void questions.dispose()
       .catch(() => undefined)
@@ -228,6 +249,16 @@ async function startApplication(): Promise<void> {
         app.quit()
       })
   })
+}
+
+function readPackagedUpdateMarker(): unknown {
+  try {
+    const metadata = JSON.parse(readFileSync(join(app.getAppPath(), 'package.json'), 'utf8')) as Record<string, unknown>
+    return metadata[UPDATE_RELEASE_MARKER_FIELD]
+  } catch (error) {
+    console.warn(`[updates] Packaged release metadata is unavailable: ${redact(error instanceof Error ? error.message : String(error))}`)
+    return undefined
+  }
 }
 
 function redact(message: string): string { return message.replace(/(?:sk|key)-[\w-]+/gi, '[redacted]') }

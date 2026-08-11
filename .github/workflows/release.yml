@@ -1,0 +1,77 @@
+name: Signed Windows release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows-x64:
+    runs-on: windows-latest
+    env:
+      FOVEA_WINDOWS_PUBLISHER: ${{ vars.FOVEA_WINDOWS_PUBLISHER }}
+      WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+      WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+
+    steps:
+      - name: Check out the tagged source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Validate the stable release tag
+        shell: pwsh
+        run: node build/validate-release-tag.cjs "$env:GITHUB_REF_NAME"
+
+      - name: Run release checks
+        run: npm run release:check
+
+      - name: Build signed updater-enabled artifacts
+        shell: pwsh
+        run: npx electron-builder --config build/electron-builder.release.cjs --win nsis --x64 --publish never
+
+      - name: Verify the updater release marker
+        run: node build/verify-release-marker.cjs
+
+      - name: Verify signatures and release metadata
+        shell: pwsh
+        run: ./build/verify-release-artifacts.ps1
+
+      - name: Preserve verified artifacts for manual testing
+        uses: actions/upload-artifact@v4
+        with:
+          name: Fovea-${{ github.ref_name }}-windows-x64
+          if-no-files-found: error
+          path: |
+            dist/Fovea-*-x64-Setup.exe
+            dist/Fovea-*-x64-Setup.exe.blockmap
+            dist/latest.yml
+
+      - name: Create a draft GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $packageVersion = (Get-Content -LiteralPath package.json -Raw | ConvertFrom-Json).version
+          $installer = "dist/Fovea-$packageVersion-x64-Setup.exe"
+          $assets = @($installer, "$installer.blockmap", 'dist/latest.yml')
+          gh release create $env:GITHUB_REF_NAME @assets `
+            --repo $env:GITHUB_REPOSITORY `
+            --draft `
+            --verify-tag `
+            --generate-notes `
+            --title "Fovea $packageVersion"

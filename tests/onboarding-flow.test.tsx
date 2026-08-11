@@ -182,6 +182,7 @@ function makeState(patch: Partial<SettingsViewState> = {}): SettingsViewState {
     history: { privateMode: false, retentionDays: 30, retainScreenshots: false },
     tempLocation: 'C:\\temp',
     appVersion: '0.1.0',
+    updates: { phase: 'unavailable', eligible: false, unavailableReason: 'development-build', automaticChecks: false, currentVersion: '0.1.0', lastCheckedAt: null, availableUpdate: null, downloadProgress: null, failure: null },
     ...patch
   }
 }

@@ -20,6 +20,8 @@ __pycache__/
 *.pyc
 temporary-screenshots/
 screenshots/
+playwright-report/
+test-results/
 snip-*.png
 *.log
 *.tmp

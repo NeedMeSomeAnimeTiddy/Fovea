@@ -1,5 +1,5 @@
 import type { BrowserWindow } from 'electron'
-import type { QuestionViewState } from '@shared/contracts/ipc'
+import type { QuestionViewState, RequestDisclosureState } from '@shared/contracts/ipc'
 import type {
   ConversationExchange,
   ConversationSegment,
@@ -62,10 +62,49 @@ export function questionSessionSnapshot(
     selection: session.selection ? structuredClone(session.selection) : null,
     profiles: structuredClone(profiles),
     models: structuredClone(session.models),
+    requestDisclosure: requestDisclosureForSession(session, profiles),
     disclosure: session.disclosure,
     busy: session.busy,
     pinned: session.pinned,
     draft: session.draft ? structuredClone(session.draft) : null,
     launchError: session.launchError
   }
+}
+
+/**
+ * Describes exactly what the main-process send path would share if a request started now.
+ * Direct API providers are stateless and receive every sent image on each turn. ChatGPT keeps
+ * its provider conversation, so an existing context receives only newly drafted images.
+ */
+export function requestDisclosureForSession(
+  session: QuestionSessionState,
+  profiles: ProviderProfileSummary[]
+): RequestDisclosureState | null {
+  const selection = session.selection
+  if (!selection) return null
+
+  const profile = profiles.find((candidate) => candidate.id === selection.profileId)
+  const model = session.models.find((candidate) => candidate.id === selection.modelId)
+
+  return {
+    profileId: selection.profileId,
+    profileName: profile?.name ?? selection.profileId,
+    provider: selection.provider,
+    ...(selection.provider === 'custom' && profile?.baseUrl ? { baseUrl: profile.baseUrl } : {}),
+    modelId: selection.modelId,
+    modelName: model?.displayName ?? selection.modelId,
+    attachmentIds: requestAttachmentIdsForSession(session)
+  }
+}
+
+/** Shared by disclosure and the provider send path so the preview cannot drift from the payload. */
+export function requestAttachmentIdsForSession(session: QuestionSessionState): string[] {
+  const selection = session.selection
+  if (!selection) return []
+  const providerSegment = session.segments.at(-1)
+  const hasExistingChatGptContext = selection.provider === 'chatgpt' && Boolean(providerSegment?.conversationId)
+  const attachments = hasExistingChatGptContext
+    ? session.attachments.filter((attachment) => attachment.status === 'draft')
+    : session.attachments
+  return attachments.map((attachment) => attachment.id)
 }

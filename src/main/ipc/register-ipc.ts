@@ -19,17 +19,37 @@ import type { ShortcutManager } from '../shortcuts/shortcut-manager'
 import type { SettingsStore } from '../storage/settings-store'
 import type { TempScreenshotStore } from '../storage/temp-screenshot-store'
 import type { ConversationHistoryStore } from '../storage/conversation-history-store'
+import type { UpdateController } from '../updates/update-controller'
 import type { QuestionSessions } from '../windows/question-sessions'
 import { ownsSettingsWebContents, showSettingsWindow } from '../windows/settings-window'
 import { resolveWindowChromeController, type WindowChromeController, type WindowChromeIpcEvent } from '../windows/window-chrome'
 
-export interface IpcDependencies { providers: ProviderRegistry; settings: SettingsStore; screenshots: TempScreenshotStore; history: ConversationHistoryStore; capture: CaptureService; onboarding: OnboardingController; questions: QuestionSessions; shortcuts: ShortcutManager; appearance: AppearanceController; explorer: ExplorerIntegration }
+export interface IpcDependencies { providers: ProviderRegistry; settings: SettingsStore; screenshots: TempScreenshotStore; history: ConversationHistoryStore; capture: CaptureService; onboarding: OnboardingController; questions: QuestionSessions; shortcuts: ShortcutManager; appearance: AppearanceController; explorer: ExplorerIntegration; updates: UpdateController }
 
 export function registerIpc(dependencies: IpcDependencies): void {
   ipcMain.on(IPC.appearanceGet, (event) => { event.returnValue = dependencies.appearance.getState() })
   // Reading the registry is asynchronous, so the last verified result is cached for the sync snapshot.
   let shellRegistered = false
-  const buildSettingsState = (): SettingsViewState => ({ appearance: dependencies.appearance.getState(), profiles: dependencies.providers.listProfiles(), chatGptRuntime: dependencies.providers.getChatGptRuntimeStatus(), shortcuts: dependencies.shortcuts.getState(), recipeShortcuts: dependencies.shortcuts.getRecipeState(), customPrompts: dependencies.settings.get().customPrompts, recipes: dependencies.settings.get().recipes, launchAtLogin: dependencies.settings.get().launchAtLogin, shellIntegration: { enabled: dependencies.settings.get().shellIntegrationEnabled, supported: process.platform === 'win32', registered: shellRegistered }, onboardingStatus: dependencies.settings.get().onboardingStatus, history: dependencies.settings.get().history, ocrLanguageCode: dependencies.settings.get().ocrLanguageCode, tempLocation: dependencies.screenshots.directory, appVersion: app.getVersion() })
+  const buildSettingsState = (): SettingsViewState => {
+    const settings = dependencies.settings.get()
+    return {
+      appearance: dependencies.appearance.getState(),
+      profiles: dependencies.providers.listProfiles(),
+      chatGptRuntime: dependencies.providers.getChatGptRuntimeStatus(),
+      shortcuts: dependencies.shortcuts.getState(),
+      recipeShortcuts: dependencies.shortcuts.getRecipeState(),
+      customPrompts: settings.customPrompts,
+      recipes: settings.recipes,
+      launchAtLogin: settings.launchAtLogin,
+      shellIntegration: { enabled: settings.shellIntegrationEnabled, supported: process.platform === 'win32', registered: shellRegistered },
+      onboardingStatus: settings.onboardingStatus,
+      history: settings.history,
+      ocrLanguageCode: settings.ocrLanguageCode,
+      tempLocation: dependencies.screenshots.directory,
+      appVersion: app.getVersion(),
+      updates: dependencies.updates.getState()
+    }
+  }
   const broadcastSettings = (): void => {
     const state = buildSettingsState()
     for (const window of BrowserWindow.getAllWindows()) {
@@ -47,6 +67,7 @@ export function registerIpc(dependencies: IpcDependencies): void {
   }
   void refreshShellIntegration().then(broadcastSettings).catch(() => undefined)
   dependencies.providers.on('status', broadcastSettings)
+  dependencies.updates.onStateChanged(broadcastSettings)
   const mutate = async (operation: () => Promise<unknown>): Promise<void> => { await operation(); broadcastSettings() }
   const handle = (
     channel: string,
@@ -185,7 +206,18 @@ export function registerIpc(dependencies: IpcDependencies): void {
     if (event.sender.isDestroyed() || !ownsSettingsWebContents(event.sender.id)) throw new Error('Test capture is only available from Settings.')
     return dependencies.onboarding.testCapture()
   }, 'capture-failed')
-  handle(IPC.settingsDeleteTemp, () => dependencies.screenshots.cleanup())
+  // Files created by this process still belong to capture overlays or question sessions. Their
+  // owners delete them when they close; manual cleanup removes only orphaned files from older runs.
+  handle(IPC.settingsDeleteTemp, () => dependencies.screenshots.cleanup(0, { preserveActive: true }))
+
+  handle(IPC.updatesSetAutomaticChecks, (event, enabled) => {
+    requireSettingsSender(event)
+    if (typeof enabled !== 'boolean') throw new Error('Invalid automatic update setting.')
+    return dependencies.updates.setAutomaticChecks(enabled)
+  }, 'validation')
+  handle(IPC.updatesCheck, (event) => { requireSettingsSender(event); return dependencies.updates.check('manual') })
+  handle(IPC.updatesDownload, (event) => { requireSettingsSender(event); return dependencies.updates.download() })
+  handle(IPC.updatesInstall, (event) => { requireSettingsSender(event); return dependencies.updates.install() })
 
   handle(IPC.profilesList, () => dependencies.providers.listProfiles())
   handle(IPC.profilesCreateApiKey, async (_event, provider, name, apiKey, endpoint) => { const result = await dependencies.providers.profiles.createApiKey(requireApiProvider(provider), requireString(name, 80), requireString(apiKey, 2048), requireCustomEndpoint(endpoint)); broadcastSettings(); return result }, 'validation')
@@ -335,6 +367,7 @@ export function registerIpc(dependencies: IpcDependencies): void {
   }, 'validation')
 }
 
+function requireSettingsSender(event: IpcMainInvokeEvent): void { if (event.sender.isDestroyed() || !ownsSettingsWebContents(event.sender.id)) throw new Error('Application updates are only available from Settings.') }
 function requireWindowChromeController(event: IpcMainInvokeEvent | IpcMainEvent): WindowChromeController { const controller = resolveWindowChromeController(event as WindowChromeIpcEvent); const target = BrowserWindow.fromWebContents(event.sender); if (!target || target.isDestroyed() || target.id !== controller.windowId || target.webContents.id !== controller.webContentsId) throw new Error('Window chrome is unavailable for this sender.'); return controller }
 function getWindowChromeController(event: IpcMainEvent): WindowChromeController | null { try { return requireWindowChromeController(event) } catch { return null } }
 function requireString(value: unknown, max: number): string { if (typeof value !== 'string' || value.length > max) throw new Error('Invalid text value.'); return value }

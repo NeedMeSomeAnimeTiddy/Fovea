@@ -32,10 +32,12 @@ export interface StoredProviderProfile {
 export type ShortcutSettings = Record<ShortcutAction, string | null>
 
 export interface AppSettings {
-  version: 4
+  version: 5
   appearance: AppearancePreference
   onboardingStatus: OnboardingStatus
   launchAtLogin: boolean
+  /** Opt-in only: production builds may periodically check the signed stable update feed. */
+  automaticUpdateChecks: boolean
   /** Whether the "Analyse with Fovea" entry is registered in the Windows Explorer context menu. */
   shellIntegrationEnabled: boolean
   shortcuts: ShortcutSettings
@@ -56,10 +58,11 @@ export const DEFAULT_SHORTCUTS: ShortcutSettings = {
 }
 
 const DEFAULTS: AppSettings = {
-  version: 4,
+  version: 5,
   appearance: 'light',
   onboardingStatus: 'pending',
   launchAtLogin: false,
+  automaticUpdateChecks: false,
   shellIntegrationEnabled: false,
   shortcuts: { ...DEFAULT_SHORTCUTS },
   profiles: [],
@@ -78,6 +81,13 @@ const APPEARANCES = new Set<AppearancePreference>(['system', 'dark', 'light'])
 const ONBOARDING_STATUSES = new Set<OnboardingStatus>(['pending', 'skipped', 'completed'])
 const SHORTCUT_ACTIONS: ShortcutAction[] = ['region', 'display', 'window', 'repeat-last', 'settings']
 const CAPTURE_MODES = new Set(['region', 'display', 'window', 'repeat-last'])
+const PROVIDER_KINDS = {
+  chatgpt: true,
+  openai: true,
+  anthropic: true,
+  openrouter: true,
+  custom: true
+} satisfies Record<ProviderKind, true>
 
 type StoredSettingsInput = Partial<AppSettings> & { onboardingCompleted?: unknown }
 
@@ -153,7 +163,7 @@ function sanitize(value: StoredSettingsInput): AppSettings {
         .map(sanitizeRecipe)
     : []
   return {
-    version: 4,
+    version: 5,
     appearance: APPEARANCES.has(value.appearance as AppearancePreference)
       ? (value.appearance as AppearancePreference)
       : 'light',
@@ -163,6 +173,7 @@ function sanitize(value: StoredSettingsInput): AppSettings {
         ? 'completed'
         : 'pending',
     launchAtLogin: value.launchAtLogin === true,
+    automaticUpdateChecks: value.automaticUpdateChecks === true,
     shellIntegrationEnabled: value.shellIntegrationEnabled === true,
     shortcuts,
     profiles,
@@ -219,10 +230,14 @@ function isConversationSelection(value: unknown): boolean {
   const selection = value as { profileId?: unknown; provider?: unknown; modelId?: unknown; reasoningEffort?: unknown }
   return Boolean(
     typeof selection.profileId === 'string' && selection.profileId.length > 0 && selection.profileId.length <= 100 &&
-    ['chatgpt', 'openai', 'anthropic', 'openrouter'].includes(String(selection.provider)) &&
+    isProviderKind(selection.provider) &&
     typeof selection.modelId === 'string' && selection.modelId.length > 0 && selection.modelId.length <= 200 &&
     (selection.reasoningEffort === null || typeof selection.reasoningEffort === 'string')
   )
+}
+
+function isProviderKind(value: unknown): value is ProviderKind {
+  return typeof value === 'string' && Object.hasOwn(PROVIDER_KINDS, value)
 }
 
 function sanitizeHistorySettings(value: unknown): HistorySettings {
@@ -262,7 +277,7 @@ function isStoredProfile(value: unknown): value is StoredProviderProfile {
     profile.id.length <= 100 &&
     typeof profile.name === 'string' &&
     profile.name.length > 0 &&
-    ['chatgpt', 'openai', 'anthropic', 'openrouter', 'custom'].includes(String(profile.provider)) &&
+    isProviderKind(profile.provider) &&
     ['chatgpt-oauth', 'api-key'].includes(String(profile.authentication))
   )) return false
   // A custom profile without a usable endpoint could never be reached, so it is dropped rather

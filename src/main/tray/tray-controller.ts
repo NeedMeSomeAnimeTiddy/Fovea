@@ -4,12 +4,13 @@ import type { CaptureMode } from '@shared/types/app'
 import type { ProviderRegistry } from '../providers/provider-registry'
 import type { ShortcutManager } from '../shortcuts/shortcut-manager'
 import type { SettingsStore } from '../storage/settings-store'
+import type { UpdateController } from '../updates/update-controller'
 import { showSettingsWindow } from '../windows/settings-window'
 
 export class TrayController {
   private tray: Tray | null = null
   private paused = false
-  constructor(private readonly capture: (mode: CaptureMode) => Promise<void>, private readonly shortcuts: ShortcutManager, private readonly providers: ProviderRegistry, private readonly settings: SettingsStore) {}
+  constructor(private readonly capture: (mode: CaptureMode) => Promise<void>, private readonly shortcuts: ShortcutManager, private readonly providers: ProviderRegistry, private readonly settings: SettingsStore, private readonly updates: UpdateController) {}
 
   initialise(): void {
     if (this.tray) return
@@ -38,11 +39,40 @@ export class TrayController {
       { type: 'separator' },
       { label: this.paused ? 'Resume shortcuts' : 'Pause shortcuts', click: () => { this.paused = !this.paused; if (this.paused) this.shortcuts.pause(); else this.shortcuts.resume(); this.tray?.setImage(this.icon(this.paused ? 'paused' : 'idle')); this.refreshMenu() } },
       { label: `Providers: ${available}/${total} available`, enabled: false },
+      ...this.updateMenuItems(),
       { label: 'Launch at login', type: 'checkbox', checked: this.settings.get().launchAtLogin, click: (item) => { app.setLoginItemSettings({ openAtLogin: item.checked, path: process.execPath }); void this.settings.update({ launchAtLogin: item.checked }) } },
       { label: 'Settings', click: () => void this.openSettings().catch((error) => console.error('[window] Tray could not open Settings.', error)) },
       { type: 'separator' },
       { label: 'Quit Fovea', click: () => app.quit() }
     ]))
+  }
+
+  private updateMenuItems(): Electron.MenuItemConstructorOptions[] {
+    const state = this.updates.getState()
+    if (!state.eligible) return []
+    const version = state.availableUpdate?.version
+    const label = state.phase === 'checking'
+      ? 'Updates: checking…'
+      : state.phase === 'available'
+        ? `Update ${version ?? ''} available`.trim()
+        : state.phase === 'downloading'
+          ? `Update ${version ?? ''}: ${Math.round(state.downloadProgress?.percent ?? 0)}%`.trim()
+          : state.phase === 'downloaded'
+            ? `Update ${version ?? ''} ready to install`.trim()
+            : state.phase === 'installing'
+              ? 'Update installer starting…'
+              : state.phase === 'error'
+                ? 'Updates: action needed'
+                : state.phase === 'up-to-date'
+                  ? 'Updates: Fovea is current'
+                  : 'Updates: ready to check'
+    const needsReview = state.availableUpdate !== null || ['downloading', 'downloaded', 'installing'].includes(state.phase)
+    return [
+      { label, enabled: false },
+      needsReview
+        ? { label: 'Review update in Settings', click: () => void this.openSettings().catch((error) => console.error('[window] Tray could not open Settings.', error)) }
+        : { label: state.phase === 'checking' ? 'Checking for updates…' : 'Check for updates', enabled: state.phase !== 'checking', click: () => void this.updates.check('manual') }
+    ]
   }
 
   private async openSettings(): Promise<void> { await showSettingsWindow(this.tray?.getBounds()) }

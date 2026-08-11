@@ -1,5 +1,6 @@
 import type { ProviderEvent } from '../types/provider'
 import type { Rectangle } from '../types/geometry'
+import type { ApplicationUpdateState } from '../types/update'
 import type {
   AppearancePreference,
   AppearanceState,
@@ -40,6 +41,7 @@ export const IPC = {
   captureStart: 'capture:start', captureGetContext: 'capture:get-context', captureAnalyze: 'capture:analyze', captureAnalysisProgress: 'capture:analysis-progress', captureCancelAnalysis: 'capture:cancel-analysis', captureGetOcrLanguages: 'capture:get-ocr-languages', captureSetOcrLanguage: 'capture:set-ocr-language', captureSelect: 'capture:select', captureCancel: 'capture:cancel',
   questionGet: 'question:get', questionGetFullImage: 'question:get-full-image', questionRunOcr: 'question:run-ocr', questionGetOcrResult: 'question:get-ocr-result', questionSetOcrSelection: 'question:set-ocr-selection', questionSetSelection: 'question:set-selection', questionSetPinned: 'question:set-pinned', questionSetPreviewOpen: 'question:set-preview-open', questionRemoveAttachment: 'question:remove-attachment', questionApplyAttachmentEdits: 'question:apply-attachment-edits', questionImportClipboardImage: 'question:import-clipboard-image', questionPickImages: 'question:pick-images', questionImportDroppedFiles: 'question:import-dropped-files', questionExportPreview: 'question:export-preview', questionExport: 'question:export', questionSend: 'question:send', questionRetry: 'question:retry', questionResolveWebSearch: 'question:resolve-web-search', questionStop: 'question:stop', questionClose: 'question:close', questionAddSnip: 'question:add-snip', questionNewChat: 'question:new-chat', questionEvent: 'question:event', questionStateChanged: 'question:state-changed',
   historyList: 'history:list', historyOpen: 'history:open', historyDelete: 'history:delete', historyClear: 'history:clear', historyExportPreview: 'history:export-preview', historyExport: 'history:export',
+  updatesSetAutomaticChecks: 'updates:set-automatic-checks', updatesCheck: 'updates:check', updatesDownload: 'updates:download', updatesInstall: 'updates:install',
   applicationOpenSettings: 'application:open-settings', clipboardWriteText: 'clipboard:write-text',
   windowChromeGetState: 'window-chrome:get-state', windowChromeReady: 'window-chrome:ready', windowChromeMinimize: 'window-chrome:minimize', windowChromeToggleMaximize: 'window-chrome:toggle-maximize', windowChromeClose: 'window-chrome:close', windowChromeBeginResize: 'window-chrome:begin-resize', windowChromeUpdateResize: 'window-chrome:update-resize', windowChromeEndResize: 'window-chrome:end-resize', windowChromeStateChanged: 'window-chrome:state-changed', externalOpen: 'external:open', externalOpenOcrEntity: 'external:open-ocr-entity'
 } as const
@@ -70,6 +72,7 @@ export interface SettingsViewState {
   onboardingStatus: OnboardingStatus
   tempLocation: string
   appVersion: string
+  updates: ApplicationUpdateState
   history: HistorySettings
   ocrLanguageCode?: string
 }
@@ -77,6 +80,16 @@ export type OnboardingTestCaptureResult =
   | { status: 'captured'; thumbnailDataUrl: string }
   | { status: 'cancelled' }
 export interface CaptureContext { width: number; height: number; minSelectionSize: number; displayId?: string; imageDataUrl: string; canEditBeforeSending: boolean }
+export interface RequestDisclosureState {
+  profileId: string
+  profileName: string
+  provider: ProviderKind
+  baseUrl?: string
+  modelId: string
+  modelName: string
+  /** Attachment ids the main process will include if the user sends the next request now. */
+  attachmentIds: string[]
+}
 export interface QuestionViewState {
   sessionId: string
   attachments: QuestionAttachment[]
@@ -87,6 +100,7 @@ export interface QuestionViewState {
   selection: ConversationSelection | null
   profiles: ProviderProfileSummary[]
   models: ProviderModelCapability[]
+  requestDisclosure?: RequestDisclosureState | null
   disclosure: string | null
   busy: boolean
   pinned: boolean
@@ -105,6 +119,7 @@ export interface FoveaApi {
   capture: { start(mode: CaptureMode): Promise<void>; getContext(): Promise<CaptureContext>; analyze(onProgress?: (analysis: CaptureAnalysis) => void): Promise<CaptureAnalysis>; cancelAnalysis(): Promise<void>; getOcrLanguages(): Promise<OcrLanguage[]>; setOcrLanguage(code: string): Promise<void>; select(rectangle: Rectangle, operations?: ImageEditOperation[], preferWebSearch?: boolean, extractText?: boolean, ocrLanguageCode?: string, initialQuestion?: string): Promise<void>; cancel(): Promise<void> }
   question: { get(sessionId: string): Promise<QuestionViewState>; getFullImage(sessionId: string, attachmentId: string): Promise<string>; runOcr(sessionId: string, attachmentId: string): Promise<OcrResult>; getOcrResult(sessionId: string, attachmentId: string): Promise<OcrResult | null>; setOcrSelection(sessionId: string, attachmentId: string, regionIds: string[], includeNextRequest: boolean): Promise<QuestionViewState>; setSelection(sessionId: string, selection: ConversationSelection): Promise<QuestionViewState>; setPinned(sessionId: string, pinned: boolean): Promise<void>; setPreviewOpen(sessionId: string, attachmentId: string | null): Promise<void>; removeAttachment(sessionId: string, attachmentId: string): Promise<QuestionViewState>; applyAttachmentEdits(sessionId: string, attachmentId: string, operations: ImageEditOperation[]): Promise<QuestionViewState>; importClipboardImage(sessionId: string): Promise<ImageImportResult>; pickImages(sessionId: string): Promise<ImageImportResult>; importDroppedFiles(sessionId: string, files: File[]): Promise<ImageImportResult>; exportPreview(sessionId: string): Promise<ConversationExportPreview>; exportConversation(sessionId: string, options: ConversationExportOptions): Promise<boolean>; send(sessionId: string, text: string, preferWebSearch?: boolean): Promise<void>; retry(sessionId: string, exchangeId: string): Promise<void>; resolveWebSearch(sessionId: string, requestId: string, approved: boolean): Promise<QuestionViewState>; stop(sessionId: string): Promise<void>; close(sessionId: string): Promise<void>; addSnip(sessionId: string): Promise<void>; newChat(sessionId: string): Promise<void>; onEvent(callback: (sessionId: string, event: ProviderEvent) => void): () => void; onChanged(callback: (state: QuestionViewState) => void): () => void }
   history: { list(query?: string): Promise<ConversationHistorySummary[]>; open(id: string): Promise<void>; delete(id: string): Promise<void>; clear(): Promise<number>; exportPreview(id: string): Promise<ConversationExportPreview>; exportConversation(id: string, options: ConversationExportOptions): Promise<boolean> }
+  updates: { setAutomaticChecks(enabled: boolean): Promise<ApplicationUpdateState>; check(): Promise<ApplicationUpdateState>; download(): Promise<ApplicationUpdateState>; install(): Promise<ApplicationUpdateState> }
   application: { openSettings(): Promise<void> }
   clipboard: { writeText(value: string): Promise<void> }
   windowChrome: { getState(): Promise<WindowChromeState>; ready(): void; minimize(): Promise<void>; toggleMaximize(): Promise<void>; close(): Promise<void>; beginResize(edge: WindowResizeEdge): Promise<void>; updateResize(): void; endResize(): void; onStateChanged(callback: (state: WindowChromeState) => void): () => void }

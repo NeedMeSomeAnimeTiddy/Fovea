@@ -34,7 +34,7 @@ import { ConversationExportDialog } from '../export/ConversationExportDialog'
 import '../design-system/index.css'
 import './settings.css'
 
-const CATEGORIES = ['Account', 'Models', 'Prompts', 'Recipes', 'Capture', 'Appearance', 'History', 'Privacy', 'About'] as const
+const CATEGORIES = ['Account', 'Models', 'Prompts', 'Recipes', 'Capture', 'Appearance', 'History', 'Privacy', 'Updates', 'About'] as const
 type Category = typeof CATEGORIES[number]
 const CATEGORY_DETAILS: Record<Category, string> = {
   Account: 'Connect and manage the AI services you trust.',
@@ -45,6 +45,7 @@ const CATEGORY_DETAILS: Record<Category, string> = {
   Appearance: 'Make Fovea feel at home on this PC.',
   History: 'Search and reopen conversations stored on this PC.',
   Privacy: 'Review and clear data stored on this device.',
+  Updates: 'Review signed releases and choose when to download or install.',
   About: 'Version details, product principles, and help.'
 }
 
@@ -357,6 +358,10 @@ function SettingsApp(): React.JSX.Element {
       {category === 'History' && <HistorySettings items={historyItems} query={historyQuery} working={working} onQuery={setHistoryQuery} onRefresh={() => setHistoryRefresh((value) => value + 1)} onRun={run} onExport={(id) => void openHistoryExport(id)} />}
       {category === 'Privacy' && <>
         <Card as="section" className="settings-section">
+          <h2>How Fovea handles data</h2>
+          <p className="muted">Settings, temporary captures, and optional conversation history are stored on this PC. When you send a request, the selected provider receives your prompt, the images shown in the request preview, and any OCR text you chose to include. Fovea has no app account and does not collect analytics or telemetry.</p>
+        </Card>
+        <Card as="section" className="settings-section">
           <h2>Conversation history</h2>
           <Switch label="Private mode — do not save conversations or screenshots" checked={state.history.privateMode} onChange={(event) => void run(() => window.fovea.settings.setPrivateMode(event.target.checked), event.target.checked ? 'Private mode enabled.' : 'Conversation history enabled.')} />
           <Select label="Keep conversation history" value={String(state.history.retentionDays)} disabled={state.history.privateMode} onChange={(event) => void run(() => window.fovea.settings.setHistoryRetention(Number(event.target.value)), 'History retention updated.')}>
@@ -371,6 +376,7 @@ function SettingsApp(): React.JSX.Element {
         </Card>
         <Card as="section" className="settings-section"><h2>Temporary data</h2><p className="muted">Secrets are encrypted by Windows and never enter renderer state, settings, or diagnostics.</p><code className="path">{state.tempLocation}</code><Button variant="secondary" onClick={() => void run(async () => { const count = await window.fovea.settings.deleteTemporaryFiles(); setNotice(`Deleted ${count} temporary screenshot${count === 1 ? '' : 's'}.`) }, '', 'Cleaning temporary files…')}>Clean temporary files</Button></Card>
       </>}
+      {category === 'Updates' && <UpdateSettings state={state.updates} working={working} onRun={run} />}
       {category === 'About' && <AboutSettings appVersion={state.appVersion} onOpenTour={() => setTourOpen(true)} />}
     </section>
   </main>}
@@ -566,6 +572,85 @@ function formatBytes(bytes: number): string {
 
 export function AboutSettings({ appVersion, onOpenTour }: { appVersion: string; onOpenTour(): void }): React.JSX.Element {
   return <Card as="section" className="settings-section about-card"><div className="about-hero"><BrandMark className="about-hero__mark" /><div><h2>Fovea</h2><span>Version {appVersion}</span></div></div><p>Ask questions about any part of your screen with the provider profile you choose.</p><p className="muted">MIT licensed · No analytics · Official provider APIs only</p><Button variant="secondary" onClick={onOpenTour}>Run welcome tour again</Button></Card>
+}
+
+export function UpdateSettings({
+  state,
+  working,
+  onRun
+}: {
+  state: SettingsViewState['updates']
+  working: boolean
+  onRun(operation: () => Promise<unknown>, success?: string, label?: string, edgeState?: SpectralEdgeState): Promise<boolean>
+}): React.JSX.Element {
+  if (!state.eligible) {
+    const reason = ({
+      'development-build': 'Development runs never contact the production update feed.',
+      'platform-unsupported': 'Application updates are currently available for Windows only.',
+      'architecture-unsupported': 'This release architecture does not have a compatible update channel.',
+      'release-unmarked': 'This local package is not a signed, updater-enabled production release.',
+      'release-marker-invalid': 'This package does not carry valid production update metadata.',
+      'updater-unavailable': 'The application updater is unavailable in this build.'
+    })[state.unavailableReason ?? 'updater-unavailable']
+    return <StatusBanner title="Updates unavailable in this build" tone="info">{reason} You can keep using Fovea normally.</StatusBanner>
+  }
+
+  const update = state.availableUpdate
+  const downloading = state.phase === 'downloading'
+  const checking = state.phase === 'checking'
+  const installing = state.phase === 'installing'
+  const downloaded = state.phase === 'downloaded'
+  const canRetryDownload = state.phase === 'error' && update !== null && state.failure?.retryable !== false
+  const action = downloaded
+    ? { label: 'Install and restart', activity: 'Starting signed installer…', run: () => window.fovea.updates.install() }
+    : state.phase === 'available' || canRetryDownload
+      ? { label: canRetryDownload ? 'Retry download' : 'Download update', activity: 'Downloading signed update…', run: () => window.fovea.updates.download() }
+      : { label: state.phase === 'up-to-date' ? 'Check again' : 'Check for updates', activity: 'Checking signed releases…', run: () => window.fovea.updates.check() }
+
+  return <>
+    <Card as="section" className="settings-section update-card">
+      <div className="update-card__heading">
+        <div><h2>Application updates</h2><p className="muted">Installed version {state.currentVersion}{state.lastCheckedAt ? ` · last checked ${formatUpdateDate(state.lastCheckedAt)}` : ''}</p></div>
+        <Badge tone={downloaded ? 'success' : update ? 'info' : 'neutral'}>{update ? `Version ${update.version}` : updatePhaseLabel(state.phase)}</Badge>
+      </div>
+      <Switch
+        label="Check automatically for stable updates"
+        checked={state.automaticChecks}
+        disabled={working}
+        onChange={(event) => void onRun(() => window.fovea.updates.setAutomaticChecks(event.target.checked), '', 'Saving update preference…')}
+      />
+      <p className="muted">Automatic checks are opt-in and only retrieve release metadata. Fovea never downloads or installs an update without your explicit choice.</p>
+      {downloading && <div className="update-progress" role="status" aria-label={`Downloaded ${Math.round(state.downloadProgress?.percent ?? 0)} percent`}><progress max={100} value={state.downloadProgress?.percent ?? 0} /><small>{Math.round(state.downloadProgress?.percent ?? 0)}% downloaded</small></div>}
+      <div className="update-card__actions">
+        <Button
+          disabled={working || checking || downloading || installing || (state.phase === 'error' && state.failure?.retryable === false)}
+          loading={checking || downloading || installing}
+          loadingLabel={checking ? 'Checking for updates' : downloading ? 'Downloading update' : 'Starting installer'}
+          onClick={() => void onRun(action.run, '', action.activity, installing ? 'connecting' : 'thinking')}
+        >
+          {action.label}
+        </Button>
+      </div>
+    </Card>
+    {state.failure && <StatusBanner title={state.failure.title} tone="error">{state.failure.message}{state.failure.technicalDetails ? ` ${state.failure.technicalDetails}` : ''}</StatusBanner>}
+    {update && <Card as="section" className="settings-section update-notes">
+      <h2>{update.releaseName ?? `Fovea ${update.version}`}</h2>
+      {update.releaseDate && <small>Released {formatUpdateDate(update.releaseDate)}</small>}
+      {update.releaseNotes.length > 0
+        ? <ul>{update.releaseNotes.map((note, index) => <li key={`${update.version}-${index}`}>{note}</li>)}</ul>
+        : <p className="muted">No release notes were provided.</p>}
+      <p className="muted">The installer must match the release SHA-512 metadata and the publisher trusted by this installed build.</p>
+    </Card>}
+  </>
+}
+
+function updatePhaseLabel(phase: SettingsViewState['updates']['phase']): string {
+  return ({ unavailable: 'Unavailable', idle: 'Not checked', checking: 'Checking', 'up-to-date': 'Up to date', available: 'Available', downloading: 'Downloading', downloaded: 'Ready', installing: 'Installing', error: 'Action needed' })[phase]
+}
+
+function formatUpdateDate(value: string): string {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? 'an unknown date' : date.toLocaleString()
 }
 
 export function OcrLanguageSettings({
@@ -840,6 +925,7 @@ function SettingsIcon({ category }: { category: Category }): React.JSX.Element {
     Appearance: <><circle cx="12" cy="12" r="4" /><path d="M12 2v2m0 16v2M2 12h2m16 0h2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4m0-14.2-1.4 1.4M6.3 17.7l-1.4 1.4" /></>,
     History: <><path d="M4 12a8 8 0 1 0 2.3-5.7L4 8.6" /><path d="M4 4v4.6h4.6M12 7.5V12l3 2" /></>,
     Privacy: <><rect x="5" y="10" width="14" height="10" rx="3" /><path d="M8.5 10V7.5a3.5 3.5 0 0 1 7 0V10" /><circle cx="12" cy="15" r="1" /></>,
+    Updates: <><path d="M12 3v12m0 0 4-4m-4 4-4-4" /><path d="M5 19h14" /></>,
     About: <><circle cx="12" cy="12" r="9" /><path d="M12 11v5m0-8h.01" /></>
   }
   return <svg aria-hidden="true" className="settings-nav__icon" fill="none" focusable="false" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.7" viewBox="0 0 24 24">{paths[category]}</svg>

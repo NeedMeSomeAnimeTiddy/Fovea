@@ -37,6 +37,7 @@ import {
 } from './question-attachments'
 import {
   questionSessionSnapshot,
+  requestAttachmentIdsForSession,
   type ProviderSegmentState,
   type QuestionSessionState
 } from './question-session-model'
@@ -473,11 +474,12 @@ export class QuestionSessions {
     await this.providers.validateSelection(session.selection)
     let providerSegment = session.segments.at(-1); if (!providerSegment) { this.startSegment(session, false); providerSegment = session.segments.at(-1)! }
     const freshProviderContext = !providerSegment.conversationId
+    const requestAttachmentIds = requestAttachmentIdsForSession(session)
     if (freshProviderContext) providerSegment.conversationId = await this.providers.createConversation(session.selection)
     const draftAttachments = session.attachments.filter((attachment) => attachment.status === 'draft')
     for (const attachment of draftAttachments) attachment.status = 'sent'
     const exchangeAttachmentIds = draftAttachments.map((attachment) => attachment.id)
-    const imagePaths = this.imagePathsForTurn(session, providerSegment, freshProviderContext, exchangeAttachmentIds)
+    const imagePaths = pathsForAttachmentIds(session.attachments, requestAttachmentIds)
     const previousExchanges = [...session.exchanges]
     const ocrContext = this.localContext(session)
     const exchange: ConversationExchange = {
@@ -581,7 +583,7 @@ export class QuestionSessions {
           false,
           session.ocrContextByExchangeId.get(exchange.id) ?? ''
         ),
-        imagePaths: this.imagePathsForTurn(session, segment, false, []),
+        imagePaths: pathsForAttachmentIds(session.attachments, requestAttachmentIdsForSession(session)),
         webSearchAllowed: true
       },
       { detectMetadata: true, detectWebSearch: false }
@@ -981,12 +983,6 @@ export class QuestionSessions {
     }
   }
 
-  private imagePathsForTurn(session: QuestionSessionState, providerSegment: ProviderSegmentState, freshProviderContext: boolean, draftAttachmentIds: string[]): string[] {
-    if (providerSegment.segment.selection.provider !== 'chatgpt' || freshProviderContext) {
-      return session.attachments.filter((attachment) => attachment.status === 'sent').map((attachment) => attachment.imagePath)
-    }
-    return pathsForAttachmentIds(session.attachments, draftAttachmentIds)
-  }
   private async attachCapture(id: string, capture: CompletedCapture): Promise<void> {
     const session = this.sessions.get(id)
     if (!session || session.cleaningUp) {

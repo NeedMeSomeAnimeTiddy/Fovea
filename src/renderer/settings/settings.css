@@ -594,6 +594,56 @@ body,
   gap: var(--fovea-space-6);
 }
 
+.update-card,
+.update-notes {
+  display: grid;
+  gap: var(--fovea-space-6);
+}
+
+.update-card__heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--fovea-space-6);
+}
+
+.update-card__heading h2,
+.update-card__heading p,
+.update-notes h2 {
+  margin-bottom: 0;
+}
+
+.update-card__actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.update-progress {
+  display: grid;
+  gap: var(--fovea-space-2);
+}
+
+.update-progress progress {
+  width: 100%;
+  accent-color: var(--fovea-color-accent);
+}
+
+.update-progress small,
+.update-notes > small {
+  color: var(--fovea-color-text-tertiary);
+  font-size: var(--fovea-type-caption);
+}
+
+.update-notes ul {
+  display: grid;
+  gap: var(--fovea-space-3);
+  padding-left: var(--fovea-space-10);
+  margin: 0;
+  color: var(--fovea-color-text-secondary);
+  font-size: var(--fovea-type-body-sm);
+  line-height: var(--fovea-leading-body);
+}
+
 .about-card > p {
   margin: 0;
 }

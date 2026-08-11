@@ -202,6 +202,83 @@ describe('SettingsStore capture recipes', () => {
     await store.load()
     expect(store.get().recipes[0]).toMatchObject({ autoSend: false, autoSendConsentVersion: 0 })
   })
+
+  it('persists a fixed custom-provider selection even when its profile is unavailable', async () => {
+    const path = await settingsPath()
+    const store = new SettingsStore(path)
+    await store.load()
+    await store.update({
+      recipes: [{
+        id: 'custom-review',
+        name: 'Custom review',
+        enabled: true,
+        captureMode: 'region',
+        prompt: 'Review this with my custom provider.',
+        preferWebSearch: false,
+        extractText: false,
+        provider: {
+          mode: 'fixed',
+          selection: {
+            profileId: 'missing-custom-profile',
+            provider: 'custom',
+            modelId: 'custom-model',
+            reasoningEffort: null
+          }
+        },
+        shortcut: null,
+        autoSend: false,
+        autoSendConsentVersion: 0
+      }]
+    })
+
+    const persisted = JSON.parse(await readFile(path, 'utf8')) as { recipes?: unknown[] }
+    expect(persisted.recipes).toHaveLength(1)
+
+    const reloaded = new SettingsStore(path)
+    await reloaded.load()
+    expect(reloaded.get().profiles).toEqual([])
+    expect(reloaded.get().recipes[0]?.provider).toEqual({
+      mode: 'fixed',
+      selection: {
+        profileId: 'missing-custom-profile',
+        provider: 'custom',
+        modelId: 'custom-model',
+        reasoningEffort: null
+      }
+    })
+  })
+
+  it('rejects a fixed recipe with an unknown provider', async () => {
+    const path = await settingsPath()
+    await writeFile(path, JSON.stringify({
+      version: 5,
+      recipes: [{
+        id: 'unknown-provider',
+        name: 'Unknown provider',
+        enabled: true,
+        captureMode: 'region',
+        prompt: 'This recipe should be discarded.',
+        preferWebSearch: false,
+        extractText: false,
+        provider: {
+          mode: 'fixed',
+          selection: {
+            profileId: 'unknown-profile',
+            provider: 'unknown',
+            modelId: 'unknown-model',
+            reasoningEffort: null
+          }
+        },
+        shortcut: null,
+        autoSend: false,
+        autoSendConsentVersion: 0
+      }]
+    }))
+
+    const store = new SettingsStore(path)
+    await store.load()
+    expect(store.get().recipes).toEqual([])
+  })
 })
 
 describe('SettingsStore onboarding status', () => {
@@ -259,7 +336,7 @@ describe('SettingsStore history privacy', () => {
     await store.load()
 
     expect(store.get()).toMatchObject({
-      version: 4,
+      version: 5,
       appearance: 'dark',
       history: { privateMode: false, retentionDays: 30, retainScreenshots: false }
     })
@@ -274,6 +351,28 @@ describe('SettingsStore history privacy', () => {
     const reloaded = new SettingsStore(path)
     await reloaded.load()
     expect(reloaded.get().history).toEqual({ privateMode: true, retentionDays: 90, retainScreenshots: true })
+  })
+})
+
+describe('SettingsStore application updates', () => {
+  it('defaults automatic checks off and persists explicit opt-in', async () => {
+    const path = await settingsPath()
+    const store = new SettingsStore(path)
+    await store.load()
+    expect(store.get().automaticUpdateChecks).toBe(false)
+
+    await store.update({ automaticUpdateChecks: true })
+    const reloaded = new SettingsStore(path)
+    await reloaded.load()
+    expect(reloaded.get().automaticUpdateChecks).toBe(true)
+  })
+
+  it('does not enable automatic checks for non-boolean stored values', async () => {
+    const path = await settingsPath()
+    await writeFile(path, JSON.stringify({ version: 4, automaticUpdateChecks: 'yes' }))
+    const store = new SettingsStore(path)
+    await store.load()
+    expect(store.get().automaticUpdateChecks).toBe(false)
   })
 })
 

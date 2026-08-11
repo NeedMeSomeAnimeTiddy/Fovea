@@ -53,6 +53,7 @@ const api: FoveaApi = {
     onChanged: (callback) => subscribe(IPC.questionStateChanged, callback)
   },
   history: { list: (query = '') => invokeResult(IPC.historyList, query), open: (id) => invokeResult(IPC.historyOpen, id), delete: (id) => invokeResult(IPC.historyDelete, id), clear: () => invokeResult(IPC.historyClear), exportPreview: (id) => invokeResult(IPC.historyExportPreview, id), exportConversation: (id, options) => invokeResult(IPC.historyExport, id, options) },
+  updates: { setAutomaticChecks: (enabled) => invokeResult(IPC.updatesSetAutomaticChecks, enabled), check: () => invokeResult(IPC.updatesCheck), download: () => invokeResult(IPC.updatesDownload), install: () => invokeResult(IPC.updatesInstall) },
   application: { openSettings: () => invokeResult(IPC.applicationOpenSettings) },
   clipboard: { writeText: (value) => invokeResult(IPC.clipboardWriteText, value) },
   windowChrome: { getState: () => ipcRenderer.invoke(IPC.windowChromeGetState), ready: () => ipcRenderer.send(IPC.windowChromeReady), minimize: () => ipcRenderer.invoke(IPC.windowChromeMinimize), toggleMaximize: () => ipcRenderer.invoke(IPC.windowChromeToggleMaximize), close: () => ipcRenderer.invoke(IPC.windowChromeClose), beginResize: (edge) => ipcRenderer.invoke(IPC.windowChromeBeginResize, edge), updateResize: () => ipcRenderer.send(IPC.windowChromeUpdateResize), endResize: () => ipcRenderer.send(IPC.windowChromeEndResize), onStateChanged: (callback) => subscribe(IPC.windowChromeStateChanged, callback) },

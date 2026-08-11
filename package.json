@@ -29,6 +29,9 @@
     "paddle:setup": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-paddle-ocr.ps1",
     "omniparser:setup": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-omniparser.ps1",
     "test": "vitest run",
+    "test:visual": "playwright test --config playwright.visual.config.ts",
+    "test:visual:update": "playwright test --config playwright.visual.config.ts --update-snapshots",
+    "test:visual:headed": "playwright test --config playwright.visual.config.ts --headed",
     "build": "electron-vite build",
     "package:size": "node scripts/report-package-size.mjs --if-present",
     "package:size:check": "node scripts/report-package-size.mjs --check",
@@ -37,6 +40,7 @@
   },
   "dependencies": {
     "@zxing/library": "^0.21.3",
+    "electron-updater": "6.8.9",
     "eventsource-parser": "^3.1.0",
     "react": "19.1.1",
     "react-dom": "19.1.1",
@@ -46,7 +50,9 @@
     "tesseract.js": "7.0.0"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.12.1",
     "@eslint/js": "9.35.0",
+    "@playwright/test": "1.62.1",
     "@tesseract.js-data/eng": "1.0.0",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
