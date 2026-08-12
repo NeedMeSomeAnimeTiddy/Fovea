@@ -59,6 +59,21 @@ This matters because it has already cost us. A wall of identical missing-baselin
 capture overlay that rendered no error and an increased-contrast mode that never applied; both
 were failing assertions, not pixel differences, and both were invisible inside the noise.
 
+## What the tolerance cannot see
+
+`maxDiffPixelRatio: 0.002` allows 1,047 changed pixels in a 744 × 704 renderer, so a detail
+thinner than that is invisible to the comparison. A focus ring around a single control is such a
+detail: adding one leaves the baseline matching, and a regeneration correctly declines to rewrite
+it, because `--update-snapshots` rewrites only snapshots that did not match.
+
+Small indicators therefore have to be covered by assertions rather than baselines. The keyboard
+focus tests compare the computed `box-shadow` before and after tabbing for exactly this reason;
+their screenshots cannot distinguish a visible ring from a missing one. The same applies to focus
+outlines, one-pixel borders, carets, and small status dots.
+
+Do not respond to this by loosening or tightening the tolerance, which is a test-policy change
+under the review rules below. Add the assertion instead.
+
 ## Baseline names and review
 
 Every baseline name describes renderer, state, theme or accessibility mode, viewport where relevant, and device scale factor. For example:
