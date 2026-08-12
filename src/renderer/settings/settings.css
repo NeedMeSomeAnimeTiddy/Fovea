@@ -404,6 +404,15 @@ body,
   box-shadow: var(--fovea-focus-ring);
 }
 
+/*
+ * This control's inset highlight ties with the shared focus ring on specificity and wins on order,
+ * because this sheet loads after the design system. A shortcut recorder is reached and driven by
+ * keyboard, so it is the last control that should be unable to show where focus is.
+ */
+.shortcut-input:focus-visible {
+  box-shadow: var(--fovea-focus-ring);
+}
+
 .error-text {
   display: block;
   color: var(--fovea-status-error-foreground);
@@ -442,6 +451,17 @@ body,
   background: var(--fovea-glass-fill-strong);
   border-color: var(--fovea-color-accent);
   box-shadow: var(--fovea-glow-focus);
+}
+
+/*
+ * The selected option's glow outranks the shared focus ring, so without this the chosen colour
+ * mode is the one option that cannot show focus. The ring replaces the glow rather than joining
+ * it: `--fovea-glow-focus` resolves to `none` under increased contrast, and a shadow list
+ * containing `none` is invalid, which would drop the ring exactly where it matters most. The
+ * accent border still marks the selection while focused.
+ */
+.appearance-options button.selected:focus-visible {
+  box-shadow: var(--fovea-focus-ring);
 }
 
 .theme-preview {
@@ -1075,6 +1095,11 @@ body,
   color: var(--fovea-color-accent);
   background: var(--fovea-glass-fill-strong);
   border-color: var(--fovea-color-accent);
+  box-shadow: var(--fovea-focus-ring);
+}
+
+/* Same override as the Settings recorder; this one is met during first run. */
+.onboarding-shortcut-input:focus-visible {
   box-shadow: var(--fovea-focus-ring);
 }
 
