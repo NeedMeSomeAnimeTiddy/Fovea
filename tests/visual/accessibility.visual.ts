@@ -22,8 +22,17 @@ test.describe('Visual accessibility states', () => {
   test('keyboard focus remains visibly distinct', async ({ page }) => {
     await page.setViewportSize({ width: 744, height: 704 })
     await openVisual(page, { renderer: 'settings', scenario: 'default', theme: 'dark' })
+    // Counting :focus-visible only proves something took focus. The selected category already
+    // carries an elevation of its own, and when that quietly replaced the shared focus ring this
+    // screenshot stayed byte-identical to the unfocused view, so the appearance has to be
+    // compared directly.
+    const selectedCategory = page.locator('.settings-nav button').first()
+    const resting = await selectedCategory.evaluate((element) => getComputedStyle(element).boxShadow)
     await page.keyboard.press('Tab')
     await expect(page.locator(':focus-visible')).toHaveCount(1)
+    await expect(selectedCategory).toBeFocused()
+    const focused = await selectedCategory.evaluate((element) => getComputedStyle(element).boxShadow)
+    expect(focused).not.toBe(resting)
     await settleVisualPage(page)
     await expect(page).toHaveScreenshot('settings--keyboard-focus--dark--744x704--dsf1.png')
   })

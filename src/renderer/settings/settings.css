@@ -95,6 +95,21 @@ body,
   box-shadow: var(--fovea-shadow-surface);
 }
 
+/*
+ * The shared focus ring is declared through `:where(…):focus-visible`, which contributes no
+ * specificity, so `.settings-nav button.active` replaced it with its own elevation and the
+ * selected category showed no focus indicator at all. Keyboard focus has to remain distinct on
+ * the item that already looks selected, so the active state keeps its elevation and gains the
+ * ring rather than choosing between them.
+ */
+.settings-nav button:focus-visible {
+  box-shadow: var(--fovea-focus-ring);
+}
+
+.settings-nav button.active:focus-visible {
+  box-shadow: var(--fovea-focus-ring), var(--fovea-shadow-surface);
+}
+
 .settings-nav button.active .settings-nav__icon {
   color: var(--fovea-color-accent);
 }
