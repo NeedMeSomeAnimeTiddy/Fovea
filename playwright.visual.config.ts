@@ -24,10 +24,21 @@ function hasApprovedBaselines(directory = snapshotRoot): boolean {
   ))
 }
 
-// Generating baselines must still write them, so an update run never skips the comparison.
-const updatingBaselines = process.argv.some((argument) => (
+/*
+ * Generating baselines must still write them, so an update run never skips the comparison.
+ *
+ * Playwright reloads this config in every worker process, and a worker's argv carries none of the
+ * CLI flags. Reading argv alone therefore holds in the parent and silently flips back in the
+ * workers, which is where the screenshots are actually taken: the run reports success and writes
+ * nothing. The flag is promoted to the environment, which workers inherit, and CI sets the same
+ * variable directly so the decision never depends on when this file happens to be evaluated.
+ */
+const UPDATE_ENV = 'FOVEA_VISUAL_UPDATE_BASELINES'
+const updateRequestedOnCommandLine = process.argv.some((argument) => (
   argument === '-u' || argument === '--update-snapshots' || argument.startsWith('--update-snapshots=')
 ))
+if (updateRequestedOnCommandLine) process.env[UPDATE_ENV] = 'true'
+const updatingBaselines = updateRequestedOnCommandLine || process.env[UPDATE_ENV] === 'true'
 const ignoreSnapshots = !updatingBaselines && !hasApprovedBaselines()
 if (ignoreSnapshots) {
   console.warn(

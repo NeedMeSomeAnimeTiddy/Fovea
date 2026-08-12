@@ -61,12 +61,32 @@ jobs:
 
       - name: Compare approved baselines
         shell: pwsh
+        env:
+          # Set for the whole step so every Playwright worker inherits it. A worker cannot see the
+          # --update-snapshots flag, and without this it would skip the screenshots and write none.
+          FOVEA_VISUAL_UPDATE_BASELINES: ${{ inputs.update_baselines }}
         run: |
           if ('${{ inputs.update_baselines }}' -eq 'true') {
             npx playwright test --config playwright.visual.config.ts --update-snapshots
           } else {
             npx playwright test --config playwright.visual.config.ts
           }
+
+      # The upload's if-no-files-found guard cannot catch an empty generation, because the
+      # directory always holds its README. Count the images instead.
+      - name: Verify baseline candidates were written
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.update_baselines }}
+        shell: pwsh
+        run: |
+          $root = 'tests/visual/__snapshots__'
+          $count = 0
+          if (Test-Path $root) {
+            $count = (Get-ChildItem -Path $root -Recurse -Filter *.png -File).Count
+          }
+          if ($count -eq 0) {
+            throw 'Baseline generation wrote no PNG files, so the artifact would contain nothing to review.'
+          }
+          Write-Host "Wrote $count baseline candidates."
 
       - name: Upload visual failure evidence
         if: failure()
