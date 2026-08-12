@@ -72,12 +72,14 @@ export async function exportConversation(
     if (options.includeScreenshots && record.attachments.length) {
       const stagingAssets = join(staging, assetsName)
       await mkdir(stagingAssets)
-      for (const [index, attachment] of record.attachments.entries()) {
+      const copied = await Promise.all(record.attachments.map(async (attachment, index) => {
         const extension = safeImageExtension(attachment.imagePath)
         const file = `image-${String(index + 1).padStart(3, '0')}${extension}`
         await copyFile(attachment.imagePath, join(stagingAssets, file))
-        attachmentFiles.set(attachment.id, `${assetsName}/${file}`)
-      }
+        return [attachment.id, `${assetsName}/${file}`] as const
+      }))
+      // Numbering stays tied to the attachment's own index, so concurrency cannot reorder it.
+      for (const [id, file] of copied) attachmentFiles.set(id, file)
     }
     const content = options.format === 'json'
       ? JSON.stringify(jsonExport(record, options, attachmentFiles), null, 2)

@@ -544,19 +544,22 @@ export class ConversationHistoryStore {
     const removeFromQueue = database.prepare('DELETE FROM attachment_deletion_queue WHERE image_path = ?')
     const referencedPaths = new Set(this.allAttachments().map((attachment) => pathKey(attachment.imagePath)))
 
-    for (const row of rows) {
+    // Retention runs this during startup, so the removals are settled concurrently and the queue
+    // rows are cleared afterwards. A failed removal keeps its row and is retried next time.
+    const outcomes = await Promise.all(rows.map(async (row) => {
       const storedPath = stringValue(row.image_path)
       const imagePath = canonicalPathInside(this.imageDirectory, storedPath)
-      if (!imagePath || referencedPaths.has(pathKey(imagePath))) {
-        removeFromQueue.run(storedPath)
-        continue
-      }
+      if (!imagePath || referencedPaths.has(pathKey(imagePath))) return storedPath
       try {
         await rm(imagePath, { force: true })
-        removeFromQueue.run(storedPath)
+        return storedPath
       } catch (error) {
         console.warn(`[history] Attachment cleanup will be retried: ${safeErrorMessage(error)}`)
+        return null
       }
+    }))
+    for (const storedPath of outcomes) {
+      if (storedPath !== null) removeFromQueue.run(storedPath)
     }
   }
 

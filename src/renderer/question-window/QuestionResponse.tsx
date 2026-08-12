@@ -1,6 +1,5 @@
 import { memo, useMemo, useState, type ReactNode } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
-import rehypeHighlight from 'rehype-highlight'
 import type {
   ConversationExchange,
   OcrEntity,
@@ -9,6 +8,7 @@ import type {
 } from '@shared/types/app'
 import { Button, Card, Spinner } from '../design-system'
 import { useModalDialog } from '../design-system/internal/useModalDialog'
+import { useSyntaxHighlighting } from './useSyntaxHighlighting'
 
 export interface ConversationTimelineProps {
   exchanges: ConversationExchange[]
@@ -200,6 +200,7 @@ const Markdown = memo(function Markdown({
   onCopy(value: string, label?: string): Promise<void>
 }): React.JSX.Element {
   const [pendingLink, setPendingLink] = useState<ExternalLinkDetails | null>(null)
+  const rehypePlugins = useSyntaxHighlighting()
   const components = useMemo<Components>(() => ({
     a: ({ href, children }) => (
       <a
@@ -225,7 +226,7 @@ const Markdown = memo(function Markdown({
   return (
     <>
       <ReactMarkdown
-        rehypePlugins={[rehypeHighlight]}
+        rehypePlugins={rehypePlugins}
         components={components}
       >
         {text}

@@ -32,23 +32,29 @@ export class TempScreenshotStore {
     this.activePaths.delete(this.pathKey(managedPath))
   }
 
+  /**
+   * Startup calls this before the tray appears, and a busy session can leave hundreds of files
+   * behind, so each candidate is settled concurrently rather than one round trip at a time.
+   */
   async cleanup(olderThanMs = 0, options: { preserveActive?: boolean } = {}): Promise<number> {
     await this.initialise()
     const now = Date.now()
-    let removed = 0
-    for (const entry of await readdir(this.directory, { withFileTypes: true })) {
-      if (!entry.isFile() || !MANAGED_SCREENSHOT_NAME.test(entry.name)) continue
+    const entries = await readdir(this.directory, { withFileTypes: true })
+    const candidates = entries.flatMap((entry) => {
+      if (!entry.isFile() || !MANAGED_SCREENSHOT_NAME.test(entry.name)) return []
       const path = join(this.directory, entry.name)
-      if (options.preserveActive && this.activePaths.has(this.pathKey(path))) continue
+      return options.preserveActive && this.activePaths.has(this.pathKey(path)) ? [] : [path]
+    })
+    const removals = await Promise.all(candidates.map(async (path) => {
       if (olderThanMs > 0) {
         const metadata = await stat(path)
-        if (now - metadata.mtimeMs < olderThanMs) continue
+        if (now - metadata.mtimeMs < olderThanMs) return false
       }
       await rm(path, { force: true })
       this.activePaths.delete(this.pathKey(path))
-      removed++
-    }
-    return removed
+      return true
+    }))
+    return removals.filter(Boolean).length
   }
 
   private managedPath(path: string): string | null {
