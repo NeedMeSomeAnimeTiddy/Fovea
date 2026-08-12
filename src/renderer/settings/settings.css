@@ -982,6 +982,12 @@ body,
   box-shadow: var(--fovea-glow-focus);
 }
 
+/* Same selected-state override as the colour mode options, and the ring likewise replaces the
+   glow rather than joining it, because that token is `none` under increased contrast. */
+.onboarding-provider-option[data-selected]:focus-visible {
+  box-shadow: var(--fovea-focus-ring);
+}
+
 .onboarding-provider-option span {
   font-size: var(--fovea-type-body-sm);
   font-weight: var(--fovea-weight-semibold);
