@@ -37,6 +37,16 @@ jobs:
         shell: pwsh
         run: node build/validate-release-tag.cjs "$env:GITHUB_REF_NAME"
 
+      # release:check runs typecheck, which needs the generated resources/codex-schema types.
+      - name: Restore the pinned Codex sidecar
+        uses: actions/cache@v4
+        with:
+          path: resources/sidecar
+          key: codex-sidecar-${{ runner.os }}-${{ hashFiles('resources/runtime/codex-runtime-manifest.json') }}
+
+      - name: Generate the app-server schema
+        run: npm run sidecar:fetch
+
       - name: Run release checks
         run: npm run release:check
 

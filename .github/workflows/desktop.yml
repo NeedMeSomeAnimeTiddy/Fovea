@@ -32,6 +32,18 @@ jobs:
       - name: Install locked dependencies
         run: npm ci
 
+      # resources/codex-schema is generated, not committed, and the ChatGPT adapter imports its
+      # types, so typecheck cannot run without it. The pinned binary that generates it is
+      # verified against the manifest digest by the fetch script itself.
+      - name: Restore the pinned Codex sidecar
+        uses: actions/cache@v4
+        with:
+          path: resources/sidecar
+          key: codex-sidecar-${{ runner.os }}-${{ hashFiles('resources/runtime/codex-runtime-manifest.json') }}
+
+      - name: Generate the app-server schema
+        run: npm run sidecar:fetch
+
       - name: Check types
         run: npm run typecheck
 
