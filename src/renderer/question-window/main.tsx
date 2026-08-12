@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { memo, useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { createPortal } from 'react-dom'
 import type { QuestionViewState, RequestDisclosureState } from '@shared/contracts/ipc'
@@ -82,6 +82,7 @@ export function QuestionApp(): React.JSX.Element {
   const modelRef = useRef<HTMLDivElement>(null)
   const captureRef = useRef<HTMLDivElement>(null)
   const responseContentRef = useRef<HTMLDivElement>(null)
+  const modalReturnFocusRef = useRef<HTMLElement | null>(null)
   const stickToBottom = useRef(true)
   const stateReady = useRef(false)
   const draftApplied = useRef(false)
@@ -333,6 +334,7 @@ export function QuestionApp(): React.JSX.Element {
     }
   }
   const editAttachment = async (attachmentId: string): Promise<void> => {
+    modalReturnFocusRef.current = attachmentMenuTrigger(attachmentId) ?? focusedElement()
     setError(null)
     try {
       const imageDataUrl = await window.fovea.question.getFullImage(sessionId, attachmentId)
@@ -394,6 +396,7 @@ export function QuestionApp(): React.JSX.Element {
     }
   }
   const openExport = async (): Promise<void> => {
+    modalReturnFocusRef.current = focusedElement()
     setError(null)
     try { setExportPreview(await window.fovea.question.exportPreview(sessionId)) }
     catch (reason) { setError(appErrorFromUnknown(reason)) }
@@ -411,7 +414,7 @@ export function QuestionApp(): React.JSX.Element {
   }
   const recover = (recovery: AppRecoveryKind): void => {
     if (recovery === 'open-settings' || recovery === 'authenticate' || recovery === 'choose-provider') {
-      void window.fovea.application.openSettings()
+      void window.fovea.application.openSettings('Account')
     } else if (recovery === 'recapture') {
       void addSnip()
     } else if (recovery === 'retry') {
@@ -528,7 +531,7 @@ export function QuestionApp(): React.JSX.Element {
                     ? 'Choose an image-capable model in Settings.'
                     : 'Connect a provider once, then every capture can be answered automatically.')}
                 </StatusBanner>
-                <Button onClick={() => void window.fovea.application.openSettings()}>Open Settings</Button>
+                <Button onClick={() => void window.fovea.application.openSettings('Account')}>Open Settings</Button>
               </section>
             )
           : (
@@ -604,6 +607,7 @@ export function QuestionApp(): React.JSX.Element {
                     attachments={state.attachments}
                     disclosure={state.requestDisclosure}
                     disabled={state.busy}
+                    key={requestDisclosureKey(state.requestDisclosure)}
                     onEdit={(attachmentId) => void editAttachment(attachmentId)}
                     onPreview={(attachmentId) => void openPreview(attachmentId)}
                     onRemove={(attachmentId) => void removeAttachment(attachmentId)}
@@ -719,6 +723,7 @@ export function QuestionApp(): React.JSX.Element {
           <ScreenshotEditor
             imageDataUrl={editor.imageDataUrl}
             saving={editorSaving}
+            returnFocus={modalReturnFocusRef.current}
             onCancel={() => setEditor(null)}
             onSave={(operations) => {
               setEditorSaving(true)
@@ -737,7 +742,7 @@ export function QuestionApp(): React.JSX.Element {
             }}
           />
         )}
-        {exportPreview && <ConversationExportDialog preview={exportPreview} busy={exportBusy} onCancel={() => setExportPreview(null)} onExport={exportConversation} />}
+        {exportPreview && <ConversationExportDialog preview={exportPreview} busy={exportBusy} returnFocus={modalReturnFocusRef.current} onCancel={() => setExportPreview(null)} onExport={exportConversation} />}
         <div className="fui-sr-only" aria-live="polite">{copyStatus}</div>
       </main>
     </WindowFrame>
@@ -759,62 +764,115 @@ export function RequestDisclosure({
   onPreview(attachmentId: string): void
   onRemove(attachmentId: string): void
 }): React.JSX.Element {
+  const [collapsed, setCollapsed] = useState(false)
+  const detailsId = `request-disclosure-${useId().replace(/[^a-zA-Z0-9_-]/g, '')}`
+  const toggleRef = useRef<HTMLButtonElement>(null)
+  const restoreToggleFocus = useRef(false)
   const requestAttachments = disclosure.attachmentIds
     .map((attachmentId) => attachments.find((attachment) => attachment.id === attachmentId))
     .filter((attachment): attachment is QuestionAttachment => Boolean(attachment))
 
+  useEffect(() => {
+    if (!restoreToggleFocus.current) return
+    restoreToggleFocus.current = false
+    toggleRef.current?.focus()
+  }, [collapsed])
+
+  const toggleCollapsed = (nextCollapsed: boolean): void => {
+    restoreToggleFocus.current = true
+    setCollapsed(nextCollapsed)
+  }
+
   return (
-    <section className="request-disclosure" aria-label="Next request privacy">
-      <header className="request-disclosure__header">
-        <div>
-          <span>Next request</span>
-          <strong>{disclosure.profileName}</strong>
-        </div>
-        <small>{requestProviderLabel(disclosure.provider)} · {disclosure.modelName}</small>
-      </header>
-      {disclosure.baseUrl && <code className="request-disclosure__destination">{disclosure.baseUrl}</code>}
-      <p className="request-disclosure__warning">
-        Check screenshots for passwords, personal details, and private content. Fovea cannot identify every kind of sensitive information.
-      </p>
-      {requestAttachments.length > 0
+    <section
+      className={collapsed ? 'request-disclosure request-disclosure--collapsed' : 'request-disclosure'}
+      aria-label="Next request privacy"
+    >
+      {collapsed
         ? (
-            <div className="request-disclosure__attachments" aria-label="Images shared with the next request" role="list">
-              {requestAttachments.map((attachment, index) => (
-                <div className="request-disclosure__attachment" key={attachment.id} role="listitem">
-                  <button
-                    aria-label={`Preview screenshot ${index + 1} shared with the next request`}
-                    className="request-disclosure__preview"
-                    type="button"
-                    onClick={() => onPreview(attachment.id)}
-                  >
-                    <img alt="" draggable={false} src={attachment.thumbnailDataUrl} />
-                    <span>{index + 1}</span>
-                  </button>
-                  {attachment.status === 'draft' && (
-                    <div className="request-disclosure__attachment-actions">
-                      <Button
-                        disabled={disabled}
-                        size="compact"
-                        variant="secondary"
-                        onClick={() => onEdit(attachment.id)}
-                      >
-                        Review / redact
-                      </Button>
-                      <Button
-                        disabled={disabled}
-                        size="compact"
-                        variant="ghost"
-                        onClick={() => onRemove(attachment.id)}
-                      >
-                        Remove
-                      </Button>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
+            <>
+              <div className="request-disclosure__collapsed-copy">
+                <strong>Next request</strong>
+                <span>{disclosure.profileName} · {disclosure.attachmentIds.length} {disclosure.attachmentIds.length === 1 ? 'image' : 'images'}</span>
+              </div>
+              <Button
+                aria-controls={detailsId}
+                aria-expanded={false}
+                ref={toggleRef}
+                size="compact"
+                variant="ghost"
+                onClick={() => toggleCollapsed(false)}
+              >
+                Review
+              </Button>
+            </>
           )
-        : <p className="request-disclosure__empty">No screenshot files will be included with the next request.</p>}
+        : (
+            <header className="request-disclosure__header">
+              <div className="request-disclosure__title">
+                <span>Next request</span>
+                <strong>{disclosure.profileName}</strong>
+              </div>
+              <div className="request-disclosure__meta">
+                <small>{requestProviderLabel(disclosure.provider)} · {disclosure.modelName}</small>
+                <IconButton
+                  aria-controls={detailsId}
+                  aria-expanded
+                  icon={<Icon name="close" />}
+                  label="Dismiss next request details"
+                  ref={toggleRef}
+                  size="compact"
+                  variant="ghost"
+                  onClick={() => toggleCollapsed(true)}
+                />
+              </div>
+            </header>
+          )}
+      <div className="request-disclosure__details" hidden={collapsed} id={detailsId}>
+        {disclosure.baseUrl && <code className="request-disclosure__destination">{disclosure.baseUrl}</code>}
+        <p className="request-disclosure__warning">
+          Check screenshots for passwords, personal details, and private content. Fovea cannot identify every kind of sensitive information.
+        </p>
+        {requestAttachments.length > 0
+          ? (
+              <div className="request-disclosure__attachments" aria-label="Images shared with the next request" role="list">
+                {requestAttachments.map((attachment, index) => (
+                  <div className="request-disclosure__attachment" key={attachment.id} role="listitem">
+                    <button
+                      aria-label={`Preview screenshot ${index + 1} shared with the next request`}
+                      className="request-disclosure__preview"
+                      type="button"
+                      onClick={() => onPreview(attachment.id)}
+                    >
+                      <img alt="" draggable={false} src={attachment.thumbnailDataUrl} />
+                      <span>{index + 1}</span>
+                    </button>
+                    {attachment.status === 'draft' && (
+                      <div className="request-disclosure__attachment-actions">
+                        <Button
+                          disabled={disabled}
+                          size="compact"
+                          variant="secondary"
+                          onClick={() => onEdit(attachment.id)}
+                        >
+                          Review / redact
+                        </Button>
+                        <Button
+                          disabled={disabled}
+                          size="compact"
+                          variant="ghost"
+                          onClick={() => onRemove(attachment.id)}
+                        >
+                          Remove
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )
+          : <p className="request-disclosure__empty">No screenshot files will be included with the next request.</p>}
+      </div>
     </section>
   )
 }
@@ -906,6 +964,7 @@ export const AttachmentThumbnail = memo(function AttachmentThumbnail({
         aria-haspopup="menu"
         aria-label={`Screenshot ${index + 1} options${attachment.status === 'draft' ? ', not sent yet' : ''}`}
         className="attachment-thumbnail__preview"
+        data-attachment-menu-trigger={attachment.id}
         onClick={(event) => onOpen(event, attachment.id, index)}
         type="button"
       >
@@ -924,6 +983,15 @@ export const AttachmentThumbnail = memo(function AttachmentThumbnail({
   previous.attachment.thumbnailDataUrl === next.attachment.thumbnailDataUrl
 ))
 
+function focusedElement(): HTMLElement | null {
+  return document.activeElement instanceof HTMLElement ? document.activeElement : null
+}
+
+function attachmentMenuTrigger(attachmentId: string): HTMLElement | null {
+  return [...document.querySelectorAll<HTMLElement>('[data-attachment-menu-trigger]')]
+    .find((element) => element.dataset.attachmentMenuTrigger === attachmentId) ?? null
+}
+
 function requestProviderLabel(provider: RequestDisclosureState['provider']): string {
   return ({
     chatgpt: 'ChatGPT',
@@ -932,6 +1000,18 @@ function requestProviderLabel(provider: RequestDisclosureState['provider']): str
     openrouter: 'OpenRouter API',
     custom: 'Custom API'
   })[provider]
+}
+
+export function requestDisclosureKey(disclosure: RequestDisclosureState): string {
+  return JSON.stringify([
+    disclosure.profileId,
+    disclosure.profileName,
+    disclosure.provider,
+    disclosure.baseUrl ?? '',
+    disclosure.modelId,
+    disclosure.modelName,
+    disclosure.attachmentIds
+  ])
 }
 
 export function CaptureMenu({
@@ -1083,7 +1163,7 @@ export function AskMenu({
                   value={text}
                   onChange={(event) => onTextChange(event.target.value)}
                   onKeyDown={(event) => {
-                    if (event.key === 'Enter' && !event.shiftKey) {
+                    if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) {
                       event.preventDefault()
                       void onSend()
                     }

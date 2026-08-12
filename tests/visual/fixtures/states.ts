@@ -1,5 +1,5 @@
 import type {
-  CaptureContext,
+  FrozenCaptureContext,
   QuestionViewState,
   SettingsViewState,
   WindowChromeState
@@ -28,7 +28,7 @@ export interface VisualFixtureOptions {
 
 export interface VisualFixture extends VisualFixtureOptions {
   settings: SettingsViewState
-  captureContext: CaptureContext
+  captureContext: FrozenCaptureContext
   captureAnalysis: CaptureAnalysis
   captureError: AppError | null
   question: QuestionViewState
@@ -91,6 +91,7 @@ export function createVisualFixture(options: VisualFixtureOptions): VisualFixtur
       height: options.height,
       minSelectionSize: 24,
       displayId: 'fixture-display',
+      surface: 'frozen',
       imageDataUrl: syntheticCaptureDataUrl('desktop', options.width, options.height),
       canEditBeforeSending: true
     },

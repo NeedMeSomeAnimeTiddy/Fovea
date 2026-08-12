@@ -46,7 +46,7 @@ const mocks = vi.hoisted(() => {
     readonly webContents: FakeEmitter & {
       id: number
       isDestroyed(): boolean
-      send(): void
+      send(...arguments_: any[]): void
       setWindowOpenHandler(): void
     }
     bounds: { x: number; y: number; width: number; height: number }
@@ -54,6 +54,7 @@ const mocks = vi.hoisted(() => {
     showCalls = 0
     hideCalls = 0
     focusCalls = 0
+    readonly sendCalls: any[][] = []
     readonly setBoundsCalls: Array<{ x: number; y: number; width: number; height: number }> = []
 
     constructor(options: Record<string, any>) {
@@ -63,7 +64,9 @@ const mocks = vi.hoisted(() => {
       const contents = new FakeEmitter() as FakeWindow['webContents']
       contents.id = this.id + 100
       contents.isDestroyed = () => this.destroyed
-      contents.send = () => undefined
+      contents.send = (...arguments_) => {
+        this.sendCalls.push(arguments_)
+      }
       contents.setWindowOpenHandler = () => undefined
       this.webContents = contents
     }
@@ -189,6 +192,23 @@ describe('Settings window startup lifecycle', () => {
     windowChromeRegistry.get(window.webContents.id)!.markRendererReady()
     await expect(opening).resolves.toBe(window)
     expect(window.showCalls).toBe(1)
+  })
+
+  it('loads a requested category and navigates an existing settings window', async () => {
+    vi.spyOn(console, 'info').mockImplementation(() => undefined)
+    const { IPC } = await import('../src/shared/contracts/ipc')
+    const { showSettingsWindow } = await import('../src/main/windows/settings-window')
+    const { windowChromeRegistry } = await import('../src/main/windows/window-chrome')
+    const opening = showSettingsWindow(undefined, 'Updates')
+    const window = mocks.windows[0]!
+
+    expect(mocks.loadRenderer).toHaveBeenCalledWith(window, 'settings', { category: 'Updates' })
+    window.emit('ready-to-show')
+    windowChromeRegistry.get(window.webContents.id)!.markRendererReady()
+    await opening
+
+    await expect(showSettingsWindow(undefined, 'Privacy')).resolves.toBe(window)
+    expect(window.sendCalls).toContainEqual([IPC.settingsNavigate, 'Privacy'])
   })
 
   it('destroys a timed-out transparent attempt and retries once in solid mode', async () => {

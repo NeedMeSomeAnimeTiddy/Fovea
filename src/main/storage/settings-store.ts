@@ -11,6 +11,7 @@ import type {
   ShortcutAction
 } from '@shared/types/app'
 import { MAX_CUSTOM_MODEL_IDS, normaliseBaseUrl } from '@shared/provider-endpoint'
+import { isMissingFile, preserveCorruptFile } from './corrupt-file-backup'
 
 export interface StoredProviderProfile {
   id: string
@@ -97,11 +98,25 @@ export class SettingsStore {
   constructor(private readonly path: string) {}
 
   async load(): Promise<void> {
+    let raw: string
     try {
-      const parsed = JSON.parse(await readFile(this.path, 'utf8')) as StoredSettingsInput
-      this.value = sanitize(parsed)
-    } catch {
+      raw = await readFile(this.path, 'utf8')
+    } catch (error) {
       this.value = clone(DEFAULTS)
+      if (isMissingFile(error)) return
+      throw error
+    }
+
+    try {
+      const parsed = JSON.parse(raw) as unknown
+      if (!isPlainObject(parsed)) throw new Error('The settings document must be a JSON object.')
+      this.value = sanitize(parsed as StoredSettingsInput)
+    } catch (error) {
+      const backupPath = await preserveCorruptFile(this.path)
+      this.value = clone(DEFAULTS)
+      console.warn(
+        `[settings] Corrupt settings were preserved at ${backupPath}: ${safeErrorMessage(error)}`
+      )
     }
   }
 
@@ -304,4 +319,12 @@ function sanitizeProfile(profile: StoredProviderProfile): StoredProviderProfile 
 
 function clone<T>(value: T): T {
   return structuredClone(value)
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
+}
+
+function safeErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }

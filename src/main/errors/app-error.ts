@@ -78,11 +78,18 @@ export async function toIpcResult<T>(operation: () => T | Promise<T>, fallbackCo
   }
 }
 
-export function redactTechnicalDetails(value: string): string {
-  return value
+export function redactTechnicalDetails(value: string, sensitiveValues: readonly string[] = []): string {
+  const secrets = [...new Set(sensitiveValues.flatMap((secret) => [secret, secret.trim()]).filter(Boolean))]
+    .sort((left, right) => right.length - left.length)
+  let safe = value
+  for (const secret of secrets) safe = safe.split(secret).join('[REDACTED_API_KEY]')
+
+  return safe
+    .replace(/((?:authorization|proxy-authorization)\s*["']?\s*[:=]\s*["']?\s*(?:bearer|basic)?\s*)[^"',}\][\s&]+/gi, '$1[REDACTED]')
+    .replace(/((?:x-api-key|api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret)\s*["']?\s*[:=]\s*["']?\s*)[^"',}\][\s&]+/gi, '$1[REDACTED]')
+    .replace(/\b((?:bearer|basic)\s+)[A-Za-z0-9._~+/=-]+/gi, '$1[REDACTED]')
     .replace(/(?:sk|key)-[A-Za-z0-9_-]+/gi, '[REDACTED_API_KEY]')
     .replace(/https?:\/\/\S*(?:oauth|authorize|callback)\S*/gi, '[REDACTED_AUTH_URL]')
-    .replace(/(?:access|refresh)[_-]?token["'=:\s]+\S+/gi, 'token=[REDACTED]')
     .replace(/data:image\/[^;]+;base64,[A-Za-z0-9+/=]+/gi, '[REDACTED_IMAGE]')
     .slice(0, 500)
 }

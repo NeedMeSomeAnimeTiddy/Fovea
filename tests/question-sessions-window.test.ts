@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { OcrServiceError } from '../src/main/ocr/ocr-service'
+import { QUESTION_WINDOW_READY_TIMEOUT_MS, QuestionSessions } from '../src/main/windows/question-sessions'
+import { windowChromeRegistry } from '../src/main/windows/window-chrome'
 
 const mocks = vi.hoisted(() => {
   type Listener = (...arguments_: any[]) => void
@@ -245,7 +248,6 @@ function capture(selectedX = 150): any {
 }
 
 async function createSessions(options: { history?: any; settings?: any; imageEditor?: any; ocr?: any } = {}): Promise<any> {
-  const { QuestionSessions } = await import('../src/main/windows/question-sessions')
   return new QuestionSessions(
     mocks.provider as any,
     { delete: mocks.deleteScreenshot } as any,
@@ -260,7 +262,6 @@ async function createSessions(options: { history?: any; settings?: any; imageEdi
 
 async function finishOpening(opening: Promise<void>, index: number, waitForAnswer = true): Promise<string> {
   const window = mocks.windows[index]!
-  const { windowChromeRegistry } = await import('../src/main/windows/window-chrome')
   window.emit('ready-to-show')
   windowChromeRegistry.get(window.webContents.id)!.markRendererReady()
   await opening
@@ -278,7 +279,6 @@ async function finishOpening(opening: Promise<void>, index: number, waitForAnswe
 
 describe('question-session window migration', () => {
   beforeEach(() => {
-    vi.resetModules()
     mocks.reset()
   })
 
@@ -350,7 +350,6 @@ describe('question-session window migration', () => {
     const sessionId = mocks.loadRenderer.mock.calls[0]![2]!.session
     const window = mocks.windows[0]!
     window.emit('ready-to-show')
-    const { windowChromeRegistry } = await import('../src/main/windows/window-chrome')
     windowChromeRegistry.get(window.webContents.id)!.markRendererReady()
     await opening
     expect(window.showCalls).toBe(1)
@@ -386,7 +385,6 @@ describe('question-session window migration', () => {
     const secondOpening = sessions.open(capture(900))
     const secondId = await finishOpening(secondOpening, 1)
     const [first, second] = mocks.windows
-    const { windowChromeRegistry } = await import('../src/main/windows/window-chrome')
     const firstChrome = windowChromeRegistry.get(first!.webContents.id)!
     const secondChrome = windowChromeRegistry.get(second!.webContents.id)!
 
@@ -500,7 +498,6 @@ describe('question-session window migration', () => {
     vi.spyOn(console, 'info').mockImplementation(() => undefined)
     vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     const sessions = await createSessions()
-    const { QUESTION_WINDOW_READY_TIMEOUT_MS } = await import('../src/main/windows/question-sessions')
     const opening = sessions.open(capture())
 
     await vi.advanceTimersByTimeAsync(QUESTION_WINDOW_READY_TIMEOUT_MS)
@@ -543,7 +540,6 @@ describe('question-session window migration', () => {
     await sessions.stop(sessionId)
     expect(mocks.cancel).toHaveBeenCalledWith('conversation-1')
 
-    const { windowChromeRegistry } = await import('../src/main/windows/window-chrome')
     windowChromeRegistry.get(window.webContents.id)!.closeWindow()
     await vi.waitFor(() => expect(mocks.deleteScreenshot).toHaveBeenCalledWith(capture().imagePath))
     await vi.waitFor(() => expect(mocks.deleteConversation).toHaveBeenCalledWith('conversation-1'))
@@ -939,7 +935,6 @@ describe('question-session window migration', () => {
   })
 
   it('stops capture-mode OCR without showing a failure', async () => {
-    const { OcrServiceError } = await import('../src/main/ocr/ocr-service')
     let rejectRecognition: ((error: Error) => void) | undefined
     const ocr = {
       recognise: vi.fn(() => new Promise((_resolve, reject) => {

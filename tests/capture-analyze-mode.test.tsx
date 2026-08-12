@@ -12,6 +12,7 @@ import {
   captureRectangleForFeature,
   displayFeatureLabel,
   featuresAtPoint,
+  holdLiveSurfaceForAnalyze,
   questionsForFeature,
   webQuestionForFeature
 } from '../src/renderer/capture-overlay/main'
@@ -22,6 +23,7 @@ const context: CaptureContext = {
   width: 1_000,
   height: 600,
   minSelectionSize: 24,
+  surface: 'frozen',
   imageDataUrl: 'data:image/png;base64,',
   canEditBeforeSending: true
 }
@@ -88,6 +90,47 @@ describe('capture Analyze mode', () => {
     )
     expect(screen.getByRole('button', { name: 'Exit Analyze mode' }).getAttribute('aria-pressed')).toBe('true')
     expect(screen.getByText('Analyze mode')).toBeTruthy()
+  })
+
+  it('locks Analyze while the live frame is being held', () => {
+    render(
+      <CaptureHud
+        analyzeBusy
+        analyzeHoldInFlight
+        canEditBeforeSending
+        detail="Holding this moment for Analyze…"
+        editBeforeSending={false}
+        error={false}
+        extractText={false}
+        ocrLanguageCode=""
+        ocrLanguages={[]}
+        preferWebSearch={false}
+        onCancel={vi.fn()}
+        onOcrLanguageChange={vi.fn()}
+        onToggleAnalyze={vi.fn()}
+        onToggleEdit={vi.fn()}
+        onToggleExtractText={vi.fn()}
+        onToggleWebSearch={vi.fn()}
+      />
+    )
+
+    const analyze = screen.getByRole('button', { name: 'Holding current screen for Analyze' }) as HTMLButtonElement
+    expect(analyze.disabled).toBe(true)
+    expect(screen.getByText('Holding current screen')).toBeTruthy()
+  })
+
+  it('does not freeze after a live frame hold has been cancelled', async () => {
+    let finishFrame!: (value: boolean) => void
+    const captureVideoFrame = vi.fn(() => new Promise<boolean>((resolve) => { finishFrame = resolve }))
+    const freeze = vi.fn(async () => ({ ...context, surface: 'frozen' as const, imageDataUrl: 'data:image/png;base64,' }))
+    let current = true
+
+    const holding = holdLiveSurfaceForAnalyze({ captureVideoFrame, freeze }, () => current)
+    current = false
+    finishFrame(false)
+
+    await expect(holding).resolves.toBeNull()
+    expect(freeze).not.toHaveBeenCalled()
   })
 
   it('shows predetermined questions for a selected feature', async () => {

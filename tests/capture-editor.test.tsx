@@ -12,6 +12,7 @@ describe('in-place capture editor', () => {
           width: 1920,
           height: 1080,
           minSelectionSize: 24,
+          surface: 'frozen',
           imageDataUrl: 'data:image/jpeg;base64,',
           canEditBeforeSending: true
         }}
@@ -54,7 +55,10 @@ describe('in-place capture editor', () => {
     fireEvent.pointerDown(move, { clientX: 320, clientY: 120, pointerId: 2 })
     fireEvent.pointerMove(move, { clientX: 400, clientY: 240, pointerId: 2 })
     fireEvent.pointerUp(move, { clientX: 400, clientY: 240, pointerId: 2 })
-    fireEvent.click(screen.getByRole('button', { name: 'Add text annotation' }))
+    fireEvent.keyDown(input, { key: 'Enter', isComposing: true })
+    expect(screen.getByRole('textbox', { name: 'Annotation text' })).toBe(input)
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(screen.queryByRole('textbox', { name: 'Annotation text' })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Send screenshot' }))
     expect(send).toHaveBeenCalledWith([
       expect.objectContaining({

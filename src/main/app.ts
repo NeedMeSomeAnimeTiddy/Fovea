@@ -4,13 +4,14 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { UPDATE_RELEASE_MARKER_FIELD } from '@shared/types/update'
 import { AppearanceController } from './appearance/appearance-controller'
-import { CaptureService } from './capture/capture-service'
+import { CaptureService, supportsLiveRegionCapture } from './capture/capture-service'
 import { ImageEditorService } from './capture/image-editor-service'
 import { OmniParserDetectorService, type ScreenshotElementDetector } from './capture/screenshot-element-detector-service'
 import { WindowsUiAutomationService } from './capture/windows-ui-automation-service'
 import { FileAnalysisService } from './files/file-analysis-service'
 import { PdfIngestionService, registerDocumentScheme } from './files/pdf-ingestion-service'
 import { registerIpc } from './ipc/register-ipc'
+import { ApplicationLaunchQueue } from './shell/application-launch-queue'
 import { parseAnalyseArguments, type AnalyseRequest } from './shell/analyse-arguments'
 import { ExplorerIntegration } from './shell/explorer-integration'
 import { OnboardingController, shouldShowOnboardingAtStartup } from './onboarding/onboarding-controller'
@@ -40,24 +41,33 @@ app.on('window-all-closed', () => undefined)
 // The hidden PDF renderer fetches its document over this scheme, which must be declared before ready.
 registerDocumentScheme()
 
-/**
- * A context-menu launch can arrive before the services that handle it exist, so the request waits
- * here until the application has finished starting.
- */
-let dispatchAnalyseRequest: ((request: AnalyseRequest) => void) | null = null
-let pendingAnalyseRequest: AnalyseRequest | null = parseAnalyseArguments(process.argv, { appPath: app.getAppPath() })
+type ApplicationLaunch =
+  | { kind: 'analyse'; request: AnalyseRequest }
+  | { kind: 'settings' }
 
-function queueAnalyseRequest(request: AnalyseRequest): void {
-  if (dispatchAnalyseRequest) dispatchAnalyseRequest(request)
-  else pendingAnalyseRequest = request
+/** A context-menu or ordinary second launch can arrive before its services exist. */
+const applicationLaunches = new ApplicationLaunchQueue<ApplicationLaunch>()
+const initialAnalyseRequest = parseAnalyseArguments(process.argv, { appPath: app.getAppPath() })
+if (initialAnalyseRequest) applicationLaunches.enqueue({ kind: 'analyse', request: initialAnalyseRequest })
+
+if (!app.requestSingleInstanceLock()) {
+  app.quit()
+} else {
+  // Install this synchronously after taking the lock. Provider and window startup may take long
+  // enough for several Explorer launches to arrive, and every one must be retained.
+  app.on('second-instance', (_event, argv) => {
+    const request = parseAnalyseArguments(argv, { appPath: app.getAppPath() })
+    applicationLaunches.enqueue(request ? { kind: 'analyse', request } : { kind: 'settings' })
+  })
+  void startApplication().catch((error) => {
+    applicationLaunches.clear()
+    const appError = toAppError(error)
+    console.error(`[app] Startup failed: ${appError.technicalDetails ?? appError.message}`)
+    if (app.isReady()) dialog.showErrorBox(appError.title, appError.message)
+    // A tray-first process otherwise keeps the single-instance lock with no usable UI.
+    app.quit()
+  })
 }
-
-if (!app.requestSingleInstanceLock()) app.quit()
-else void startApplication().catch((error) => {
-  const appError = toAppError(error)
-  console.error(`[app] Startup failed: ${appError.technicalDetails ?? appError.message}`)
-  if (app.isReady()) dialog.showErrorBox(appError.title, appError.message)
-})
 
 async function startApplication(): Promise<void> {
   app.setAppUserModelId('com.fovea.desktop')
@@ -143,7 +153,10 @@ async function startApplication(): Promise<void> {
     imageEditor,
     ocr,
     uiAutomation,
-    screenshotDetector
+    screenshotDetector,
+    {
+      liveSelection: process.env.FOVEA_DISABLE_LIVE_CAPTURE !== '1' && supportsLiveRegionCapture()
+    }
   )
   // Built before the sessions so they can share one ingestion path: the Explorer context menu
   // and images dropped, pasted, or picked into a conversation all normalise the same way.
@@ -212,23 +225,15 @@ async function startApplication(): Promise<void> {
     void files.analyse(request.paths, request.dropped, request.action, prompt)
       .catch((error) => showSafeError(error, 'capture-failed'))
   }
-  dispatchAnalyseRequest = analyseSafely
-  if (pendingAnalyseRequest) {
-    const request = pendingAnalyseRequest
-    pendingAnalyseRequest = null
-    analyseSafely(request)
-  }
+  applicationLaunches.connect((launch) => {
+    if (launch.kind === 'analyse') analyseSafely(launch.request)
+    else openSettingsSafely()
+  })
 
   try { await providers.initialise() }
   catch (error) { console.warn(`[provider] ChatGPT adapter unavailable: ${redact(error instanceof Error ? error.message : String(error))}`) }
   if (shouldShowOnboardingAtStartup(settings.get().onboardingStatus)) openSettingsSafely()
 
-  app.on('second-instance', (_event, argv) => {
-    // A context-menu click on an already-running Fovea arrives here rather than as a new process.
-    const request = parseAnalyseArguments(argv, { appPath: app.getAppPath() })
-    if (request) queueAnalyseRequest(request)
-    else openSettingsSafely()
-  })
   app.on('activate', openSettingsSafely)
   let shuttingDown = false
   app.on('before-quit', (event) => {

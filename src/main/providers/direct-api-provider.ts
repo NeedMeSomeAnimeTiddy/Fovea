@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises'
 import { extname } from 'node:path'
 import type { ProviderKind, ProviderModelCapability } from '@shared/types/app'
 import type { ProviderEvent, VisionTurnInput } from '@shared/types/provider'
-import { createAppError, FoveaError } from '../errors/app-error'
+import { createAppError, FoveaError, redactTechnicalDetails, toAppError } from '../errors/app-error'
 import { parseSse } from './sse'
 
 type DirectKind = Exclude<ProviderKind, 'chatgpt'>
@@ -40,7 +40,7 @@ export class DirectApiProvider {
       return this.options.modelIds.map((id) => this.customModel(id)).sort((a, b) => a.displayName.localeCompare(b.displayName))
     }
     const response = await requestSafely(this.request, `${this.baseUrl()}/models`, { headers: this.headers(apiKey) })
-    await requireOk(response)
+    await requireOk(response, apiKey)
     const payload = await response.json() as { data?: unknown[] }
     const models = (payload.data ?? []).flatMap((entry) => this.normaliseModel(entry))
     return models.sort((a, b) => a.displayName.localeCompare(b.displayName))
@@ -57,12 +57,17 @@ export class DirectApiProvider {
       body: JSON.stringify(this.requestBody(input, images)),
       signal
     })
-    await requireOk(response)
+    await requireOk(response, apiKey)
     yield { type: 'started', turnId: crypto.randomUUID() }
     for await (const event of parseSse(response, signal)) {
       if (event.data === '[DONE]') continue
       let payload: Record<string, unknown>
       try { payload = JSON.parse(event.data) as Record<string, unknown> } catch { continue }
+      const failure = streamFailure(payload, event.event)
+      if (failure) {
+        const detail = redactTechnicalDetails(describeStreamFailure(failure), [apiKey])
+        throw new FoveaError(streamFailureAppError(failure, detail))
+      }
       const delta = this.extractDelta(payload, event.event)
       if (delta) yield { type: 'delta', text: delta }
     }
@@ -165,9 +170,9 @@ function imageMediaType(path: string): 'image/png' | 'image/jpeg' | 'image/webp'
   return 'image/png'
 }
 
-async function requireOk(response: Response): Promise<void> {
+async function requireOk(response: Response, apiKey: string): Promise<void> {
   if (response.ok) return
-  const detail = (await response.text()).slice(0, 500).replace(/(?:sk|key)-[\w-]+/gi, '[redacted]')
+  const detail = redactTechnicalDetails(await response.text(), [apiKey])
   const technicalDetails = `Provider request failed (${response.status})${detail ? `: ${detail}` : '.'}`
   if (response.status === 401 || response.status === 403) {
     throw new FoveaError(createAppError('authentication-required', 'Authentication required', 'Update this provider profile before continuing.', 'authenticate', technicalDetails))
@@ -188,6 +193,89 @@ async function requireOk(response: Response): Promise<void> {
     ))
   }
   throw new FoveaError(createAppError('provider-unavailable', 'Provider unavailable', 'The selected provider could not complete the operation.', 'open-settings', technicalDetails))
+}
+
+interface StreamFailure {
+  signal?: string
+  error: unknown
+  outcome?: 'failed' | 'incomplete' | 'cancelled'
+  reason?: string
+}
+
+function streamFailure(payload: Record<string, unknown>, eventName?: string): StreamFailure | null {
+  const payloadType = typeof payload.type === 'string' ? payload.type : undefined
+  const response = recordValue(payload.response)
+  const responseStatus = typeof response?.status === 'string' ? response.status : undefined
+  const outcome = streamOutcome(eventName, payloadType, responseStatus)
+  const signalled = eventName === 'error' || payloadType === 'error' || outcome !== undefined
+  const error = response?.error ?? payload.error
+
+  // OpenAI-compatible chat endpoints often return an error object without an SSE event name.
+  if (!signalled && !hasImplicitStreamError(error)) return null
+  const incompleteDetails = recordValue(response?.incomplete_details)
+  const reason = typeof incompleteDetails?.reason === 'string' ? incompleteDetails.reason : undefined
+  return {
+    signal: eventName ?? payloadType ?? responseStatus,
+    error: error ?? response ?? payload,
+    ...(outcome ? { outcome } : {}),
+    ...(reason ? { reason } : {})
+  }
+}
+
+function describeStreamFailure(failure: StreamFailure): string {
+  const error = recordValue(failure.error)
+  const details = error
+    ? [error.type, error.code, error.message, failure.reason]
+        .filter((value): value is string | number => typeof value === 'string' || typeof value === 'number')
+        .map(String)
+    : [typeof failure.error === 'string' ? failure.error : undefined, failure.reason]
+        .filter((value): value is string => typeof value === 'string' && value.length > 0)
+  const uniqueDetails = [...new Set(details)]
+  const signal = failure.signal ? ` (${failure.signal})` : ''
+  return `Provider stream failed${signal}${uniqueDetails.length ? `: ${uniqueDetails.join(' - ')}` : '.'}`
+}
+
+function streamFailureAppError(failure: StreamFailure, technicalDetails: string): ReturnType<typeof toAppError> {
+  const error = recordValue(failure.error)
+  const classification = [error?.type, error?.code]
+    .filter((value): value is string | number => typeof value === 'string' || typeof value === 'number')
+    .join(' ')
+    .toLocaleLowerCase()
+    .replace(/[_-]+/g, ' ')
+
+  if (/\b(?:authentication|authorization) (?:error|failed|required)\b|\binvalid (?:api|x api) key\b|\bunauthori[sz]ed\b/.test(classification)) {
+    return createAppError('authentication-required', 'Authentication required', 'Update this provider profile before continuing.', 'authenticate', technicalDetails)
+  }
+  if (/\brate limit(?:ed| error| exceeded)?\b|\btoo many requests\b/.test(classification)) {
+    return createAppError('rate-limited', 'Provider is busy', 'The provider rate limit was reached. Wait a moment, then try again.', 'retry', technicalDetails)
+  }
+  if (failure.outcome === 'incomplete') {
+    return createAppError('provider-unavailable', 'Provider response incomplete', 'The provider stopped before finishing its response. Try again.', 'retry', technicalDetails)
+  }
+  if (failure.outcome === 'cancelled') {
+    return createAppError('provider-unavailable', 'Provider stopped the response', 'The provider cancelled the response before it finished. Try again.', 'retry', technicalDetails)
+  }
+  return toAppError(new Error(technicalDetails), 'provider-unavailable')
+}
+
+function streamOutcome(...signals: Array<string | undefined>): StreamFailure['outcome'] {
+  for (const signal of signals) {
+    if (signal === 'response.incomplete' || signal === 'incomplete') return 'incomplete'
+    if (signal === 'response.cancelled' || signal === 'cancelled' || signal === 'canceled') return 'cancelled'
+    if (signal === 'response.failed' || signal === 'failed') return 'failed'
+  }
+  return undefined
+}
+
+function hasImplicitStreamError(error: unknown): boolean {
+  if (typeof error === 'string') return error.trim().length > 0
+  if (typeof error === 'boolean') return error
+  if (typeof error === 'number') return error !== 0
+  return error !== null && typeof error === 'object'
+}
+
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' ? value as Record<string, unknown> : undefined
 }
 
 /**

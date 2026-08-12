@@ -1,6 +1,6 @@
 import { StrictMode, useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import type { SettingsViewState, ShellIntegrationState } from '@shared/contracts/ipc'
+import { SETTINGS_CATEGORIES, isSettingsCategory, type SettingsCategory, type SettingsViewState, type ShellIntegrationState } from '@shared/contracts/ipc'
 import { acceleratorFromKeyInput } from '../../shared/shortcut-accelerator'
 import {
   PROVIDER_CHOICES,
@@ -34,8 +34,8 @@ import { ConversationExportDialog } from '../export/ConversationExportDialog'
 import '../design-system/index.css'
 import './settings.css'
 
-const CATEGORIES = ['Account', 'Models', 'Prompts', 'Recipes', 'Capture', 'Appearance', 'History', 'Privacy', 'Updates', 'About'] as const
-type Category = typeof CATEGORIES[number]
+const CATEGORIES = SETTINGS_CATEGORIES
+type Category = SettingsCategory
 const CATEGORY_DETAILS: Record<Category, string> = {
   Account: 'Connect and manage the AI services you trust.',
   Models: 'Choose the visual model used by each profile.',
@@ -49,9 +49,14 @@ const CATEGORY_DETAILS: Record<Category, string> = {
   About: 'Version details, product principles, and help.'
 }
 
+export function settingsCategoryFromSearch(search: string): SettingsCategory {
+  const requested = new URLSearchParams(search).get('category')
+  return isSettingsCategory(requested) ? requested : 'Account'
+}
+
 function SettingsApp(): React.JSX.Element {
   const [state, setState] = useState<SettingsViewState | null>(null)
-  const [category, setCategory] = useState<Category>('Account')
+  const [category, setCategory] = useState<Category>(() => settingsCategoryFromSearch(location.search))
   const [choiceId, setChoiceId] = useState('openai')
   const choice = providerChoice(choiceId)
   const [profileName, setProfileName] = useState('OpenAI')
@@ -68,8 +73,10 @@ function SettingsApp(): React.JSX.Element {
   const [historyItems, setHistoryItems] = useState<ConversationHistorySummary[]>([])
   const [historyRefresh, setHistoryRefresh] = useState(0)
   const [historyExport, setHistoryExport] = useState<{ id: string; preview: ConversationExportPreview } | null>(null)
+  const historyExportReturnFocusRef = useRef<HTMLElement | null>(null)
 
   useEffect(() => { void initialiseAppearance(); void window.fovea.settings.get().then(setState).catch((reason) => setError(appErrorFromUnknown(reason))); return window.fovea.settings.onChanged(setState) }, [])
+  useEffect(() => window.fovea.settings.onNavigate(setCategory), [])
   useEffect(() => {
     if (category !== 'History') return
     let active = true
@@ -128,6 +135,7 @@ function SettingsApp(): React.JSX.Element {
     setCategory('Account')
   }
   const openHistoryExport = async (id: string): Promise<void> => {
+    historyExportReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
     setError(null)
     try { setHistoryExport({ id, preview: await window.fovea.history.exportPreview(id) }) }
     catch (reason) { setError(appErrorFromUnknown(reason)) }
@@ -380,7 +388,7 @@ function SettingsApp(): React.JSX.Element {
       {category === 'About' && <AboutSettings appVersion={state.appVersion} onOpenTour={() => setTourOpen(true)} />}
     </section>
   </main>}
-    {historyExport && <ConversationExportDialog preview={historyExport.preview} busy={working} onCancel={() => setHistoryExport(null)} onExport={exportHistory} />}
+    {historyExport && <ConversationExportDialog preview={historyExport.preview} busy={working} returnFocus={historyExportReturnFocusRef.current} onCancel={() => setHistoryExport(null)} onExport={exportHistory} />}
   </WindowFrame>
 }
 

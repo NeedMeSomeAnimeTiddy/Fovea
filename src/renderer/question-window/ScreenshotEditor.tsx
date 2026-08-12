@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ImageEditOperation, ImageEditPoint, ImageEditTool } from '@shared/types/app'
 import { Button, TextInput } from '../design-system'
+import { useModalDialog } from '../design-system/internal/useModalDialog'
 import { drawEditorCanvas, isMeaningfulEdit } from '../image-editing/canvas'
 
 const TOOLS: Array<{ tool: ImageEditTool; label: string }> = [
@@ -18,9 +19,10 @@ interface ScreenshotEditorProps {
   saving: boolean
   onCancel(): void
   onSave(operations: ImageEditOperation[]): void
+  returnFocus?: HTMLElement | null
 }
 
-export function ScreenshotEditor({ cancelLabel = 'Cancel', imageDataUrl, saving, onCancel, onSave }: ScreenshotEditorProps): React.JSX.Element {
+export function ScreenshotEditor({ cancelLabel = 'Cancel', imageDataUrl, saving, onCancel, onSave, returnFocus }: ScreenshotEditorProps): React.JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const imageRef = useRef<HTMLImageElement | null>(null)
   const [tool, setTool] = useState<ImageEditTool>('arrow')
@@ -29,6 +31,7 @@ export function ScreenshotEditor({ cancelLabel = 'Cancel', imageDataUrl, saving,
   const [redo, setRedo] = useState<ImageEditOperation[]>([])
   const [draft, setDraft] = useState<ImageEditOperation | null>(null)
   const [imageVersion, setImageVersion] = useState(0)
+  const dialogRef = useModalDialog<HTMLDivElement>({ canCancel: !saving, onCancel, returnFocus })
 
   useEffect(() => {
     const image = new Image()
@@ -98,7 +101,7 @@ export function ScreenshotEditor({ cancelLabel = 'Cancel', imageDataUrl, saving,
   }
 
   return (
-    <div className="screenshot-editor" role="dialog" aria-label="Edit screenshot" aria-modal="true">
+    <div ref={dialogRef} className="screenshot-editor" role="dialog" aria-label="Edit screenshot" aria-modal="true" tabIndex={-1}>
       <div className="screenshot-editor__panel">
         <header className="screenshot-editor__header">
           <div className="screenshot-editor__intro">
@@ -141,7 +144,7 @@ export function ScreenshotEditor({ cancelLabel = 'Cancel', imageDataUrl, saving,
             <Button disabled={saving || operations.length === 0} size="compact" variant="ghost" onClick={() => { setOperations([]); setRedo([]) }}>Clear</Button>
           </div>
           <div className="screenshot-editor__commit">
-            <Button disabled={saving} size="compact" variant="ghost" onClick={onCancel}>{cancelLabel}</Button>
+            <Button data-modal-initial-focus disabled={saving} size="compact" variant="ghost" onClick={onCancel}>{cancelLabel}</Button>
             <Button className="screenshot-editor__save" disabled={saving || operations.length === 0} loading={saving} size="compact" onClick={() => onSave(operations)}>
               Save edited copy
             </Button>

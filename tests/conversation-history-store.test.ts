@@ -1,6 +1,7 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, relative, sep } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   ConversationHistoryStore,
@@ -118,6 +119,132 @@ describe('ConversationHistoryStore', () => {
     await expect(store.removeAllScreenshots()).resolves.toBe(1)
     expect(store.get('images')?.attachments).toEqual([])
     await expect(stat(archived!.imagePath)).rejects.toThrow()
+  })
+
+  it('rolls back earlier attachment copies when a later source cannot be archived', async () => {
+    const { root, images, store } = await createStore()
+    const first = join(root, 'first.png')
+    await writeFile(first, 'first image')
+
+    await expect(store.upsert(
+      withoutAttachments(record('partial-copy', '2026-01-02T00:00:00.000Z', 'Image')),
+      [
+        { id: 'first', imagePath: first, edited: false },
+        { id: 'missing', imagePath: join(root, 'missing.png'), edited: false }
+      ],
+      true
+    )).rejects.toThrow()
+
+    expect(store.get('partial-copy')).toBeNull()
+    await expect(readdir(images)).resolves.toEqual([])
+  })
+
+  it('rejects traversal paths from attachment rows without deleting the outside file', async () => {
+    const location = await createLocation()
+    const store = await openStore(location)
+    await store.upsert(
+      withoutAttachments(record('unsafe', '2026-01-02T00:00:00.000Z', 'Unsafe image')),
+      [],
+      false
+    )
+    store.dispose()
+
+    const outside = join(location.root, 'outside.png')
+    const traversal = `${location.images}${sep}nested${sep}..${sep}..${sep}outside.png`
+    await writeFile(outside, 'must remain')
+    const database = new DatabaseSync(location.databasePath)
+    database.prepare(`
+      INSERT INTO conversation_attachments (conversation_id, id, image_path, edited)
+      VALUES (?, ?, ?, ?)
+    `).run('unsafe', 'escape', traversal, 0)
+    database.prepare('UPDATE conversations SET has_screenshots = 1 WHERE id = ?').run('unsafe')
+    database.close()
+
+    const reopened = await openStore(location)
+    expect(reopened.get('unsafe')?.attachments).toEqual([])
+    await expect(reopened.clear()).resolves.toBe(1)
+    await expect(readFile(outside, 'utf8')).resolves.toBe('must remain')
+  })
+
+  it('rejects cwd-relative attachment rows even when they resolve inside the image directory', async () => {
+    const location = await createLocation()
+    const store = await openStore(location)
+    await store.upsert(
+      withoutAttachments(record('relative', '2026-01-02T00:00:00.000Z', 'Relative image')),
+      [],
+      false
+    )
+    store.dispose()
+
+    const image = join(location.images, 'relative.png')
+    await writeFile(image, 'must remain')
+    const database = new DatabaseSync(location.databasePath)
+    database.prepare(`
+      INSERT INTO conversation_attachments (conversation_id, id, image_path, edited)
+      VALUES (?, ?, ?, ?)
+    `).run('relative', 'relative-path', relative(process.cwd(), image), 0)
+    database.close()
+
+    const reopened = await openStore(location)
+    expect(reopened.get('relative')?.attachments).toEqual([])
+    await expect(reopened.clear()).resolves.toBe(1)
+    await expect(readFile(image, 'utf8')).resolves.toBe('must remain')
+  })
+
+  it('retries queued attachment deletion on the next initialisation', async () => {
+    const location = await createLocation()
+    const store = await openStore(location)
+    store.dispose()
+    const orphan = join(location.images, 'queued-orphan.png')
+    await writeFile(orphan, 'orphan')
+
+    const database = new DatabaseSync(location.databasePath)
+    database.prepare('INSERT INTO attachment_deletion_queue (image_path) VALUES (?)').run(orphan)
+    database.close()
+
+    await openStore(location)
+    await expect(stat(orphan)).rejects.toThrow()
+  })
+
+  it('reconciles managed screenshot orphans left without database rows', async () => {
+    const location = await createLocation()
+    const store = await openStore(location)
+    store.dispose()
+    const orphan = join(location.images, 'old-conversation-capture.png')
+    const unrelated = join(location.images, 'readme.txt')
+    await writeFile(orphan, 'sensitive orphan')
+    await writeFile(unrelated, 'not an app-managed screenshot')
+
+    await openStore(location)
+
+    await expect(stat(orphan)).rejects.toThrow()
+    await expect(readFile(unrelated, 'utf8')).resolves.toBe('not an app-managed screenshot')
+  })
+
+  it('directly removes copied screenshots when both the history write and cleanup queue fail', async () => {
+    const { root, images, databasePath, store } = await createStore()
+    const source = join(root, 'source.png')
+    await writeFile(source, 'sensitive image')
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const database = new DatabaseSync(databasePath)
+    database.exec(`
+      DROP TABLE attachment_deletion_queue;
+      CREATE TRIGGER reject_conversation_insert
+      BEFORE INSERT ON conversations
+      BEGIN
+        SELECT RAISE(FAIL, 'forced history write failure');
+      END;
+    `)
+    database.close()
+
+    await expect(store.upsert(
+      withoutAttachments(record('write-failure', '2026-01-02T00:00:00.000Z', 'Image')),
+      [{ id: 'capture', imagePath: source, edited: false }],
+      true
+    )).rejects.toThrow('forced history write failure')
+
+    await expect(readdir(images)).resolves.toEqual([])
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining('could not be queued'))
   })
 
   it('keeps list and indexed substring search bounded with 10,000 records', async () => {

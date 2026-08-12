@@ -1,5 +1,5 @@
-import { memo, type ReactNode } from 'react'
-import ReactMarkdown from 'react-markdown'
+import { memo, useMemo, useState, type ReactNode } from 'react'
+import ReactMarkdown, { type Components } from 'react-markdown'
 import rehypeHighlight from 'rehype-highlight'
 import type {
   ConversationExchange,
@@ -7,7 +7,8 @@ import type {
   OcrExternalActionKind,
   ResponsePhase
 } from '@shared/types/app'
-import { Button, Spinner } from '../design-system'
+import { Button, Card, Spinner } from '../design-system'
+import { useModalDialog } from '../design-system/internal/useModalDialog'
 
 export interface ConversationTimelineProps {
   exchanges: ConversationExchange[]
@@ -198,36 +199,113 @@ const Markdown = memo(function Markdown({
   text: string
   onCopy(value: string, label?: string): Promise<void>
 }): React.JSX.Element {
+  const [pendingLink, setPendingLink] = useState<ExternalLinkDetails | null>(null)
+  const components = useMemo<Components>(() => ({
+    a: ({ href, children }) => (
+      <a
+        href={href}
+        onClick={(event) => {
+          event.preventDefault()
+          setPendingLink(externalLinkDetails(href, event.currentTarget))
+        }}
+      >
+        {children}
+      </a>
+    ),
+    pre: ({ children }) => {
+      const value = nodeText(children)
+      return (
+        <div className="code-block">
+          <button onClick={() => void onCopy(value, 'Code copied')}>Copy</button>
+          <pre>{children}</pre>
+        </div>
+      )
+    }
+  }), [onCopy])
   return (
-    <ReactMarkdown
-      rehypePlugins={[rehypeHighlight]}
-      components={{
-        a: ({ href, children }) => (
-          <a
-            href={href}
-            onClick={(event) => {
-              event.preventDefault()
-              if (href) void window.fovea.openExternal(href)
-            }}
-          >
-            {children}
-          </a>
-        ),
-        pre: ({ children }) => {
-          const value = nodeText(children)
-          return (
-            <div className="code-block">
-              <button onClick={() => void onCopy(value, 'Code copied')}>Copy</button>
-              <pre>{children}</pre>
-            </div>
-          )
-        }
-      }}
-    >
-      {text}
-    </ReactMarkdown>
+    <>
+      <ReactMarkdown
+        rehypePlugins={[rehypeHighlight]}
+        components={components}
+      >
+        {text}
+      </ReactMarkdown>
+      {pendingLink && (
+        <ExternalLinkConfirmationDialog
+          details={pendingLink}
+          onClose={() => setPendingLink(null)}
+        />
+      )}
+    </>
   )
 })
+
+type ExternalLinkDetails = {
+  kind: 'confirm'
+  host: string
+  returnFocus: HTMLAnchorElement
+  url: string
+} | {
+  kind: 'blocked'
+  destination: string
+  returnFocus: HTMLAnchorElement
+}
+
+function externalLinkDetails(href: string | undefined, returnFocus: HTMLAnchorElement): ExternalLinkDetails {
+  if (!href) return { destination: 'No destination provided.', kind: 'blocked', returnFocus }
+  try {
+    const url = new URL(href)
+    if (!['http:', 'https:'].includes(url.protocol)) {
+      return { destination: href, kind: 'blocked', returnFocus }
+    }
+    return { host: url.host, kind: 'confirm', returnFocus, url: url.toString() }
+  } catch {
+    return { destination: href, kind: 'blocked', returnFocus }
+  }
+}
+
+function ExternalLinkConfirmationDialog({
+  details,
+  onClose
+}: {
+  details: ExternalLinkDetails
+  onClose(): void
+}): React.JSX.Element {
+  const [error, setError] = useState('')
+  const [opening, setOpening] = useState(false)
+  const dialogRef = useModalDialog<HTMLElement>({ canCancel: !opening, onCancel: onClose, returnFocus: details.returnFocus })
+  const open = async (): Promise<void> => {
+    if (details.kind !== 'confirm') return
+    setOpening(true)
+    setError('')
+    try {
+      await window.fovea.openExternal(details.url)
+      onClose()
+    } catch {
+      setOpening(false)
+      setError('Fovea could not open this link. Check the destination and try again.')
+    }
+  }
+  return (
+    <div className="external-link-dialog__backdrop" role="presentation">
+      <Card ref={dialogRef} as="section" aria-label={details.kind === 'confirm' ? 'Open external link' : 'Blocked external link'} aria-modal="true" className="external-link-dialog" role="dialog" tabIndex={-1}>
+        <h2>{details.kind === 'confirm' ? 'Open external link?' : 'Link blocked'}</h2>
+        <p>{details.kind === 'confirm'
+          ? 'This destination came from an AI response. Check it before leaving Fovea.'
+          : 'This AI response does not contain a valid HTTP or HTTPS destination, so Fovea will not open it.'}</p>
+        <div className="external-link-dialog__destination">
+          {details.kind === 'confirm' && <strong>{details.host}</strong>}
+          <code>{details.kind === 'confirm' ? details.url : details.destination}</code>
+        </div>
+        {error && <p className="external-link-dialog__error" role="alert">{error}</p>}
+        <div className="external-link-dialog__actions">
+          <Button data-modal-initial-focus disabled={opening} variant="secondary" onClick={onClose}>{details.kind === 'confirm' ? 'Cancel' : 'Close'}</Button>
+          {details.kind === 'confirm' && <Button loading={opening} loadingLabel="Opening external link" onClick={() => void open()}>Open link</Button>}
+        </div>
+      </Card>
+    </div>
+  )
+}
 
 export function exchangeText(exchange: ConversationExchange): string {
   return [exchange.metadata?.summary, exchange.answer].filter(Boolean).join('\n\n').trim()

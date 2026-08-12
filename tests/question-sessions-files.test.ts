@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { buildDocumentContext, QuestionSessions } from '../src/main/windows/question-sessions'
+import { windowChromeRegistry } from '../src/main/windows/window-chrome'
 
 const mocks = vi.hoisted(() => {
   type Listener = (...arguments_: any[]) => void
@@ -134,7 +136,6 @@ vi.mock('../src/main/windows/window-factory', () => ({
 }))
 
 async function createSessions(): Promise<any> {
-  const { QuestionSessions } = await import('../src/main/windows/question-sessions')
   return new QuestionSessions(
     mocks.provider as any,
     { delete: mocks.deleteScreenshot } as any,
@@ -149,7 +150,6 @@ function prepared(patch: Record<string, unknown> = {}): any {
 
 async function openWindow(opening: Promise<void>): Promise<string> {
   const window = mocks.windows[0]!
-  const { windowChromeRegistry } = await import('../src/main/windows/window-chrome')
   window.emit('ready-to-show')
   windowChromeRegistry.get(window.webContents.id)!.markRendererReady()
   await opening
@@ -158,12 +158,15 @@ async function openWindow(opening: Promise<void>): Promise<string> {
 
 async function finishOpening(opening: Promise<void>): Promise<void> {
   const window = mocks.windows[0]!
-  const { windowChromeRegistry } = await import('../src/main/windows/window-chrome')
   window.emit('ready-to-show')
   windowChromeRegistry.get(window.webContents.id)!.markRendererReady()
   await opening
   await vi.waitFor(() => {
     expect(mocks.sendMessage).toHaveBeenCalled()
+    const events = window.sent
+      .filter(([channel]) => channel === 'question:event')
+      .map(([, , event]) => event as { type?: string })
+    expect(events.some((event) => ['completed', 'error', 'web-search-requested'].includes(event.type ?? ''))).toBe(true)
   })
 }
 
@@ -173,7 +176,6 @@ function sentPrompt(): string {
 
 describe('opening files from the Explorer context menu', () => {
   beforeEach(() => {
-    vi.resetModules()
     mocks.reset()
   })
 
@@ -312,7 +314,6 @@ describe('opening files from the Explorer context menu', () => {
   })
 
   it('leaves a capture session free of document context', async () => {
-    const { buildDocumentContext } = await import('../src/main/windows/question-sessions')
     expect(buildDocumentContext([])).toBe('')
     expect(buildDocumentContext([{ name: 'blank.pdf', text: '   ', truncated: false, pageCount: 1, totalPages: 1 }])).toBe('')
   })

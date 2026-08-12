@@ -1,12 +1,16 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { FoveaApi, RequestDisclosureState } from '../src/shared/contracts/ipc'
 import type { ConversationExchange } from '../src/shared/types/app'
-import { AttachmentStrip, CaptureMenu, ConversationTimeline, EmptyConversation, RequestDisclosure, ocrEntityExternalAction } from '../src/renderer/question-window/main'
+import { AttachmentStrip, CaptureMenu, ConversationTimeline, EmptyConversation, RequestDisclosure, ocrEntityExternalAction, requestDisclosureKey } from '../src/renderer/question-window/main'
 import { takeStreamingBatch } from '../src/renderer/question-window/response-stream-buffer'
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  Reflect.deleteProperty(window, 'fovea')
+})
 
 const exchanges: ConversationExchange[] = [
   {
@@ -72,6 +76,80 @@ describe('response conversation timeline', () => {
     expect(container.querySelectorAll('.conversation-message--user')).toHaveLength(1)
   })
 
+  it('requires approval before opening an AI-rendered external link', async () => {
+    const openExternal = vi.fn(async () => undefined)
+    installOpenExternal(openExternal)
+    const link = renderExternalLink('See [Example](https://example.com/help?x=1).')
+
+    fireEvent.click(link)
+    expect(openExternal).not.toHaveBeenCalled()
+    expect(screen.getByRole('dialog', { name: 'Open external link' })).toBeTruthy()
+    expect(screen.getByText('example.com')).toBeTruthy()
+    expect(screen.getByText('https://example.com/help?x=1')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open link' }))
+    await waitFor(() => expect(openExternal).toHaveBeenCalledWith('https://example.com/help?x=1'))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Open external link' })).toBeNull())
+    expect(document.activeElement).toBe(link)
+  })
+
+  it('cancels an external link without opening it and restores focus', async () => {
+    const openExternal = vi.fn(async () => undefined)
+    installOpenExternal(openExternal)
+    const link = renderExternalLink('See [Example](https://example.com).')
+
+    fireEvent.click(link)
+    const cancel = screen.getByRole('button', { name: 'Cancel' })
+    await waitFor(() => expect(document.activeElement).toBe(cancel))
+    fireEvent.click(cancel)
+
+    expect(openExternal).not.toHaveBeenCalled()
+    expect(screen.queryByRole('dialog', { name: 'Open external link' })).toBeNull()
+    expect(document.activeElement).toBe(link)
+  })
+
+  it('closes external-link confirmation with Escape', async () => {
+    const openExternal = vi.fn(async () => undefined)
+    installOpenExternal(openExternal)
+    const link = renderExternalLink('See [Example](https://example.com).')
+
+    fireEvent.click(link)
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Cancel' })).toBe(document.activeElement))
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    expect(openExternal).not.toHaveBeenCalled()
+    expect(screen.queryByRole('dialog', { name: 'Open external link' })).toBeNull()
+    expect(document.activeElement).toBe(link)
+  })
+
+  it('keeps confirmation open and explains when the shell cannot open a link', async () => {
+    const openExternal = vi.fn(async () => { throw new Error('Shell unavailable') })
+    installOpenExternal(openExternal)
+    renderExternalLink('See [Example](https://example.com).')
+
+    fireEvent.click(screen.getByRole('link', { name: 'Example' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Open link' }))
+
+    expect((await screen.findByRole('alert')).textContent).toContain('Fovea could not open this link')
+    expect(screen.getByRole('dialog', { name: 'Open external link' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Cancel' }).hasAttribute('disabled')).toBe(false)
+  })
+
+  it('shows why a non-HTTP AI link is blocked without calling the shell', () => {
+    const openExternal = vi.fn(async () => undefined)
+    installOpenExternal(openExternal)
+    renderExternalLink('Try [this action](mailto:billing@example.com).')
+
+    fireEvent.click(screen.getByRole('link', { name: 'this action' }))
+
+    expect(screen.getByText('Link blocked')).toBeTruthy()
+    expect(screen.getByRole('dialog', { name: 'Blocked external link' })).toBeTruthy()
+    expect(screen.getByText(/valid HTTP or HTTPS destination/i)).toBeTruthy()
+    expect(screen.getByText('mailto:billing@example.com')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Open link' })).toBeNull()
+    expect(openExternal).not.toHaveBeenCalled()
+  })
+
   it('takes bounded streaming batches without splitting visible Unicode graphemes', () => {
     expect(takeStreamingBatch('Hello', 3)).toEqual({ value: 'Hel', remainder: 'lo', count: 3 })
     expect(takeStreamingBatch('👨‍👩‍👧‍👦 done', 1)).toEqual({ value: '👨‍👩‍👧‍👦', remainder: ' done', count: 1 })
@@ -121,7 +199,7 @@ describe('response conversation timeline', () => {
     expect(remove).toHaveBeenCalledWith('draft')
   })
 
-  it('shows the exact provider destination and request images with a draft redaction entry point', () => {
+  it('shows the exact provider destination and request images with a draft redaction entry point', async () => {
     const preview = vi.fn()
     const edit = vi.fn()
     const remove = vi.fn()
@@ -160,6 +238,69 @@ describe('response conversation timeline', () => {
     expect(edit).toHaveBeenCalledWith('draft')
     fireEvent.click(screen.getByRole('button', { name: 'Remove' }))
     expect(remove).toHaveBeenCalledWith('draft')
+
+    const dismiss = screen.getByRole('button', { name: 'Dismiss next request details' })
+    expect(dismiss.getAttribute('aria-expanded')).toBe('true')
+    const detailsId = dismiss.getAttribute('aria-controls')
+    expect(detailsId).toBeTruthy()
+    expect(document.getElementById(detailsId ?? '')?.hasAttribute('hidden')).toBe(false)
+    dismiss.focus()
+    fireEvent.click(dismiss)
+    expect(document.getElementById(detailsId ?? '')?.hasAttribute('hidden')).toBe(true)
+    expect(screen.getByText('Private gateway · 2 images')).toBeTruthy()
+    const review = screen.getByRole('button', { name: 'Review' })
+    expect(review.getAttribute('aria-expanded')).toBe('false')
+    expect(review.getAttribute('aria-controls')).toBe(detailsId)
+    expect(document.getElementById(detailsId ?? '')?.hasAttribute('hidden')).toBe(true)
+    await waitFor(() => expect(document.activeElement).toBe(review))
+    fireEvent.click(review)
+    expect(screen.getByText(/cannot identify every kind of sensitive information/i)).toBeTruthy()
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Dismiss next request details' })))
+  })
+
+  it('re-expands a collapsed disclosure when its request destination, model, or images change', () => {
+    const attachments = [
+      { id: 'sent', thumbnailDataUrl: 'data:image/png;base64,c2VudA==', status: 'sent' as const, edited: false, ocr: { status: 'idle' as const } },
+      { id: 'draft', thumbnailDataUrl: 'data:image/png;base64,ZHJhZnQ=', status: 'draft' as const, edited: false, ocr: { status: 'idle' as const } }
+    ]
+    let disclosure: RequestDisclosureState = {
+      profileId: 'custom-1',
+      profileName: 'Private gateway',
+      provider: 'custom',
+      baseUrl: 'https://gateway.example/v1',
+      modelId: 'vision-1',
+      modelName: 'Vision One',
+      attachmentIds: ['sent', 'draft']
+    }
+    const disclosureView = (next: RequestDisclosureState): React.JSX.Element => (
+      <RequestDisclosure
+        attachments={attachments}
+        disclosure={next}
+        disabled={false}
+        key={requestDisclosureKey(next)}
+        onEdit={vi.fn()}
+        onPreview={vi.fn()}
+        onRemove={vi.fn()}
+      />
+    )
+    const { rerender } = render(disclosureView(disclosure))
+    const changedDestination = { ...disclosure, baseUrl: 'https://gateway.example/v2' }
+    const changedModel = { ...changedDestination, modelId: 'vision-2', modelName: 'Vision Two' }
+    const changedRequests: RequestDisclosureState[] = [
+      changedDestination,
+      changedModel,
+      { ...changedModel, attachmentIds: ['sent'] }
+    ]
+
+    for (const changedRequest of changedRequests) {
+      const dismiss = screen.getByRole('button', { name: 'Dismiss next request details' })
+      fireEvent.click(dismiss)
+      expect(document.getElementById(dismiss.getAttribute('aria-controls') ?? '')?.hasAttribute('hidden')).toBe(true)
+      disclosure = changedRequest
+      rerender(disclosureView(disclosure))
+      const nextDismiss = screen.getByRole('button', { name: 'Dismiss next request details' })
+      expect(document.getElementById(nextDismiss.getAttribute('aria-controls') ?? '')?.hasAttribute('hidden')).toBe(false)
+    }
   })
 
   it('separates adding a screenshot from starting a new chat', () => {
@@ -261,3 +402,27 @@ describe('response conversation timeline', () => {
     expect(onManageOcrLanguages).toHaveBeenCalledOnce()
   })
 })
+
+function installOpenExternal(openExternal: FoveaApi['openExternal']): void {
+  Object.defineProperty(window, 'fovea', {
+    configurable: true,
+    value: { openExternal } as unknown as FoveaApi
+  })
+}
+
+function renderExternalLink(markdown: string): HTMLAnchorElement {
+  render(
+    <ConversationTimeline
+      exchanges={[{
+        id: 'external-link',
+        question: 'Where can I learn more?',
+        answer: markdown,
+        phase: 'completed',
+        segmentId: 'segment-1'
+      }]}
+      onCopy={vi.fn(async () => undefined)}
+      onResolveWebSearch={vi.fn()}
+    />
+  )
+  return screen.getByRole('link') as HTMLAnchorElement
+}

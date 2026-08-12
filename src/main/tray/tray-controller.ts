@@ -1,5 +1,6 @@
 import { app, Menu, nativeImage, Tray, type Rectangle } from 'electron'
 import { join } from 'node:path'
+import type { SettingsCategory } from '@shared/contracts/ipc'
 import type { CaptureMode } from '@shared/types/app'
 import type { ProviderRegistry } from '../providers/provider-registry'
 import type { ShortcutManager } from '../shortcuts/shortcut-manager'
@@ -70,11 +71,11 @@ export class TrayController {
     return [
       { label, enabled: false },
       needsReview
-        ? { label: 'Review update in Settings', click: () => void this.openSettings().catch((error) => console.error('[window] Tray could not open Settings.', error)) }
+        ? { label: 'Review update in Settings', click: () => void this.openSettings('Updates').catch((error) => console.error('[window] Tray could not open Settings.', error)) }
         : { label: state.phase === 'checking' ? 'Checking for updates…' : 'Check for updates', enabled: state.phase !== 'checking', click: () => void this.updates.check('manual') }
     ]
   }
 
-  private async openSettings(): Promise<void> { await showSettingsWindow(this.tray?.getBounds()) }
+  private async openSettings(category?: SettingsCategory): Promise<void> { await showSettingsWindow(this.tray?.getBounds(), category) }
   private icon(state: 'idle' | 'busy' | 'paused' | 'disconnected'): Electron.NativeImage { const path = app.isPackaged ? join(process.resourcesPath, 'assets', `tray-${state}-20.png`) : join(app.getAppPath(), 'resources', 'assets', 'generated', `tray-${state}-20.png`); return nativeImage.createFromPath(path) }
 }

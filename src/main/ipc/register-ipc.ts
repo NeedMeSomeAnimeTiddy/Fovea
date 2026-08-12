@@ -1,7 +1,7 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, shell, type IpcMainEvent, type IpcMainInvokeEvent, type OpenDialogOptions } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { readFile, rename, writeFile } from 'node:fs/promises'
-import { IPC, isWindowResizeEdge, type SettingsViewState } from '@shared/contracts/ipc'
+import { IPC, isSettingsCategory, isWindowResizeEdge, type CaptureFreezeReason, type CaptureVideoFrameMetadata, type SettingsCategory, type SettingsViewState } from '@shared/contracts/ipc'
 import type { AppearancePreference, CaptureMode, CaptureRecipe, ConversationExportOptions, ConversationSelection, ImageEditOperation, OcrExternalActionKind, OnboardingStatus, ProviderKind, ShortcutAction } from '@shared/types/app'
 import type { Rectangle } from '@shared/types/geometry'
 import type { AppErrorCode } from '@shared/types/app-error'
@@ -235,6 +235,11 @@ export function registerIpc(dependencies: IpcDependencies): void {
 
   handle(IPC.captureStart, (_event, mode) => dependencies.capture.begin(requireCaptureMode(mode)), 'capture-failed')
   handle(IPC.captureGetContext, (event) => dependencies.capture.getContext(event.sender.id), 'capture-failed')
+  handle(IPC.captureReadyToShow, (event) => dependencies.capture.readyToShow(event.sender.id), 'capture-failed')
+  handle(IPC.captureArmVideoFrame, (event) => dependencies.capture.armVideoFrame(event.sender.id), 'capture-failed')
+  handle(IPC.captureProvideVideoFrame, (event, png, metadata) => dependencies.capture.provideVideoFrame(event.sender.id, requireCaptureFrame(png), requireCaptureVideoFrameMetadata(metadata)), 'capture-failed')
+  handle(IPC.captureCancelVideoFrame, (event) => dependencies.capture.cancelVideoFrame(event.sender.id), 'capture-failed')
+  handle(IPC.captureFreeze, (event, reason) => dependencies.capture.freeze(event.sender.id, requireCaptureFreezeReason(reason)), 'capture-failed')
   handle(IPC.captureAnalyze, (event, requestId) => {
     const id = requireId(requestId)
     return dependencies.capture.analyze(event.sender.id, (analysis) => {
@@ -347,7 +352,7 @@ export function registerIpc(dependencies: IpcDependencies): void {
     if (!record) throw new Error('That saved conversation no longer exists.')
     return exportConversation(BrowserWindow.fromWebContents(event.sender) ?? undefined, historyExportRecord(record), requireExportOptions(rawOptions))
   }, 'validation')
-  handle(IPC.applicationOpenSettings, () => showSettingsWindow())
+  handle(IPC.applicationOpenSettings, (_event, category) => showSettingsWindow(undefined, requireOptionalSettingsCategory(category)), 'validation')
   handle(IPC.clipboardWriteText, (_event, value) => {
     const text = requireString(value, 200_000)
     clipboard.writeText(text)
@@ -376,9 +381,23 @@ function requireId(value: unknown): string { return requireString(value, 100) }
 function requireNullableString(value: unknown, max: number): string | null { return value === null ? null : requireString(value, max) }
 function requireAccelerator(value: unknown): string | null { return requireNullableString(value, 100) }
 function requireAppearance(value: unknown): AppearancePreference { if (!['system', 'dark', 'light'].includes(String(value))) throw new Error('Invalid appearance.'); return value as AppearancePreference }
+function requireOptionalSettingsCategory(value: unknown): SettingsCategory | undefined { if (value === undefined) return undefined; if (!isSettingsCategory(value)) throw new Error('Invalid Settings category.'); return value }
 function requireOnboardingOutcome(value: unknown): Exclude<OnboardingStatus, 'pending'> { if (!['skipped', 'completed'].includes(String(value))) throw new Error('Invalid onboarding outcome.'); return value as Exclude<OnboardingStatus, 'pending'> }
 function requireShortcutAction(value: unknown): ShortcutAction { if (!['region', 'display', 'window', 'repeat-last', 'settings'].includes(String(value))) throw new Error('Invalid shortcut action.'); return value as ShortcutAction }
 function requireCaptureMode(value: unknown): CaptureMode { if (!['region', 'display', 'window', 'repeat-last'].includes(String(value))) throw new Error('Invalid capture mode.'); return value as CaptureMode }
+function requireCaptureFreezeReason(value: unknown): CaptureFreezeReason { if (!['edit', 'analyze'].includes(String(value))) throw new Error('Invalid capture freeze reason.'); return value as CaptureFreezeReason }
+function requireCaptureFrame(value: unknown): Uint8Array { if (!(value instanceof Uint8Array) || value.byteLength < 24 || value.byteLength > 64 * 1024 * 1024) throw new Error('Invalid live capture frame.'); return value }
+function requireCaptureVideoFrameMetadata(value: unknown): CaptureVideoFrameMetadata {
+  if (!value || typeof value !== 'object') throw new Error('Invalid live capture metadata.')
+  const item = value as Record<string, unknown>
+  if (!item.viewport || typeof item.viewport !== 'object') throw new Error('Invalid live capture viewport.')
+  const viewport = item.viewport as Record<string, unknown>
+  const width = requireInteger(viewport.width, 1, 32_768)
+  const height = requireInteger(viewport.height, 1, 32_768)
+  if (item.rectangle === undefined) return { viewport: { width, height } }
+  if (!isRectangle(item.rectangle)) throw new Error('Invalid live capture selection.')
+  return { viewport: { width, height }, rectangle: item.rectangle }
+}
 function requireOcrExternalActionKind(value: unknown): OcrExternalActionKind { if (!['url', 'email', 'phone'].includes(String(value))) throw new Error('Invalid OCR action.'); return value as OcrExternalActionKind }
 function requireOcrLanguagePreference(value: unknown): string { const code = requireString(value, 35); if (code && !/^[A-Za-z0-9-]{2,35}$/.test(code)) throw new Error('Invalid OCR language.'); return code }
 function requireApiProvider(value: unknown): Exclude<ProviderKind, 'chatgpt'> { if (!['openai', 'anthropic', 'openrouter', 'custom'].includes(String(value))) throw new Error('Invalid API provider.'); return value as Exclude<ProviderKind, 'chatgpt'> }

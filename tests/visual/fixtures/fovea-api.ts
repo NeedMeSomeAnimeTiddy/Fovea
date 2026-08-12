@@ -43,7 +43,8 @@ export function createVisualFoveaApi(fixture: VisualFixture): FoveaApi {
       testOnboardingCapture: async () => ({ status: 'captured', thumbnailDataUrl: fixture.fullImageDataUrl }),
       deleteTemporaryFiles: async () => 0,
       onChanged: () => () => undefined,
-      onAppearanceChanged: () => () => undefined
+      onAppearanceChanged: () => () => undefined,
+      onNavigate: () => () => undefined
     },
     capture: {
       start: async () => undefined,
@@ -51,6 +52,11 @@ export function createVisualFoveaApi(fixture: VisualFixture): FoveaApi {
         if (fixture.captureError) throw clone(fixture.captureError)
         return clone(fixture.captureContext)
       },
+      readyToShow: async () => undefined,
+      prepareVideoFrame: async () => true,
+      captureVideoFrame: async () => true,
+      cancelVideoFrame: async () => undefined,
+      freeze: async () => clone(fixture.captureContext),
       analyze: async (onProgress) => {
         const analysis = clone(fixture.captureAnalysis)
         onProgress?.(analysis)

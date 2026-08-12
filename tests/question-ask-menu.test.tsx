@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AskMenu, ModelMenu, suggestionsFor } from '../src/renderer/question-window/main'
@@ -120,8 +120,7 @@ describe('response Ask menu', () => {
     expect(screen.getByRole('menuitem', { name: 'Custom question' })).toBeTruthy()
   })
 
-  it('opens an inline custom composer and sends with Enter', async () => {
-    const user = userEvent.setup()
+  it('opens an inline custom composer and ignores Enter during IME composition', () => {
     const onSend = vi.fn(async () => undefined)
     const onTextChange = vi.fn()
     const { rerender } = render(
@@ -152,7 +151,9 @@ describe('response Ask menu', () => {
       />
     )
     const input = screen.getByRole('textbox', { name: 'Custom question' })
-    await user.type(input, '{enter}')
+    fireEvent.keyDown(input, { key: 'Enter', isComposing: true })
+    expect(onSend).not.toHaveBeenCalled()
+    fireEvent.keyDown(input, { key: 'Enter' })
     expect(onSend).toHaveBeenCalledWith()
   })
 

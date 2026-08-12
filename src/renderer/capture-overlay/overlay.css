@@ -4,7 +4,7 @@
 
 :root,
 body {
-  background: var(--fovea-surface-sunken);
+  background: transparent;
 }
 
 html,
@@ -25,6 +25,21 @@ body,
   -webkit-app-region: no-drag;
 }
 
+.overlay.live {
+  background: transparent;
+}
+
+.overlay.loading {
+  background: transparent;
+  cursor: default;
+  pointer-events: none;
+}
+
+.overlay.loading .capture-hud,
+.overlay.loading .capture-scrim {
+  display: none;
+}
+
 .frozen-frame,
 .capture-scrim {
   position: absolute;
@@ -40,12 +55,32 @@ body,
 .frozen-frame {
   z-index: 0;
   max-width: none;
-  filter: var(--fovea-capture-image-filter);
+  filter: none;
 }
 
 .capture-scrim {
   z-index: 1;
+  background: transparent;
+}
+
+.overlay.selecting .capture-scrim,
+.overlay.editing .capture-scrim,
+.overlay.analyzing .capture-scrim,
+.overlay.submitting .capture-scrim,
+.overlay.analyze-active .capture-scrim {
   background: var(--fovea-capture-scrim);
+}
+
+.overlay.live .capture-scrim {
+  background: transparent;
+}
+
+.overlay.live .selection-root {
+  animation: none;
+}
+
+.overlay.live .selection-outline {
+  background: transparent;
 }
 
 .capture-guide {
@@ -755,7 +790,7 @@ body,
   gap: var(--fovea-space-4);
   width: min(560px, calc(100vw - var(--fovea-space-16)));
   padding: var(--fovea-space-4) var(--fovea-space-4) var(--fovea-space-4) var(--fovea-space-6);
-  animation: hud-in var(--fovea-motion-standard) var(--fovea-ease-standard);
+  animation: none;
 }
 
 .hud-symbol {
@@ -926,7 +961,7 @@ body,
   gap: var(--fovea-space-4);
   padding: var(--fovea-space-4) var(--fovea-space-8);
   font-size: var(--fovea-type-label);
-  animation: hud-in var(--fovea-motion-fast) var(--fovea-ease-standard);
+  animation: none;
 }
 
 .status-dot {
@@ -955,11 +990,6 @@ body,
     opacity: 1;
     transform: scale(1);
   }
-}
-
-@keyframes hud-in {
-  from { opacity: 0; transform: translateX(-50%) translateY(5px) scale(0.985); }
-  to { opacity: 1; transform: translateX(-50%); }
 }
 
 @keyframes capture-confirm {

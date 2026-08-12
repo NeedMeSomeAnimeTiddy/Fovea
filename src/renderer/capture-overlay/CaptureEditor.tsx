@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { CaptureContext } from '@shared/contracts/ipc'
+import type { FrozenCaptureContext } from '@shared/contracts/ipc'
 import type { ImageEditOperation, ImageEditPoint, ImageEditTool } from '@shared/types/app'
 import type { Rectangle } from '@shared/types/geometry'
 import { drawEditorCanvas, isMeaningfulEdit } from '../image-editing/canvas'
@@ -14,7 +14,7 @@ const TOOLS: Array<{ tool: ImageEditTool; label: string }> = [
 ]
 
 interface CaptureEditorProps {
-  context: CaptureContext
+  context: FrozenCaptureContext
   rectangle: Rectangle
   submitting: boolean
   onCancel(): void
@@ -236,7 +236,7 @@ export function CaptureEditor({ context, rectangle, submitting, onCancel, onSend
             onChange={(event) => setPendingText((current) => current ? { ...current, value: event.target.value } : null)}
             onKeyDown={(event) => {
               event.stopPropagation()
-              if (event.key === 'Enter') {
+              if (event.key === 'Enter' && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) {
                 event.preventDefault()
                 finishText()
               }

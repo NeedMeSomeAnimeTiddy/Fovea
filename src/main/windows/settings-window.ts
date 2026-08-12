@@ -1,5 +1,5 @@
 import { app, screen, type BrowserWindow, type Rectangle } from 'electron'
-import type { WindowMaterial } from '@shared/contracts/ipc'
+import { IPC, type SettingsCategory, type WindowMaterial } from '@shared/contracts/ipc'
 import {
   getWindowAppearanceOptions,
   selectWindowMaterial,
@@ -22,9 +22,15 @@ let settingsWindow: BrowserWindow | null = null
 let settingsWindowOpening: Promise<BrowserWindow> | null = null
 let materialModeLogged = false
 
-export async function showSettingsWindow(trayBounds?: Rectangle): Promise<BrowserWindow> {
-  if (settingsWindowOpening) return settingsWindowOpening
+export async function showSettingsWindow(trayBounds?: Rectangle, category?: SettingsCategory): Promise<BrowserWindow> {
+  if (settingsWindowOpening) {
+    const opening = settingsWindowOpening
+    const window = await opening
+    navigateSettingsWindow(window, category)
+    return window
+  }
   if (settingsWindow && !settingsWindow.isDestroyed()) {
+    navigateSettingsWindow(settingsWindow, category)
     settingsWindow.show()
     settingsWindow.focus()
     return settingsWindow
@@ -45,7 +51,7 @@ export async function showSettingsWindow(trayBounds?: Rectangle): Promise<Browse
     canMaximize: false,
     canResize: false,
     createWindow: (attempt) => createSettingsBrowserWindow(attempt, trayBounds),
-    loadRenderer: (window) => loadRenderer(window, 'settings'),
+    loadRenderer: (window) => loadRenderer(window, 'settings', { category: category ?? 'Account' }),
     isWindowCurrent: (window) => settingsWindow === window
   }).then((opened) => {
     logMaterialModeOnce(opened.material)
@@ -58,6 +64,11 @@ export async function showSettingsWindow(trayBounds?: Rectangle): Promise<Browse
   } finally {
     if (settingsWindowOpening === opening) settingsWindowOpening = null
   }
+}
+
+function navigateSettingsWindow(window: BrowserWindow, category?: SettingsCategory): void {
+  if (!category || window.isDestroyed() || window.webContents.isDestroyed()) return
+  window.webContents.send(IPC.settingsNavigate, category)
 }
 
 export function getSettingsWindow(): BrowserWindow | null {

@@ -45,9 +45,27 @@ describe('capture overlay themes', () => {
     }
   })
 
-  it('applies the theme-controlled image treatment instead of a fixed dark filter', () => {
-    expect(overlayStyles).toContain('filter: var(--fovea-capture-image-filter);')
-    expect(overlayStyles).not.toContain('filter: brightness(0.68) saturate(0.78);')
+  it('keeps the idle frozen frame visually neutral until selection begins', () => {
+    expect(overlayStyles).toMatch(/\.frozen-frame\s*\{[^}]*filter:\s*none;/s)
+    expect(overlayStyles).toMatch(/\.capture-scrim\s*\{[^}]*background:\s*transparent;/s)
+    expect(overlayStyles).toMatch(/\.overlay\.selecting \.capture-scrim,[^{]*\{[^}]*background:\s*var\(--fovea-capture-scrim\);/s)
+  })
+
+  it('shows the initial capture controls without an entrance animation', () => {
+    expect(overlayStyles).toMatch(/\.capture-hud\s*\{[^}]*animation:\s*none;/s)
+  })
+
+  it('keeps a prewarmed live overlay completely transparent until activation', () => {
+    expect(overlayStyles).toMatch(/:root,\s*body\s*\{[^}]*background:\s*transparent;/s)
+    expect(overlayStyles).toMatch(/\.overlay\.live\s*\{[^}]*background:\s*transparent;/s)
+    expect(overlayStyles).toMatch(/\.overlay\.loading\s*\{[^}]*background:\s*transparent;[^}]*pointer-events:\s*none;/s)
+    expect(overlayStyles).toMatch(/\.overlay\.loading \.capture-hud,\s*\.overlay\.loading \.capture-scrim\s*\{[^}]*display:\s*none;/s)
+  })
+
+  it('keeps the live desktop undimmed while selecting', () => {
+    expect(overlayStyles).toMatch(/\.overlay\.live \.capture-scrim\s*\{[^}]*background:\s*transparent;/s)
+    expect(overlayStyles).toMatch(/\.overlay\.live \.selection-root\s*\{[^}]*animation:\s*none;/s)
+    expect(overlayStyles).toMatch(/\.overlay\.live \.selection-outline\s*\{[^}]*background:\s*transparent;/s)
   })
 
   it('keeps the text composer clear of the live annotation preview', () => {

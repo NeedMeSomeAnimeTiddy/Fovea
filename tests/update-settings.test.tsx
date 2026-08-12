@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { FoveaApi } from '../src/shared/contracts/ipc'
 import type { ApplicationUpdateState } from '../src/shared/types/update'
-import { UpdateSettings } from '../src/renderer/settings/main'
+import { settingsCategoryFromSearch, UpdateSettings } from '../src/renderer/settings/main'
 
 afterEach(() => {
   cleanup()
@@ -31,6 +31,18 @@ describe('UpdateSettings', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Download update' }))
     expect(onRun).toHaveBeenCalledOnce()
     await vi.waitFor(() => expect(download).toHaveBeenCalledOnce())
+  })
+})
+
+describe('settings category navigation', () => {
+  it('opens an explicitly requested settings category', () => {
+    expect(settingsCategoryFromSearch('?category=Updates')).toBe('Updates')
+    expect(settingsCategoryFromSearch('?category=Capture')).toBe('Capture')
+  })
+
+  it('falls back to Account for missing or unrecognised categories', () => {
+    expect(settingsCategoryFromSearch('')).toBe('Account')
+    expect(settingsCategoryFromSearch('?category=Billing')).toBe('Account')
   })
 })
 

@@ -1,5 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
+import { isMissingFile, preserveCorruptFile } from './corrupt-file-backup'
 
 export interface SecretCryptography {
   isAsyncEncryptionAvailable(): Promise<boolean>
@@ -16,13 +17,25 @@ export class CredentialStore {
   ) {}
 
   async load(): Promise<void> {
+    let raw: string
     try {
-      const parsed = JSON.parse(await readFile(this.path, 'utf8')) as Record<string, unknown>
-      this.encrypted = new Map(
-        Object.entries(parsed).filter((entry): entry is [string, string] => typeof entry[1] === 'string')
-      )
-    } catch {
+      raw = await readFile(this.path, 'utf8')
+    } catch (error) {
       this.encrypted.clear()
+      if (isMissingFile(error)) return
+      throw error
+    }
+
+    try {
+      const parsed = JSON.parse(raw) as unknown
+      if (!isCredentialDocument(parsed)) throw new Error('The credential document is invalid.')
+      this.encrypted = new Map(Object.entries(parsed))
+    } catch (error) {
+      const backupPath = await preserveCorruptFile(this.path)
+      this.encrypted.clear()
+      console.warn(
+        `[credentials] Corrupt credentials were preserved at ${backupPath}: ${safeErrorMessage(error)}`
+      )
     }
   }
 
@@ -73,4 +86,13 @@ export class CredentialStore {
     await writeFile(temporary, JSON.stringify(Object.fromEntries(this.encrypted), null, 2), 'utf8')
     await rename(temporary, this.path)
   }
+}
+
+function isCredentialDocument(value: unknown): value is Record<string, string> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  return Object.entries(value).every(([reference, encrypted]) => reference.length > 0 && typeof encrypted === 'string')
+}
+
+function safeErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }

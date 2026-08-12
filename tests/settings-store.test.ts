@@ -1,18 +1,42 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { SettingsStore } from '../src/main/storage/settings-store'
 
 const roots: string[] = []
 
-afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))))
+afterEach(async () => {
+  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
+  vi.restoreAllMocks()
+})
 
 async function settingsPath(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), 'fovea-settings-test-'))
   roots.push(root)
   return join(root, 'settings.v2.json')
 }
+
+describe('SettingsStore corruption recovery', () => {
+  it('preserves malformed settings before allowing defaults to be saved', async () => {
+    const path = await settingsPath()
+    const malformed = '{ "appearance": "dark", truncated'
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    await writeFile(path, malformed)
+
+    const store = new SettingsStore(path)
+    await store.load()
+
+    expect(store.get().appearance).toBe('light')
+    await expect(readFile(`${path}.corrupt.bak`, 'utf8')).resolves.toBe(malformed)
+    await expect(readFile(path, 'utf8')).rejects.toThrow()
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining('.corrupt.bak'))
+
+    await store.update({ appearance: 'dark' })
+    expect(JSON.parse(await readFile(path, 'utf8'))).toMatchObject({ appearance: 'dark' })
+    await expect(readFile(`${path}.corrupt.bak`, 'utf8')).resolves.toBe(malformed)
+  })
+})
 
 describe('SettingsStore custom provider profiles', () => {
   const customProfile = {

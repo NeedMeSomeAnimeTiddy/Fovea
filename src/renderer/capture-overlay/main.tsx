@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
 import { createRoot } from 'react-dom/client'
-import type { CaptureContext } from '@shared/contracts/ipc'
+import type { CaptureContext, CaptureFreezeReason, FrozenCaptureContext } from '@shared/contracts/ipc'
 import type { CaptureAnalysis, CaptureFeature, ImageEditOperation, OcrLanguage } from '@shared/types/app'
 import type { AppError } from '@shared/types/app-error'
 import type { Point, Rectangle } from '@shared/types/geometry'
@@ -19,7 +19,7 @@ function Overlay(): React.JSX.Element {
   const [start, setStart] = useState<Point | null>(null)
   const [current, setCurrent] = useState<Point>({ x: innerWidth / 2, y: innerHeight / 2 })
   const [phase, setPhase] = useState<OverlayPhase>('idle')
-  const [feedback, setFeedback] = useState('Select any part of the frozen screen')
+  const [feedback, setFeedback] = useState('Drag over anything on screen')
   const [context, setContext] = useState<CaptureContext | null>(null)
   const [captureError, setCaptureError] = useState<AppError | null>(null)
   const [editBeforeSending, setEditBeforeSending] = useState(false)
@@ -28,12 +28,31 @@ function Overlay(): React.JSX.Element {
   const [ocrLanguageCode, setOcrLanguageCode] = useState('')
   const [ocrLanguages, setOcrLanguages] = useState<OcrLanguage[]>([])
   const [analysis, setAnalysis] = useState<CaptureAnalysis | null>(null)
+  const [analyzeHoldInFlight, setAnalyzeHoldInFlight] = useState(false)
   const [selectedFeatureId, setSelectedFeatureId] = useState<string | null>(null)
   const [resizing, setResizing] = useState<{ corner: ResizeCorner; original: Rectangle } | null>(null)
+  const [appearanceReady, setAppearanceReady] = useState(false)
   const root = useRef<HTMLDivElement>(null)
   const analysisRevision = useRef(0)
+  const liveSurface = useRef(false)
   const rectangle = start ? normalize(start, current) : null
   const selectedFeature = analysis?.features.find(({ id }) => id === selectedFeatureId) ?? null
+
+  const warmVideoFrame = useCallback((): void => {
+    if (!liveSurface.current || !window.fovea?.capture) return
+    void window.fovea.capture.prepareVideoFrame().catch(() => undefined)
+  }, [])
+
+  const cancelCapture = useCallback((): void => {
+    analysisRevision.current += 1
+    if (!window.fovea?.capture) {
+      window.close()
+      return
+    }
+    void window.fovea.capture.cancelVideoFrame()
+      .catch(() => undefined)
+      .finally(() => window.fovea.capture.cancel().catch(() => undefined))
+  }, [])
 
   const loadContext = useCallback((): void => {
     if (!window.fovea?.capture) {
@@ -44,15 +63,24 @@ function Overlay(): React.JSX.Element {
     setCaptureError(null)
     setAnalysis(null)
     setSelectedFeatureId(null)
+    liveSurface.current = false
     analysisRevision.current += 1
     setPhase('idle')
-    setFeedback('Select any part of the frozen screen')
-    void window.fovea.capture.getContext().then(setContext).catch((reason) => {
+    setFeedback('Preparing capture controls…')
+    void window.fovea.capture.getContext().then((next) => {
+      liveSurface.current = next.surface === 'live'
+      setContext(next)
+      setFeedback(surfaceFeedback(next))
+    }).catch((reason) => {
       const error = appErrorFromUnknown(reason)
       setPhase('invalid')
       setCaptureError(error)
       setFeedback(error.message)
     })
+  }, [])
+
+  const announceCaptureReady = useCallback((): void => {
+    void window.fovea.capture.readyToShow().catch(() => undefined)
   }, [])
 
   useEffect(() => {
@@ -61,7 +89,17 @@ function Overlay(): React.JSX.Element {
       setFeedback('The secure capture bridge did not start. Close and reopen Fovea.')
       return
     }
-    void initialiseAppearance()
+    let disposed = false
+    let stopAppearanceUpdates: (() => void) | undefined
+    void initialiseAppearance().then((stop) => {
+      if (disposed) stop()
+      else {
+        stopAppearanceUpdates = stop
+        setAppearanceReady(true)
+      }
+    }).catch(() => {
+      if (!disposed) setAppearanceReady(true)
+    })
     loadContext()
     void Promise.all([
       window.fovea.capture.getOcrLanguages(),
@@ -73,15 +111,23 @@ function Overlay(): React.JSX.Element {
       setOcrLanguageCode(available)
       if (remembered && !available) void window.fovea.capture.setOcrLanguage('').catch(() => undefined)
     }).catch(() => setOcrLanguages([]))
-    const onKey = (event: KeyboardEvent): void => { if (event.key === 'Escape') void window.fovea?.capture?.cancel() }
+    const onKey = (event: KeyboardEvent): void => { if (event.key === 'Escape') cancelCapture() }
     addEventListener('keydown', onKey)
     root.current?.focus()
-    return () => removeEventListener('keydown', onKey)
-  }, [loadContext])
+    return () => {
+      disposed = true
+      stopAppearanceUpdates?.()
+      removeEventListener('keydown', onKey)
+      void window.fovea.capture.cancelVideoFrame().catch(() => undefined)
+    }
+  }, [cancelCapture, loadContext])
 
   const submit = async (next: Rectangle, operations: ImageEditOperation[]): Promise<void> => {
     setPhase('submitting')
-    try { await window.fovea.capture.select(next, operations, preferWebSearch, extractText, extractText && ocrLanguageCode ? ocrLanguageCode : undefined) }
+    try {
+      if (context?.surface === 'live') await window.fovea.capture.captureVideoFrame(next).catch(() => false)
+      await window.fovea.capture.select(next, operations, preferWebSearch, extractText, extractText && ocrLanguageCode ? ocrLanguageCode : undefined)
+    }
     catch (reason) {
       const error = appErrorFromUnknown(reason)
       setPhase(editBeforeSending ? 'editing' : 'invalid')
@@ -92,21 +138,44 @@ function Overlay(): React.JSX.Element {
   }
 
   const toggleAnalyze = async (): Promise<void> => {
+    if (analyzeHoldInFlight) return
     if (analysis || phase === 'analyzing') {
       analysisRevision.current += 1
       if (phase === 'analyzing') void window.fovea.capture.cancelAnalysis().catch(() => undefined)
       setAnalysis(null)
       setSelectedFeatureId(null)
       setPhase('idle')
-      setFeedback('Select any part of the frozen screen')
+      setFeedback(context ? surfaceFeedback(context) : 'Drag over anything on screen')
       return
     }
+    if (!context) return
     const revision = ++analysisRevision.current
     setCaptureError(null)
     setSelectedFeatureId(null)
     setPhase('analyzing')
-    setFeedback('Finding identifiable features across the frozen screen…')
+    setFeedback(context.surface === 'live' ? 'Holding this moment for Analyze…' : 'Finding identifiable features across the frozen screen…')
     try {
+      if (context.surface === 'live') {
+        setAnalyzeHoldInFlight(true)
+        let frozen: FrozenCaptureContext | null = null
+        try {
+          frozen = await holdLiveSurfaceForAnalyze(
+            window.fovea.capture,
+            () => analysisRevision.current === revision
+          )
+        } finally {
+          setAnalyzeHoldInFlight(false)
+        }
+        if (!frozen) return
+        liveSurface.current = false
+        setContext(frozen)
+        if (analysisRevision.current !== revision) {
+          setPhase('idle')
+          setFeedback(surfaceFeedback(frozen))
+          return
+        }
+        setFeedback('Finding identifiable features across the frozen screen…')
+      }
       const result = await window.fovea.capture.analyze((progress) => {
         if (analysisRevision.current !== revision) return
         setAnalysis(progress)
@@ -154,6 +223,7 @@ function Overlay(): React.JSX.Element {
     if (!start) return
     const next = normalize(start, end)
     if (next.width < MINIMUM_SELECTION || next.height < MINIMUM_SELECTION) {
+      void window.fovea.capture.cancelVideoFrame().catch(() => undefined)
       setPhase('invalid')
       setFeedback(`Minimum selection is ${MINIMUM_SELECTION} × ${MINIMUM_SELECTION}`)
       setStart(null)
@@ -162,7 +232,25 @@ function Overlay(): React.JSX.Element {
     if (editBeforeSending) {
       setCaptureError(null)
       setCurrent(end)
-      setPhase('editing')
+      if (context?.surface === 'frozen') {
+        setPhase('editing')
+        return
+      }
+      setPhase('submitting')
+      setFeedback('Holding this moment for editing…')
+      try {
+        await window.fovea.capture.captureVideoFrame().catch(() => false)
+        const frozen = await window.fovea.capture.freeze('edit')
+        liveSurface.current = false
+        setContext(frozen)
+        setPhase('editing')
+        setFeedback('Edit the captured area, then send it')
+      } catch (reason) {
+        const error = appErrorFromUnknown(reason)
+        setPhase('invalid')
+        setCaptureError(error)
+        setFeedback(error.message)
+      }
       return
     }
     await submit(next, [])
@@ -191,7 +279,7 @@ function Overlay(): React.JSX.Element {
   return <div
     ref={root}
     tabIndex={-1}
-    className={`overlay ${phase} ${analysis ? 'analyze-active' : ''}`}
+    className={`overlay ${context?.surface ?? 'loading'} ${phase} ${analysis ? 'analyze-active' : ''}`}
     onPointerDown={(event) => {
       if (!context || event.button !== 0 || phase === 'editing' || phase === 'analyzing' || phase === 'submitting') return
       if (analysis) {
@@ -200,6 +288,7 @@ function Overlay(): React.JSX.Element {
       }
       event.preventDefault()
       event.currentTarget.setPointerCapture(event.pointerId)
+      if (context.surface === 'live') warmVideoFrame()
       const next = pointer(event)
       setStart(next)
       setCurrent(next)
@@ -215,11 +304,24 @@ function Overlay(): React.JSX.Element {
       if (phase === 'editing') return
       setStart(null)
       setPhase('idle')
-      setFeedback('Select any part of the frozen screen')
+      setFeedback(context ? surfaceFeedback(context) : 'Drag over anything on screen')
+      void window.fovea.capture.cancelVideoFrame().catch(() => undefined)
     }}
-    onContextMenu={(event) => { event.preventDefault(); void window.fovea.capture.cancel() }}
+    onContextMenu={(event) => { event.preventDefault(); cancelCapture() }}
   >
-    {context && <img className="frozen-frame" src={context.imageDataUrl} alt="" draggable={false} style={captureImageStyle(context)} />}
+    {context?.surface === 'frozen' && (
+      <FrozenFrame
+        appearanceReady={appearanceReady}
+        context={context}
+        onReady={announceCaptureReady}
+      />
+    )}
+    {context?.surface === 'live' && (
+      <LiveSurfaceReady
+        appearanceReady={appearanceReady}
+        onReady={announceCaptureReady}
+      />
+    )}
     <div className="capture-scrim" />
 
     {context && analysis && (
@@ -297,15 +399,17 @@ function Overlay(): React.JSX.Element {
     </>}
 
     {rectangle && (rectangle.width > 0 || rectangle.height > 0) && context && <div className={`selection-root ${phase === 'submitting' ? 'confirming' : ''} ${phase === 'editing' ? 'editing' : ''}`} style={rectangleStyle(rectangle)}>
-      <div className="selection-viewport">
-        <img className="selection-frame" src={context.imageDataUrl} alt="" draggable={false} style={selectionImageStyle(rectangle, context)} />
-      </div>
-      {phase === 'editing' && (
+      {context.surface === 'frozen' && (
+        <div className="selection-viewport">
+          <img className="selection-frame" src={context.imageDataUrl} alt="" draggable={false} style={selectionImageStyle(rectangle, context)} />
+        </div>
+      )}
+      {phase === 'editing' && context.surface === 'frozen' && (
         <CaptureEditor
           context={context}
           rectangle={rectangle}
           submitting={false}
-          onCancel={() => void window.fovea.capture.cancel()}
+          onCancel={cancelCapture}
           onSend={(operations) => void submit(rectangle, operations)}
         />
       )}
@@ -338,6 +442,7 @@ function Overlay(): React.JSX.Element {
       extractText={extractText}
       analyzeActive={analysis !== null}
       analyzeBusy={phase === 'analyzing'}
+      analyzeHoldInFlight={analyzeHoldInFlight}
       ocrLanguageCode={ocrLanguageCode}
       ocrLanguages={ocrLanguages}
       preferWebSearch={preferWebSearch}
@@ -357,11 +462,78 @@ function Overlay(): React.JSX.Element {
         if (next) setExtractText(false)
         return next
       })}
-      onCancel={() => { if (window.fovea?.capture) void window.fovea.capture.cancel(); else window.close() }}
+      onCancel={cancelCapture}
       onRetry={captureError ? loadContext : undefined}
     />}
-    {phase === 'submitting' && <div className="capture-status" role="status"><span className="status-dot" />{editBeforeSending ? 'Applying edits…' : extractText ? 'Opening text extraction…' : 'Opening Fovea…'}</div>}
+    {phase === 'submitting' && <div className="capture-status" role="status"><span className="status-dot" />{editBeforeSending ? 'Preparing editor…' : extractText ? 'Opening text extraction…' : 'Opening Fovea…'}</div>}
   </div>
+}
+
+export function LiveSurfaceReady({
+  appearanceReady = true,
+  onReady
+}: {
+  appearanceReady?: boolean
+  onReady(): void
+}): null {
+  const announced = useRef(false)
+  useEffect(() => {
+    if (!appearanceReady || announced.current) return
+    let cancelled = false
+    void waitForRenderedFrame().then(() => {
+      if (cancelled || announced.current) return
+      announced.current = true
+      onReady()
+    })
+    return () => { cancelled = true }
+  }, [appearanceReady, onReady])
+  return null
+}
+
+export function FrozenFrame({
+  appearanceReady = true,
+  context,
+  onReady
+}: {
+  appearanceReady?: boolean
+  context: FrozenCaptureContext
+  onReady(): void
+}): React.JSX.Element {
+  const announcedSource = useRef<string | null>(null)
+  const imageRef = useRef<HTMLImageElement>(null)
+  const [decodedSource, setDecodedSource] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!appearanceReady || decodedSource !== context.imageDataUrl || announcedSource.current === context.imageDataUrl) return
+    let cancelled = false
+    void waitForRenderedFrame().then(() => {
+      const image = imageRef.current
+      if (cancelled || image?.getAttribute('src') !== context.imageDataUrl || announcedSource.current === context.imageDataUrl) return
+      announcedSource.current = context.imageDataUrl
+      onReady()
+    })
+    return () => { cancelled = true }
+  }, [appearanceReady, context.imageDataUrl, decodedSource, onReady])
+
+  return (
+    <img
+      alt=""
+      className="frozen-frame"
+      draggable={false}
+      ref={imageRef}
+      src={context.imageDataUrl}
+      style={captureImageStyle(context)}
+      onLoad={(event) => {
+        const source = context.imageDataUrl
+        if (announcedSource.current === source) return
+        const image = event.currentTarget
+        const decoded = typeof image.decode === 'function' ? image.decode().catch(() => undefined) : Promise.resolve()
+        void decoded.then(() => {
+          if (image.getAttribute('src') === source) setDecodedSource(source)
+        })
+      }}
+    />
+  )
 }
 
 export function CaptureHud({
@@ -373,6 +545,7 @@ export function CaptureHud({
   extractText,
   analyzeActive = false,
   analyzeBusy = false,
+  analyzeHoldInFlight = false,
   ocrLanguageCode,
   ocrLanguages,
   preferWebSearch,
@@ -392,6 +565,7 @@ export function CaptureHud({
   extractText: boolean
   analyzeActive?: boolean
   analyzeBusy?: boolean
+  analyzeHoldInFlight?: boolean
   ocrLanguageCode: string
   ocrLanguages: OcrLanguage[]
   preferWebSearch: boolean
@@ -406,16 +580,17 @@ export function CaptureHud({
   return <div className={`capture-hud ${error ? 'error' : ''}`} role={error ? 'alert' : 'status'} aria-live="polite" onPointerDown={(event) => event.stopPropagation()}>
     <span className="hud-symbol" aria-hidden="true">{error ? '!' : <svg viewBox="0 0 20 20"><path d="M6 2H2v4M14 2h4v4M6 18H2v-4m12 4h4v-4" /></svg>}</span>
     <span className="hud-copy">
-      <strong>{error ? title ?? 'Try a larger area' : analyzeBusy ? 'Analyzing screen' : analyzeActive ? 'Analyze mode' : 'Drag to capture'}</strong>
+      <strong>{error ? title ?? 'Try a larger area' : analyzeHoldInFlight ? 'Holding current screen' : analyzeBusy ? 'Analyzing screen' : analyzeActive ? 'Analyze mode' : 'Drag to capture'}</strong>
       <small>{detail}</small>
     </span>
     {canEditBeforeSending && !error && (
       <button
-        aria-label={analyzeBusy ? 'Stop finding screen features' : analyzeActive ? 'Exit Analyze mode' : 'Analyze full screen'}
+        aria-label={analyzeHoldInFlight ? 'Holding current screen for Analyze' : analyzeBusy ? 'Stop finding screen features' : analyzeActive ? 'Exit Analyze mode' : 'Analyze full screen'}
         aria-pressed={analyzeActive || analyzeBusy}
         className="hud-icon-button hud-analyze-control"
         data-active={analyzeActive || analyzeBusy}
         data-busy={analyzeBusy}
+        disabled={analyzeHoldInFlight}
         title={analyzeActive ? 'Exit Analyze mode' : 'Find things to ask about'}
         type="button"
         onClick={onToggleAnalyze}
@@ -696,6 +871,28 @@ export function captureRectangleForFeature(feature: CaptureFeature, context: Pic
   }
 }
 function pointer(event: ReactPointerEvent): Point { return { x: event.clientX, y: event.clientY } }
+export async function holdLiveSurfaceForAnalyze(
+  capture: {
+    captureVideoFrame(rectangle?: Rectangle): Promise<boolean>
+    freeze(reason: CaptureFreezeReason): Promise<FrozenCaptureContext>
+  },
+  isCurrent: () => boolean
+): Promise<FrozenCaptureContext | null> {
+  await capture.captureVideoFrame().catch(() => false)
+  if (!isCurrent()) return null
+  return capture.freeze('analyze')
+}
+function surfaceFeedback(context: CaptureContext): string {
+  return context.surface === 'live'
+    ? 'Screen stays live until you release'
+    : 'Select any part of the frozen screen'
+}
+function waitForRenderedFrame(): Promise<void> {
+  // paintWhenInitiallyHidden keeps this renderer active before the native window is
+  // shown. The second callback runs after Chromium had a frame opportunity to paint
+  // the decoded image scheduled by the first callback.
+  return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+}
 function rectangleStyle(rectangle: Rectangle): CSSProperties { return { left: rectangle.x, top: rectangle.y, width: rectangle.width, height: rectangle.height } }
 function captureImageStyle(context: CaptureContext): CSSProperties { return { width: context.width, height: context.height } }
 function selectionImageStyle(rectangle: Rectangle, context: CaptureContext): CSSProperties { return { left: -rectangle.x, top: -rectangle.y, width: context.width, height: context.height } }

@@ -1,6 +1,8 @@
+import { randomUUID } from 'node:crypto'
+import { constants } from 'node:fs'
 import { DatabaseSync, type SQLOutputValue } from 'node:sqlite'
-import { chmod, copyFile, mkdir, readFile, rename, rm, stat } from 'node:fs/promises'
-import { basename, dirname, extname, join } from 'node:path'
+import { chmod, copyFile, mkdir, readFile, readdir, rename, rm, stat } from 'node:fs/promises'
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type {
   ConversationExchange,
   ConversationHistorySummary,
@@ -8,7 +10,8 @@ import type {
   ConversationSelection
 } from '@shared/types/app'
 
-const STORE_VERSION = 2
+const STORE_VERSION = 3
+const HISTORY_IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp'])
 export const HISTORY_LIST_LIMIT = 200
 
 export interface HistoryAttachment {
@@ -105,6 +108,10 @@ export class ConversationHistoryStore {
           PRIMARY KEY (conversation_id, id)
         ) STRICT;
 
+        CREATE TABLE IF NOT EXISTS attachment_deletion_queue (
+          image_path TEXT PRIMARY KEY
+        ) STRICT;
+
         CREATE VIRTUAL TABLE IF NOT EXISTS conversation_search USING fts5(
           conversation_id UNINDEXED,
           content,
@@ -115,7 +122,9 @@ export class ConversationHistoryStore {
       `)
       await chmod(this.databasePath, 0o600).catch(() => undefined)
       await this.migrateLegacyJson()
-      this.removeUnsafeAttachmentRows()
+      this.normaliseAttachmentRows()
+      await this.queueOrphanedAttachmentFiles()
+      await this.flushAttachmentDeletionQueue()
     } catch (error) {
       database.close()
       this.database = null
@@ -170,11 +179,11 @@ export class ConversationHistoryStore {
       FROM conversation_attachments
       WHERE conversation_id = ?
       ORDER BY rowid
-    `).all(id).map((attachment) => ({
-      id: stringValue(attachment.id),
-      imagePath: stringValue(attachment.image_path),
-      edited: numberValue(attachment.edited) > 0
-    })).filter((attachment) => isPathInside(this.imageDirectory, attachment.imagePath))
+    `).all(id).flatMap((attachment) => {
+      const candidate = attachmentFromRow(attachment)
+      const imagePath = canonicalPathInside(this.imageDirectory, candidate.imagePath)
+      return imagePath ? [{ ...candidate, imagePath }] : []
+    })
 
     return sanitizeRecord({
       id: row.id,
@@ -200,12 +209,12 @@ export class ConversationHistoryStore {
     const next = sanitizeRecord({ ...structuredClone(record), attachments: archive.attachments })
 
     try {
-      this.writeRecords([next])
+      this.writeRecords([next], () => this.queueAttachmentDeletions(archive.obsolete))
     } catch (error) {
-      await this.deleteAttachmentFiles(archive.copied)
+      await this.discardCopiedAttachments(archive.copied)
       throw error
     }
-    await this.deleteAttachmentFiles(archive.obsolete)
+    await this.flushAttachmentDeletionQueue()
   }
 
   async delete(id: string): Promise<boolean> {
@@ -213,9 +222,11 @@ export class ConversationHistoryStore {
     const attachments = this.get(id)?.attachments ?? []
     const removed = this.inTransaction(() => {
       database.prepare('DELETE FROM conversation_search WHERE conversation_id = ?').run(id)
-      return database.prepare('DELETE FROM conversations WHERE id = ?').run(id).changes > 0
+      const didRemove = database.prepare('DELETE FROM conversations WHERE id = ?').run(id).changes > 0
+      if (didRemove) this.queueAttachmentDeletions(attachments)
+      return didRemove
     })
-    if (removed) await this.deleteAttachmentFiles(attachments)
+    if (removed) await this.flushAttachmentDeletionQueue()
     return removed
   }
 
@@ -226,9 +237,10 @@ export class ConversationHistoryStore {
       const count = numberValue(database.prepare('SELECT COUNT(*) AS count FROM conversations').get()?.count)
       database.prepare('DELETE FROM conversation_search').run()
       database.prepare('DELETE FROM conversations').run()
+      this.queueAttachmentDeletions(attachments)
       return count
     })
-    await this.deleteAttachmentFiles(attachments)
+    await this.flushAttachmentDeletionQueue()
     return removed
   }
 
@@ -246,9 +258,11 @@ export class ConversationHistoryStore {
         DELETE FROM conversation_search
         WHERE conversation_id IN (SELECT id FROM conversations WHERE updated_at < ?)
       `).run(cutoff)
-      return numberValue(database.prepare('DELETE FROM conversations WHERE updated_at < ?').run(cutoff).changes)
+      const count = numberValue(database.prepare('DELETE FROM conversations WHERE updated_at < ?').run(cutoff).changes)
+      this.queueAttachmentDeletions(attachments)
+      return count
     })
-    await this.deleteAttachmentFiles(attachments)
+    await this.flushAttachmentDeletionQueue()
     return removed
   }
 
@@ -259,8 +273,9 @@ export class ConversationHistoryStore {
     this.inTransaction(() => {
       database.prepare('DELETE FROM conversation_attachments').run()
       database.prepare('UPDATE conversations SET has_screenshots = 0').run()
+      this.queueAttachmentDeletions(attachments)
     })
-    await this.deleteAttachmentFiles(attachments)
+    await this.flushAttachmentDeletionQueue()
     return attachments.length
   }
 
@@ -296,7 +311,10 @@ export class ConversationHistoryStore {
 
     const records = migrate(parsed).conversations.map((record) => ({
       ...record,
-      attachments: record.attachments.filter((attachment) => isPathInside(this.imageDirectory, attachment.imagePath))
+      attachments: record.attachments.flatMap((attachment) => {
+        const imagePath = canonicalPathInside(this.imageDirectory, attachment.imagePath)
+        return imagePath ? [{ ...attachment, imagePath }] : []
+      })
     }))
     this.writeRecords(records, () => {
       database.prepare(`
@@ -385,19 +403,29 @@ export class ConversationHistoryStore {
     }
   }
 
-  private removeUnsafeAttachmentRows(): void {
+  private normaliseAttachmentRows(): void {
     const database = this.requireDatabase()
     const rows = database.prepare(`
       SELECT conversation_id, id, image_path
       FROM conversation_attachments
     `).all()
-    const unsafe = rows.filter((row) => !isPathInside(this.imageDirectory, stringValue(row.image_path)))
-    if (!unsafe.length) return
     const remove = database.prepare(
       'DELETE FROM conversation_attachments WHERE conversation_id = ? AND id = ?'
     )
+    const update = database.prepare(`
+      UPDATE conversation_attachments
+      SET image_path = ?
+      WHERE conversation_id = ? AND id = ?
+    `)
     this.inTransaction(() => {
-      for (const row of unsafe) remove.run(stringValue(row.conversation_id), stringValue(row.id))
+      for (const row of rows) {
+        const conversationId = stringValue(row.conversation_id)
+        const id = stringValue(row.id)
+        const storedPath = stringValue(row.image_path)
+        const imagePath = canonicalPathInside(this.imageDirectory, storedPath)
+        if (!imagePath) remove.run(conversationId, id)
+        else if (imagePath !== storedPath) update.run(imagePath, conversationId, id)
+      }
       database.prepare(`
         UPDATE conversations
         SET has_screenshots = EXISTS (
@@ -415,28 +443,40 @@ export class ConversationHistoryStore {
     const retained: HistoryAttachment[] = []
     const copied: HistoryAttachment[] = []
     const seen = new Set<string>()
-    for (const source of sources) {
-      if (seen.has(source.id)) continue
-      seen.add(source.id)
-      const previous = existing.find((attachment) => attachment.id === source.id)
-      if (previous && await fileExists(previous.imagePath)) {
-        retained.push({ ...previous, edited: source.edited })
-        continue
+    try {
+      for (const source of sources) {
+        if (seen.has(source.id)) continue
+        seen.add(source.id)
+        const previous = existing.find((attachment) => attachment.id === source.id)
+        if (previous && await fileExists(previous.imagePath)) {
+          retained.push({ ...previous, edited: source.edited })
+          continue
+        }
+        const candidateExtension = extname(basename(source.imagePath)).toLocaleLowerCase()
+        const extension = HISTORY_IMAGE_EXTENSIONS.has(candidateExtension) ? candidateExtension : '.png'
+        const destination = canonicalPathInside(
+          this.imageDirectory,
+          join(
+            this.imageDirectory,
+            `${safeFilePart(conversationId).slice(0, 60)}-${safeFilePart(source.id).slice(0, 60)}-${randomUUID()}${extension}`
+          )
+        )
+        if (!destination) throw new Error('The history attachment destination is invalid.')
+        await copyFile(source.imagePath, destination, constants.COPYFILE_EXCL)
+        await chmod(destination, 0o600).catch(() => undefined)
+        const attachment = { id: source.id, imagePath: destination, edited: source.edited }
+        retained.push(attachment)
+        copied.push(attachment)
       }
-      const candidateExtension = extname(basename(source.imagePath)).toLocaleLowerCase()
-      const extension = ['.png', '.jpg', '.jpeg', '.webp'].includes(candidateExtension) ? candidateExtension : '.png'
-      const destination = join(this.imageDirectory, `${safeFilePart(conversationId)}-${safeFilePart(source.id)}${extension}`)
-      await copyFile(source.imagePath, destination)
-      await chmod(destination, 0o600).catch(() => undefined)
-      const attachment = { id: source.id, imagePath: destination, edited: source.edited }
-      retained.push(attachment)
-      copied.push(attachment)
+    } catch (error) {
+      await this.discardCopiedAttachments(copied)
+      throw error
     }
-    const retainedIds = new Set(retained.map((attachment) => attachment.id))
+    const retainedPaths = new Set(retained.map((attachment) => attachment.imagePath))
     return {
       attachments: retained,
       copied,
-      obsolete: existing.filter((attachment) => !retainedIds.has(attachment.id))
+      obsolete: existing.filter((attachment) => !retainedPaths.has(attachment.imagePath))
     }
   }
 
@@ -444,14 +484,80 @@ export class ConversationHistoryStore {
     return this.requireDatabase().prepare(`
       SELECT id, image_path, edited
       FROM conversation_attachments
-    `).all().map(attachmentFromRow)
+    `).all().flatMap((row) => {
+      const attachment = attachmentFromRow(row)
+      const imagePath = canonicalPathInside(this.imageDirectory, attachment.imagePath)
+      return imagePath ? [{ ...attachment, imagePath }] : []
+    })
   }
 
-  private async deleteAttachmentFiles(attachments: HistoryAttachment[]): Promise<void> {
-    await Promise.all(attachments.map(async (attachment) => {
-      if (!isPathInside(this.imageDirectory, attachment.imagePath)) return
-      await rm(attachment.imagePath, { force: true })
-    }))
+  private queueAttachmentDeletions(attachments: HistoryAttachment[]): void {
+    this.queueAttachmentPaths(attachments.map((attachment) => attachment.imagePath))
+  }
+
+  private queueAttachmentPaths(paths: readonly string[]): void {
+    if (!paths.length) return
+    const queue = this.requireDatabase().prepare(`
+      INSERT INTO attachment_deletion_queue (image_path)
+      VALUES (?)
+      ON CONFLICT(image_path) DO NOTHING
+    `)
+    for (const path of paths) {
+      const imagePath = canonicalPathInside(this.imageDirectory, path)
+      if (imagePath) queue.run(imagePath)
+    }
+  }
+
+  private async queueOrphanedAttachmentFiles(): Promise<void> {
+    const referencedPaths = new Set(this.allAttachments().map((attachment) => pathKey(attachment.imagePath)))
+    const entries = await readdir(this.imageDirectory, { withFileTypes: true })
+    const orphans = entries.flatMap((entry) => {
+      if (!entry.isFile() || !isManagedAttachmentName(entry.name)) return []
+      const imagePath = canonicalPathInside(this.imageDirectory, join(this.imageDirectory, entry.name))
+      return imagePath && !referencedPaths.has(pathKey(imagePath)) ? [imagePath] : []
+    })
+    this.queueAttachmentPaths(orphans)
+  }
+
+  private async discardCopiedAttachments(attachments: HistoryAttachment[]): Promise<void> {
+    if (!attachments.length) return
+    try {
+      this.queueAttachmentDeletions(attachments)
+      await this.flushAttachmentDeletionQueue()
+    } catch (error) {
+      console.warn(`[history] Copied attachments could not be queued for cleanup: ${safeErrorMessage(error)}`)
+      await Promise.all(attachments.map(async (attachment) => {
+        const imagePath = canonicalPathInside(this.imageDirectory, attachment.imagePath)
+        if (!imagePath) return
+        try {
+          await rm(imagePath, { force: true })
+        } catch (removeError) {
+          console.warn(`[history] Copied attachment cleanup failed: ${safeErrorMessage(removeError)}`)
+        }
+      }))
+    }
+  }
+
+  private async flushAttachmentDeletionQueue(): Promise<void> {
+    const database = this.requireDatabase()
+    const rows = database.prepare('SELECT image_path FROM attachment_deletion_queue').all()
+    const removeFromQueue = database.prepare('DELETE FROM attachment_deletion_queue WHERE image_path = ?')
+    const referencedPaths = new Set(this.allAttachments().map((attachment) => pathKey(attachment.imagePath)))
+
+    for (const row of rows) {
+      const storedPath = stringValue(row.image_path)
+      const imagePath = canonicalPathInside(this.imageDirectory, storedPath)
+      if (!imagePath || referencedPaths.has(pathKey(imagePath))) {
+        removeFromQueue.run(storedPath)
+        continue
+      }
+      try {
+        await rm(imagePath, { force: true })
+        removeFromQueue.run(storedPath)
+      } catch (error) {
+        console.warn(`[history] Attachment cleanup will be retried: ${safeErrorMessage(error)}`)
+      }
+    }
   }
 
   private requireDatabase(): DatabaseSync {
@@ -572,10 +678,28 @@ function safeFilePart(value: string): string {
   return value.replace(/[^a-z0-9_-]/gi, '_').slice(0, 100)
 }
 
-function isPathInside(directory: string, path: string): boolean {
-  const normalizedDirectory = directory.replace(/\//g, '\\').replace(/\\+$/, '').toLocaleLowerCase()
-  const normalizedPath = path.replace(/\//g, '\\').toLocaleLowerCase()
-  return normalizedPath.startsWith(`${normalizedDirectory}\\`)
+function canonicalPathInside(directory: string, path: string): string | null {
+  if (!isAbsolute(path)) return null
+  const root = resolve(directory)
+  const candidate = resolve(path)
+  const pathFromRoot = relative(root, candidate)
+  if (
+    !pathFromRoot ||
+    pathFromRoot === '..' ||
+    pathFromRoot.startsWith(`..${sep}`) ||
+    isAbsolute(pathFromRoot)
+  ) return null
+  return candidate
+}
+
+function isManagedAttachmentName(name: string): boolean {
+  const extension = extname(name).toLocaleLowerCase()
+  return HISTORY_IMAGE_EXTENSIONS.has(extension) && basename(name, extension).includes('-')
+}
+
+function pathKey(path: string): string {
+  const canonical = resolve(path)
+  return process.platform === 'win32' ? canonical.toLocaleLowerCase() : canonical
 }
 
 function isMissingFile(error: unknown): boolean {
