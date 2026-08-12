@@ -38,6 +38,27 @@ npx playwright show-report playwright-report/visual
 
 Test output belongs in `test-results/visual` and `playwright-report/visual`. Approved PNGs belong only under `tests/visual/__snapshots__`.
 
+On CI the `github` reporter annotates every failure with its message in the run summary, so a red
+run can be diagnosed without downloading the report or the failure artifact.
+
+## Before the first baselines exist
+
+While `tests/visual/__snapshots__` holds no approved PNG, every screenshot assertion would fail
+for the same reason and bury the assertions that describe real behaviour. The config therefore
+sets `ignoreSnapshots` and prints a notice at the start of the run.
+
+**A pass in that state is not visual coverage.** It proves only the non-screenshot assertions —
+the axe checks, computed-style checks such as reduced motion and increased contrast, and the
+overflow checks. Treat the suite as genuinely enforcing pixels only once baselines are committed.
+
+The skip lifts automatically: any approved PNG anywhere under `__snapshots__` re-enables
+comparison, and a run passing `--update-snapshots` never skips, so baseline generation still
+writes. Nothing needs to be edited when the first baselines land.
+
+This matters because it has already cost us. A wall of identical missing-baseline failures hid a
+capture overlay that rendered no error and an increased-contrast mode that never applied; both
+were failing assertions, not pixel differences, and both were invisible inside the noise.
+
 ## Baseline names and review
 
 Every baseline name describes renderer, state, theme or accessibility mode, viewport where relevant, and device scale factor. For example:

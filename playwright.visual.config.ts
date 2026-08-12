@@ -1,6 +1,41 @@
+import { readdirSync, type Dirent } from 'node:fs'
+import { join, resolve } from 'node:path'
 import { defineConfig } from '@playwright/test'
 
 const visualPort = 4173
+const snapshotRoot = resolve('tests/visual/__snapshots__')
+
+/**
+ * True once any approved baseline has been committed. Before that, every screenshot assertion
+ * fails for the same reason and buries the assertions that describe real behaviour, so the
+ * comparison is skipped rather than reported as a wall of identical failures.
+ */
+function hasApprovedBaselines(directory = snapshotRoot): boolean {
+  let entries: Dirent[]
+  try {
+    entries = readdirSync(directory, { withFileTypes: true })
+  } catch {
+    return false
+  }
+  return entries.some((entry) => (
+    entry.isDirectory()
+      ? hasApprovedBaselines(join(directory, entry.name))
+      : entry.isFile() && entry.name.endsWith('.png')
+  ))
+}
+
+// Generating baselines must still write them, so an update run never skips the comparison.
+const updatingBaselines = process.argv.some((argument) => (
+  argument === '-u' || argument === '--update-snapshots' || argument.startsWith('--update-snapshots=')
+))
+const ignoreSnapshots = !updatingBaselines && !hasApprovedBaselines()
+if (ignoreSnapshots) {
+  console.warn(
+    '[visual] No approved baselines found under tests/visual/__snapshots__, so screenshot ' +
+    'comparison is skipped and this run only proves the non-screenshot assertions. Generate ' +
+    'baselines with the visual workflow before reading a pass as visual coverage.'
+  )
+}
 
 export default defineConfig({
   testDir: './tests/visual',
@@ -19,10 +54,13 @@ export default defineConfig({
       threshold: 0.2
     }
   },
+  ignoreSnapshots,
   outputDir: 'test-results/visual',
   snapshotPathTemplate: '{testDir}/__snapshots__/{projectName}/{arg}{ext}',
+  // `github` annotates each failure with its message in the run summary. Without it the CI
+  // reporter lists failed names only, which is how two real regressions stayed invisible.
   reporter: process.env.CI
-    ? [['line'], ['html', { open: 'never', outputFolder: 'playwright-report/visual' }]]
+    ? [['github'], ['line'], ['html', { open: 'never', outputFolder: 'playwright-report/visual' }]]
     : [['list'], ['html', { open: 'never', outputFolder: 'playwright-report/visual' }]],
   use: {
     baseURL: `http://127.0.0.1:${visualPort}`,
