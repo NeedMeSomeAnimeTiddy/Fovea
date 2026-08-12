@@ -319,6 +319,11 @@ function visualError(
   return { code, title, message, recovery, technicalDetails: 'Synthetic fixture failure; no external request was made.' }
 }
 
+/**
+ * The last source line is wider than the panel on purpose. `.answer pre` sets `overflow-x: auto`,
+ * so the baseline shows a scrollable block at rest rather than clipped text; do not "fix" it by
+ * shortening the line.
+ */
 const longAnswer = `
 ## Recommended interpretation
 
