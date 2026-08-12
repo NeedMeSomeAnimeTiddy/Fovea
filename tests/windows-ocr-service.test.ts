@@ -2,7 +2,7 @@ import { access, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import sharp from 'sharp'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { OcrServiceError, type OcrService } from '../src/main/ocr/ocr-service'
 import {
   mapWindowsOcrPayload,
@@ -44,6 +44,13 @@ function service(recognise: OcrService['recognise']): OcrService {
 }
 
 describe('Windows OCR integration', () => {
+  // sharp's first SVG rasterization initialises librsvg and its font configuration. That is a
+  // one-off cost of a few milliseconds on a warm developer machine but seconds on a cold CI
+  // runner, and it would otherwise land inside whichever test rasterizes first.
+  beforeAll(async () => {
+    await sharp(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><text x="0" y="6">.</text></svg>')).png().toBuffer()
+  }, 120_000)
+
   it('maps native lines, language, and bounds into the shared result shape', () => {
     const result = mapWindowsOcrPayload('capture', {
       language: { code: 'en-GB', label: 'English (United Kingdom)' },
