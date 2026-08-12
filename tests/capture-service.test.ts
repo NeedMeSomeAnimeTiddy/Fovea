@@ -1056,6 +1056,58 @@ describe('live region capture', () => {
     service.dispose()
   })
 
+  it('honours the user turning live selection off and back on', async () => {
+    const { CaptureService } = await import('../src/main/capture/capture-service')
+    const service = new CaptureService(
+      { save: vi.fn() } as never,
+      vi.fn(),
+      vi.fn(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { liveSelection: true, presentationDelayMs: 0 }
+    )
+
+    expect(service.supportsLiveSelection()).toBe(true)
+    expect(service.isLiveSelectionEnabled()).toBe(true)
+
+    service.setLiveSelectionEnabled(false)
+    expect(service.isLiveSelectionEnabled()).toBe(false)
+    await beginPaintedRegion(service)
+    await expect(service.getContext(42)).resolves.toMatchObject({ surface: 'frozen' })
+    expect(mocks.getSources).toHaveBeenCalledTimes(1)
+    service.cancel()
+
+    service.setLiveSelectionEnabled(true)
+    expect(service.isLiveSelectionEnabled()).toBe(true)
+    await beginPaintedLiveRegion(service)
+    expect(mocks.getSources).toHaveBeenCalledTimes(1)
+    service.dispose()
+  })
+
+  it('reports live selection as unavailable when the platform cannot support it', async () => {
+    const { CaptureService } = await import('../src/main/capture/capture-service')
+    const service = new CaptureService(
+      { save: vi.fn() } as never,
+      vi.fn(),
+      vi.fn(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { liveSelection: false, presentationDelayMs: 0 }
+    )
+
+    expect(service.supportsLiveSelection()).toBe(false)
+    // Enabling the setting cannot override a platform that lacks capture exclusion.
+    service.setLiveSelectionEnabled(true)
+    expect(service.isLiveSelectionEnabled()).toBe(false)
+    await beginPaintedRegion(service)
+    await expect(service.getContext(42)).resolves.toMatchObject({ surface: 'frozen' })
+    service.dispose()
+  })
+
   it('enables capture exclusion only on supported Windows builds', async () => {
     const { supportsLiveRegionCapture } = await import('../src/main/capture/capture-service')
 

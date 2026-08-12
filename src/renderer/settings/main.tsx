@@ -1,6 +1,6 @@
 import { StrictMode, useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { SETTINGS_CATEGORIES, isSettingsCategory, type SettingsCategory, type SettingsViewState, type ShellIntegrationState } from '@shared/contracts/ipc'
+import { SETTINGS_CATEGORIES, isSettingsCategory, type LiveCaptureState, type SettingsCategory, type SettingsViewState, type ShellIntegrationState } from '@shared/contracts/ipc'
 import { acceleratorFromKeyInput } from '../../shared/shortcut-accelerator'
 import {
   PROVIDER_CHOICES,
@@ -361,7 +361,7 @@ function SettingsApp(): React.JSX.Element {
       {category === 'Models' && <Card as="section" className="settings-section"><h2>Profile defaults</h2>{state.profiles.length === 0 && <StatusBanner title="No provider profiles" tone="warning">Add a provider from the Account page before choosing a model.</StatusBanner>}{state.profiles.map((profile) => { const available = models[profile.id] ?? []; return <div className="model-row" key={profile.id}><div><strong>{profile.name}</strong><small>Only confirmed image-capable models are offered.</small></div><Select label="Default model" value={profile.defaultModelId ?? ''} onFocus={() => { if (!models[profile.id]) void window.fovea.profiles.models(profile.id).then((items) => setModels((current) => ({ ...current, [profile.id]: items }))).catch((reason) => setError(appErrorFromUnknown(reason))) }} onChange={(event) => void run(() => window.fovea.profiles.setDefaults(profile.id, event.target.value || null, null), '', 'Saving model…')}><option value="">Choose automatically</option>{available.map((model) => <option key={model.id} value={model.id}>{model.displayName}</option>)}</Select></div> })}</Card>}
       {category === 'Prompts' && <CustomPromptsSettings prompts={state.customPrompts} working={working} onSave={(id, label, prompt) => run(() => window.fovea.settings.saveCustomPrompt(id, label, prompt), id ? 'Prompt updated.' : 'Prompt added.')} onDelete={(id) => run(() => window.fovea.settings.deleteCustomPrompt(id), 'Prompt deleted.')} />}
       {category === 'Recipes' && <RecipeSettings state={state} working={working} onRun={run} />}
-      {category === 'Capture' && <><Card as="section" className="settings-section"><h2>Global shortcuts</h2><p className="muted">Click a shortcut then press a key combination. Suggested: Display +D, Window +W, Settings +S, Repeat +R.</p>{state.shortcuts.map((shortcut) => <ShortcutRecorder key={shortcut.action} action={shortcut.action} value={shortcut.accelerator} error={shortcut.error} onSave={(value) => run(() => window.fovea.settings.setShortcut(shortcut.action, value))} />)}<Button variant="secondary" onClick={() => void run(() => window.fovea.settings.resetShortcuts())}>Reset shortcuts</Button></Card><OcrLanguageSettings working={working} onOpen={() => void run(() => window.fovea.settings.openOcrLanguages(), 'Windows language settings opened.')} /><Card as="section" className="settings-section"><Switch label="Launch Fovea when Windows starts" checked={state.launchAtLogin} onChange={(event) => void run(() => window.fovea.settings.setLaunchAtLogin(event.target.checked))} /></Card><ShellIntegrationSettings state={state.shellIntegration} onChange={(enabled) => void run(() => window.fovea.settings.setShellIntegration(enabled))} /></>}
+      {category === 'Capture' && <><Card as="section" className="settings-section"><h2>Global shortcuts</h2><p className="muted">Click a shortcut then press a key combination. Suggested: Display +D, Window +W, Settings +S, Repeat +R.</p>{state.shortcuts.map((shortcut) => <ShortcutRecorder key={shortcut.action} action={shortcut.action} value={shortcut.accelerator} error={shortcut.error} onSave={(value) => run(() => window.fovea.settings.setShortcut(shortcut.action, value))} />)}<Button variant="secondary" onClick={() => void run(() => window.fovea.settings.resetShortcuts())}>Reset shortcuts</Button></Card><LiveCaptureSettings state={state.liveCapture} onChange={(enabled) => void run(() => window.fovea.settings.setLiveCapture(enabled))} /><OcrLanguageSettings working={working} onOpen={() => void run(() => window.fovea.settings.openOcrLanguages(), 'Windows language settings opened.')} /><Card as="section" className="settings-section"><Switch label="Launch Fovea when Windows starts" checked={state.launchAtLogin} onChange={(event) => void run(() => window.fovea.settings.setLaunchAtLogin(event.target.checked))} /></Card><ShellIntegrationSettings state={state.shellIntegration} onChange={(enabled) => void run(() => window.fovea.settings.setShellIntegration(enabled))} /></>}
       {category === 'Appearance' && <Card as="section" className="settings-section"><h2>Colour mode</h2><div className="appearance-options">{(['light','dark','system'] as const).map((item) => <button className={state.appearance.preference === item ? 'selected' : ''} key={item} onClick={() => void run(() => window.fovea.settings.setAppearance(item))}><span className={`theme-preview ${item}`} />{item[0]!.toUpperCase()+item.slice(1)}</button>)}</div><p className="muted">System follows the Windows app theme. Reduced-motion preferences are respected automatically.</p></Card>}
       {category === 'History' && <HistorySettings items={historyItems} query={historyQuery} working={working} onQuery={setHistoryQuery} onRefresh={() => setHistoryRefresh((value) => value + 1)} onRun={run} onExport={(id) => void openHistoryExport(id)} />}
       {category === 'Privacy' && <>
@@ -677,6 +677,43 @@ export function OcrLanguageSettings({
       <Button disabled={working} variant="secondary" onClick={onOpen}>
         Manage OCR languages
       </Button>
+    </Card>
+  )
+}
+
+export function LiveCaptureSettings({
+  state,
+  onChange
+}: {
+  state: LiveCaptureState
+  onChange(enabled: boolean): void
+}): React.JSX.Element {
+  return (
+    <Card as="section" className="settings-section">
+      <h2>Region selection</h2>
+      <p className="muted">
+        Select over the live screen so video, menus, and hover states keep running while you drag.
+        Editing and Analyze hold the screen at the moment you need a still image.
+      </p>
+      <Switch
+        label="Select over the live screen"
+        checked={state.enabled}
+        disabled={!state.supported}
+        onChange={(event) => onChange(event.target.checked)}
+      />
+      {!state.supported ? (
+        <StatusBanner title="Compatibility capture in use" tone="info">
+          This Windows version cannot hide the selection overlay from its own capture, so Fovea
+          freezes the screen before you select.
+        </StatusBanner>
+      ) : (
+        !state.enabled && (
+          <StatusBanner title="Compatibility capture in use" tone="info">
+            Fovea freezes the screen before you select. Turn this on again if live selection worked
+            for you; it also retries after an earlier failure.
+          </StatusBanner>
+        )
+      )}
     </Card>
   )
 }

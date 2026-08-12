@@ -126,6 +126,36 @@ describe('SettingsStore Explorer integration', () => {
   })
 })
 
+describe('SettingsStore live capture', () => {
+  it('defaults to on and survives a round trip', async () => {
+    const path = await settingsPath()
+    const store = new SettingsStore(path)
+    await store.load()
+    expect(store.get().liveCaptureEnabled).toBe(true)
+
+    await store.update({ liveCaptureEnabled: false })
+    const reloaded = new SettingsStore(path)
+    await reloaded.load()
+    expect(reloaded.get().liveCaptureEnabled).toBe(false)
+  })
+
+  it('leaves live capture on for a settings file written before this feature', async () => {
+    const path = await settingsPath()
+    await writeFile(path, JSON.stringify({ version: 5, launchAtLogin: true }))
+    const store = new SettingsStore(path)
+    await store.load()
+    expect(store.get().liveCaptureEnabled).toBe(true)
+  })
+
+  it('only accepts an explicit false from a tampered file', async () => {
+    const path = await settingsPath()
+    await writeFile(path, JSON.stringify({ version: 5, liveCaptureEnabled: 'no' }))
+    const store = new SettingsStore(path)
+    await store.load()
+    expect(store.get().liveCaptureEnabled).toBe(true)
+  })
+})
+
 describe('SettingsStore custom prompts', () => {
   it('persists custom prompts in their saved order', async () => {
     const path = await settingsPath()

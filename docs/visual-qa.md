@@ -12,6 +12,7 @@ The suite covers:
 
 - Settings Account, Appearance, onboarding, synthetic available-update, and solid fallback states;
 - capture overlay idle, selection, Analyze, and error states without `desktopCapturer`;
+- live-surface overlay states — idle, mid-drag selection, and the hold that precedes editing — with the harness backdrop standing in for the desktop showing through the transparent window, and without `getDisplayMedia`;
 - initial question, streaming, completed answer, long answer, long error, and wide/tall/tiny attachments;
 - representative light and dark appearances;
 - keyboard focus, WCAG A/AA automated checks, increased contrast, and reduced motion;
@@ -101,7 +102,15 @@ Run the complete checklist at 100% on Windows 10 and Windows 11. At 125%, 150%, 
 - [ ] Reduced motion removes spectral, menu, message, typing, and selection animation without hiding state.
 - [ ] Increased contrast and Windows forced colours remain readable without depending on blur or colour alone.
 - [ ] At 100%, 125%, 150%, and 200%, Settings, question content, menus, tooltips, and attachment strips do not clip or overflow.
-- [ ] Overlay bounds exactly match each display and pointer selection matches the frozen bitmap at every tested scale.
+- [ ] Overlay bounds exactly match each display and pointer selection matches the captured image at every tested scale.
+- [ ] Live selection shows the real desktop: video keeps playing, an open menu stays open, and hover states keep responding under the overlay.
+- [ ] The overlay's own scrim, guides, capture bar, and selection outline never appear in the sent image.
+- [ ] The sent frame matches the moment the rectangle was released, not the moment the overlay opened.
+- [ ] Edit before sending and Analyze hold the screen at that moment, and the held image matches what was on screen.
+- [ ] Cancelling with `Esc`, right-click, or a too-small selection stops the display stream; no capture indicator or stream remains after the overlay closes.
+- [ ] Turning off **Settings → Capture → Region selection** switches the next capture to frozen compatibility capture without a restart, and turning it back on returns to live.
+- [ ] `FOVEA_DISABLE_LIVE_CAPTURE=1` starts directly in frozen compatibility capture with no live attempt, reports the switch as unsupported, and every geometry check above still passes.
+- [ ] A live failure after the overlay opens reports the fallback message and lets the area be selected again, rather than sending an unverified frame.
 - [ ] Wide, tall, and tiny images crop predictably in the attachment strip and open at the correct aspect ratio.
 - [ ] `--disable-transparent-windows` starts directly in a fully opaque solid fallback with no transparent holes, inset gap, or retry flash.
 - [ ] Closing or cancelling each surface leaves no visible orphan window.
@@ -123,7 +132,7 @@ Run the complete checklist at 100% on Windows 10 and Windows 11. At 125%, 150%, 
 
 Performance checks are comparative evidence, not screenshot assertions:
 
-1. Run five region captures after one warm-up and record the existing `Overlay renderer prepared`, `Screen bitmap acquired`, `Frozen bitmap encoded`, and `Frozen screen displayed` elapsed logs.
+1. Run five region captures after one warm-up and record the existing elapsed logs: `Live selection controls displayed` on the live path, and `Overlay renderer prepared`, `Screen bitmap acquired`, `Frozen bitmap encoded`, and `Frozen frame prepared and displayed` on the frozen path. Record both paths — live selection skips the bitmap work, so the two are not comparable to each other, only to their own previous run.
 2. Open Settings and five question windows in both transparent and solid modes. Record visible startup flashes and elapsed readiness; do not treat the 10-second readiness timeout as an acceptable target.
 3. Exercise the long synthetic streaming fixture while scrolling and tabbing through controls. Confirm input stays responsive, the response remains pinned only when appropriate, and reduced motion flushes content without progressive animation.
 4. Compare the median and worst sample with the previous recorded run. Investigate material regressions instead of inventing or silently relaxing a budget.

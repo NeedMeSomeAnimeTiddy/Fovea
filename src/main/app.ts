@@ -158,6 +158,7 @@ async function startApplication(): Promise<void> {
       liveSelection: process.env.FOVEA_DISABLE_LIVE_CAPTURE !== '1' && supportsLiveRegionCapture()
     }
   )
+  capture.setLiveSelectionEnabled(settings.get().liveCaptureEnabled)
   // Built before the sessions so they can share one ingestion path: the Explorer context menu
   // and images dropped, pasted, or picked into a conversation all normalise the same way.
   const files = new FileAnalysisService(

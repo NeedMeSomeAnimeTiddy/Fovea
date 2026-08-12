@@ -44,7 +44,8 @@ export function createVisualFoveaApi(fixture: VisualFixture): FoveaApi {
       deleteTemporaryFiles: async () => 0,
       onChanged: () => () => undefined,
       onAppearanceChanged: () => () => undefined,
-      onNavigate: () => () => undefined
+      onNavigate: () => () => undefined,
+      setLiveCapture: async () => undefined
     },
     capture: {
       start: async () => undefined,
@@ -56,7 +57,7 @@ export function createVisualFoveaApi(fixture: VisualFixture): FoveaApi {
       prepareVideoFrame: async () => true,
       captureVideoFrame: async () => true,
       cancelVideoFrame: async () => undefined,
-      freeze: async () => clone(fixture.captureContext),
+      freeze: async () => clone(fixture.frozenCaptureContext),
       analyze: async (onProgress) => {
         const analysis = clone(fixture.captureAnalysis)
         onProgress?.(analysis)

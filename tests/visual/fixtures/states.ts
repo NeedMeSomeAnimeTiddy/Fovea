@@ -1,4 +1,5 @@
 import type {
+  CaptureContext,
   FrozenCaptureContext,
   QuestionViewState,
   SettingsViewState,
@@ -28,7 +29,10 @@ export interface VisualFixtureOptions {
 
 export interface VisualFixture extends VisualFixtureOptions {
   settings: SettingsViewState
-  captureContext: FrozenCaptureContext
+  /** What `capture.getContext()` returns: a live surface for `live-*` overlay scenarios. */
+  captureContext: CaptureContext
+  /** What `capture.freeze()` returns once a live scenario holds the screen. */
+  frozenCaptureContext: FrozenCaptureContext
   captureAnalysis: CaptureAnalysis
   captureError: AppError | null
   question: QuestionViewState
@@ -83,18 +87,25 @@ export function createVisualFixture(options: VisualFixtureOptions): VisualFixtur
         'retry'
       )
     : null
+  // A live overlay draws nothing of its own, so the harness backdrop stands in for the
+  // desktop showing through the transparent window.
+  const live = options.renderer === 'overlay' && options.scenario.startsWith('live')
+  const frozenCaptureContext: FrozenCaptureContext = {
+    width: options.width,
+    height: options.height,
+    minSelectionSize: 24,
+    displayId: 'fixture-display',
+    surface: 'frozen',
+    imageDataUrl: syntheticCaptureDataUrl('desktop', options.width, options.height),
+    canEditBeforeSending: true
+  }
   return {
     ...options,
     settings,
-    captureContext: {
-      width: options.width,
-      height: options.height,
-      minSelectionSize: 24,
-      displayId: 'fixture-display',
-      surface: 'frozen',
-      imageDataUrl: syntheticCaptureDataUrl('desktop', options.width, options.height),
-      canEditBeforeSending: true
-    },
+    captureContext: live
+      ? { ...frozenCaptureContext, surface: 'live', imageDataUrl: null }
+      : frozenCaptureContext,
+    frozenCaptureContext,
     captureAnalysis: {
       complete: true,
       stage: 'visual',
@@ -160,6 +171,7 @@ function settingsState(theme: ResolvedAppearance, onboarding: boolean): Settings
     ],
     launchAtLogin: false,
     shellIntegration: { enabled: true, supported: true, registered: true },
+    liveCapture: { enabled: true, supported: true },
     onboardingStatus: onboarding ? 'pending' : 'completed',
     tempLocation: 'C:\\Synthetic\\Fovea\\Temporary',
     appVersion: '0.1.0-visual-fixture',

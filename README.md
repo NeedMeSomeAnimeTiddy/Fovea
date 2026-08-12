@@ -23,6 +23,10 @@ Capability audit last updated: **11 August 2026**.
 
 - Capture a region, current display, or focused window from the tray, Settings,
   or a configurable global shortcut. Repeat-last reuses the last capture mode.
+- Select a region over the live desktop, so video, menus, and hover states keep
+  running while the rectangle is dragged. Editing and Analyze hold the screen on
+  demand; unsupported Windows builds, a Settings switch, or any runtime failure
+  fall back to the existing frozen capture.
 - Ask through ChatGPT subscription sign-in or direct OpenAI, Anthropic, and
   OpenRouter profiles. A conversation can switch profiles and models between turns.
 - Paste, drop, or pick PNG, JPEG, and WebP images into an open conversation. Fovea
@@ -96,23 +100,64 @@ offline, or corrupt downloads are discarded, and only a matching SHA-256 binary 
 made executable. Removing the runtime leaves provider profiles, settings, and
 conversation history intact.
 
+## Live region selection
+
+Region selection draws over the live desktop rather than over a still bitmap, so
+video keeps playing, menus stay open, and hover states keep responding while the
+rectangle is dragged. The overlay marks itself as excluded from screen capture,
+which keeps its own scrim, guides, and capture bar out of the resulting image.
+
+A display stream is opened in the preload only while a selection is active. It is
+warmed when the pointer goes down, one PNG frame is taken at the moment the
+selection is committed, and every track is stopped afterwards — including when
+the grant, playback, or encoding fails. The main process validates that frame
+against the display it granted: an unarmed or expired grant is refused, and the
+frame must match the overlay's viewport and stay inside the selected rectangle.
+
+Two actions need a still image and therefore hold the current screen before they
+run:
+
+- **Edit before sending** freezes the moment the rectangle is released, then
+  opens the annotation toolbar over that held frame.
+- **Analyze full screen** holds the screen first and reports features against the
+  held bitmap.
+
+Frozen compatibility capture remains the fallback and is chosen automatically:
+
+- on Windows builds before 19041, which cannot exclude the overlay from its own
+  capture, and on any non-Windows platform;
+- when a live attempt fails at runtime — a denied or unavailable display stream,
+  a stream that never produces a frame, or a display topology change mid-capture.
+
+When live selection fails after the overlay is already open, Fovea says so and
+asks for the area to be selected again rather than sending a frame it could not
+verify.
+
+**Settings → Capture → Region selection** turns live selection off for good on a
+machine where it misbehaves; the switch is unavailable where the platform cannot
+support it at all. Turning it back on also clears a fallback recorded earlier in
+the session, so a fixed machine does not need a restart to retry. For a one-off
+diagnostic run, `FOVEA_DISABLE_LIVE_CAPTURE=1` forces frozen capture for the
+whole session and hides the switch's effect entirely.
+
 On Windows, text extraction first uses the operating system's local OCR engine
 and the recognition languages installed in Windows Settings. When the isolated
-PaddleOCR evaluation runtime is installed, frozen-screen analysis compares
+PaddleOCR evaluation runtime is installed, full-screen analysis compares
 Windows OCR with PP-OCRv6 and keeps the stronger result. The bundled English
 Tesseract model remains an offline fallback when PaddleOCR is not installed,
 fails, or finds no useful text. Enabling **Extract text locally** reveals
 an optional capture-language picker; **Automatic** uses the Windows preference.
 The last available language selected in the capture bar is remembered for the
 next capture.
-**Analyze full screen** captures the visible desktop before the overlay appears,
-then treats that frozen bitmap as the source of truth. When the optional
+**Analyze full screen** works from a still bitmap of the visible desktop — taken
+before the overlay appears in frozen compatibility capture, or held on demand
+from live selection — and treats that bitmap as the source of truth. When the optional
 OmniParser runtime is installed, its `icon_detect_v3` screenshot model finds
 interactive regions and OpenCV YuNet adds locally detected human faces as
 searchable targets; Windows UI Automation may add a role, accessible name, or
 tooltip only after matching one of those visible regions or visible OCR text.
 Accessibility data can no longer create a box on its own, so controls from
-occluded apps do not leak onto the frozen screen.
+occluded apps do not leak onto the held screen.
 Overlapping results are fused so a named button is one target rather than a
 control box plus duplicate text boxes. Results render progressively—semantic
 anchors and sentence-level OCR first, followed by native-resolution visual
@@ -121,7 +166,7 @@ Targets are ranked by source, meaning, confidence, and size; repeated clicks at
 an overlap cycle through every target under the pointer so a large container
 cannot hide a smaller box. Overlapping static text fragments are clustered by
 geometry and token similarity, with the most complete line retained. Every
-candidate is also checked against the frozen bitmap: uniform rectangles without
+candidate is also checked against the held bitmap: uniform rectangles without
 visible pixels are removed, while accepted visual boxes are tightened to their
 actual edge content. It draws clickable boxes without sending the desktop to a
 provider. Choosing a box opens a small menu of preset questions plus quick
@@ -129,7 +174,7 @@ actions to extract its text locally, copy recognized text, or identify and
 verify it with web search. Only that boxed region and the chosen question or
 action continue to the response window.
 Normal capture OCR keeps the fast native-first behavior, while full-screen
-Analyze runs Windows and PaddleOCR concurrently after the frozen overlay is
+Analyze runs Windows and PaddleOCR concurrently after the held screen is
 already visible. Recent native and fallback results are cached locally for
 repeated captures. Low-confidence photographed Tesseract text also gets a
 bounded black-and-white recovery pass. Clearly photographed pages are
@@ -205,8 +250,8 @@ it automatically. Setup installs a CUDA-enabled PyTorch wheel when
 `-TorchIndexUrl` directly to `scripts/setup-omniparser.ps1` to override that
 choice.
 
-The frozen bitmap is shown before the model starts loading. The resident worker
-first reports faces detected from the native frozen bitmap, then a whole-screen
+The held bitmap is shown before the model starts loading. The resident worker
+first reports faces detected from that native bitmap, then a whole-screen
 control pass (up to a 1920-pixel long edge by default),
 then scans overlapping 1280-pixel tiles at native pixel density. This improves
 small adjacent toolbar controls without returning to the old 960 × 540
@@ -356,39 +401,49 @@ the originals are never modified, moved, or deleted.
 4. Toggle **Extract text locally** in the capture bar, make a selection, and
    confirm the recognised text appears in the normal response panel. Try Stop,
    Copy, and any detected URL, email, phone, QR-code, or barcode action.
-5. Choose **Analyze full screen** in the capture bar and confirm identified
-   features are boxed across the frozen display. Select a box, choose one of
+5. Choose **Analyze full screen** in the capture bar and confirm the screen is
+   held and identified features are boxed across it. Select a box, choose one of
    its preset **Ask** questions, and confirm that exact question opens in the
    response window with the boxed region.
 6. Enable **Edit before sending**, then drag a rectangle at least 24 × 24
    logical pixels on each available display.
-7. Confirm the selection stays on the frozen screen and the icon toolbar
-   appears at the top. Try an annotation and solid redaction, then press Send
-   and confirm the compact response window analyses the edited derivative.
-8. Open **Ask**, choose a contextual suggestion, then use **Custom question**
-   and confirm both questions and answers remain visible in the flowing
-   conversation.
-9. Paste an image into the conversation, drop several PNG/JPEG/WebP files, and
-   use **Choose images**. Confirm previews appear, an unsupported or corrupt file
-   reports a per-file error, originals remain unchanged, and edit/OCR/remove work.
-10. Add another snip, choose **Edit**, try arrows, rectangles, drawing, text,
+7. Confirm the screen is held at the moment the rectangle is released and the
+   icon toolbar appears at the top. Try an annotation and solid redaction, then
+   press Send and confirm the compact response window analyses the edited
+   derivative.
+8. With something moving on screen — a video or an open menu — start a region
+   capture and confirm it keeps moving under the overlay, that the overlay's own
+   scrim and capture bar do not appear in the sent image, and that the sent frame
+   matches the moment of release rather than the moment the overlay opened.
+9. Turn off **Settings → Capture → Region selection**, repeat steps 3–7 against
+   the frozen compatibility path, then turn it back on and confirm the next
+   capture is live again without a restart. Repeat once with
+   `FOVEA_DISABLE_LIVE_CAPTURE=1` and confirm the switch reports the platform as
+   unsupported.
+10. Open **Ask**, choose a contextual suggestion, then use **Custom question**
+    and confirm both questions and answers remain visible in the flowing
+    conversation.
+11. Paste an image into the conversation, drop several PNG/JPEG/WebP files, and
+    use **Choose images**. Confirm previews appear, an unsupported or corrupt file
+    reports a per-file error, originals remain unchanged, and edit/OCR/remove work.
+12. Add another snip, choose **Edit**, try arrows, rectangles, drawing, text,
     blur, and solid redaction, then undo/redo and save the edited copy. Confirm
     the edited draft is the image sent with the next question.
-11. Expand **Show details**, then try the icon actions for View capture, Stop,
+13. Expand **Show details**, then try the icon actions for View capture, Stop,
     Regenerate, Copy, and New capture. Press `Esc` in the capture viewer and
     confirm the response window remains open.
-12. Export the open conversation first without optional metadata, then with
+14. Export the open conversation first without optional metadata, then with
     screenshots and provider/model metadata. Inspect both Markdown and JSON output,
     cancel once at the save dialog, and confirm cancellation leaves no partial files.
-13. Create a disabled recipe, duplicate and reorder it, resolve a deliberate
+15. Create a disabled recipe, duplicate and reorder it, resolve a deliberate
     shortcut conflict, then enable and run it. Confirm it opens with the prompt and
     options visible before Send. Enable auto-send only after reviewing its warning;
     changing the prompt or provider must revoke that consent.
-14. Close the panel and confirm its managed images disappear from the temporary
+16. Close the panel and confirm its managed images disappear from the temporary
     path shown in Settings. In **History**, search for and reopen the conversation,
     export it, then delete it. Confirm private mode prevents a new conversation from
     entering History while still allowing explicit export from its open panel.
-15. Run at least one turn on every configured path: ChatGPT, OpenAI, Anthropic,
+17. Run at least one turn on every configured path: ChatGPT, OpenAI, Anthropic,
     and OpenRouter. Where a credential or runtime is unavailable, confirm the UI
     reports that limitation without losing the conversation draft.
 
@@ -400,6 +455,15 @@ small React renderers (settings, selection overlay, and question panel) use a
 typed, allow-listed preload bridge with `contextIsolation: true`,
 `nodeIntegration: false`, and renderer sandboxing. There is no generic command
 IPC channel.
+
+Live region selection is the one path where a renderer produces image data. The
+main process installs a display-media request handler scoped to the capture
+overlay's own session partition, and the grant is armed per selection, bound to
+the granting display, and expires on a timeout. A returned frame is refused
+unless a grant is live, the PNG decodes, its dimensions are self-consistent and
+plausible for that display, and the reported viewport and rectangle match what
+the overlay was given. Failing any of those checks drops the frame rather than
+falling through to a partially trusted image.
 
 `CodexAppServerProvider` handles ChatGPT subscription profiles, while direct API
 adapters support OpenAI, Anthropic, and OpenRouter without the optional runtime.
@@ -426,6 +490,10 @@ unredacted temporary source is deleted once the derivative replaces it.
 - Mixed-DPI multi-monitor capture depends on Windows' reported display scale and
   should be smoke-tested on the target hardware even though every display is
   available for capture.
+- Live region selection needs Windows build 19041 or later for capture exclusion
+  and a display stream that starts within a few seconds. GPU, Remote Desktop, and
+  virtual-machine composition vary, so the frozen fallback is a supported mode
+  rather than a failure state, and `FOVEA_DISABLE_LIVE_CAPTURE=1` forces it.
 - Windows sandbox availability still depends on the host Windows configuration.
   Even if sandbox initialization fails, approval requests are never surfaced or
   accepted and the assistant is explicitly instructed not to use tools.

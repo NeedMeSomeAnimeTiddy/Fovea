@@ -41,6 +41,11 @@ export interface AppSettings {
   automaticUpdateChecks: boolean
   /** Whether the "Analyse with Fovea" entry is registered in the Windows Explorer context menu. */
   shellIntegrationEnabled: boolean
+  /**
+   * Whether region selection may draw over the live desktop. On by default; turning it off
+   * pins the session to frozen compatibility capture even where the platform supports live.
+   */
+  liveCaptureEnabled: boolean
   shortcuts: ShortcutSettings
   profiles: StoredProviderProfile[]
   defaultProfileId: string | null
@@ -65,6 +70,7 @@ const DEFAULTS: AppSettings = {
   launchAtLogin: false,
   automaticUpdateChecks: false,
   shellIntegrationEnabled: false,
+  liveCaptureEnabled: true,
   shortcuts: { ...DEFAULT_SHORTCUTS },
   profiles: [],
   defaultProfileId: null,
@@ -190,6 +196,7 @@ function sanitize(value: StoredSettingsInput): AppSettings {
     launchAtLogin: value.launchAtLogin === true,
     automaticUpdateChecks: value.automaticUpdateChecks === true,
     shellIntegrationEnabled: value.shellIntegrationEnabled === true,
+    liveCaptureEnabled: value.liveCaptureEnabled !== false,
     shortcuts,
     profiles,
     defaultProfileId,

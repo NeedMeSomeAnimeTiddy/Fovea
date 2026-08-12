@@ -42,6 +42,7 @@ export function registerIpc(dependencies: IpcDependencies): void {
       recipes: settings.recipes,
       launchAtLogin: settings.launchAtLogin,
       shellIntegration: { enabled: settings.shellIntegrationEnabled, supported: process.platform === 'win32', registered: shellRegistered },
+      liveCapture: { enabled: dependencies.capture.isLiveSelectionEnabled(), supported: dependencies.capture.supportsLiveSelection() },
       onboardingStatus: settings.onboardingStatus,
       history: settings.history,
       ocrLanguageCode: settings.ocrLanguageCode,
@@ -81,6 +82,11 @@ export function registerIpc(dependencies: IpcDependencies): void {
   handle(IPC.settingsOpenOcrLanguages, () => shell.openExternal('ms-settings:regionlanguage'))
   handle(IPC.settingsSetAppearance, (_event, value) => mutate(() => dependencies.appearance.setPreference(requireAppearance(value))), 'validation')
   handle(IPC.settingsSetLaunchAtLogin, (_event, enabled) => mutate(async () => { if (typeof enabled !== 'boolean') throw new Error('Invalid launch setting.'); app.setLoginItemSettings({ openAtLogin: enabled, path: process.execPath }); await dependencies.settings.update({ launchAtLogin: enabled }) }), 'validation')
+  handle(IPC.settingsSetLiveCapture, (_event, enabled) => mutate(async () => {
+    if (typeof enabled !== 'boolean') throw new Error('Invalid live capture setting.')
+    dependencies.capture.setLiveSelectionEnabled(enabled)
+    await dependencies.settings.update({ liveCaptureEnabled: enabled })
+  }), 'validation')
   handle(IPC.settingsSetShellIntegration, (_event, enabled) => mutate(async () => {
     if (typeof enabled !== 'boolean') throw new Error('Invalid context-menu setting.')
     if (enabled) await dependencies.explorer.enable()

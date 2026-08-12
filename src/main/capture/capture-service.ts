@@ -92,6 +92,7 @@ export class CaptureService {
   private readonly prewarmedOverlays = new Map<number, PrewarmedOverlay>()
   private displayMediaSession: Session | null = null
   private liveSelectionUnavailable = false
+  private liveSelectionPreferred = true
   private disposed = false
 
   constructor(
@@ -901,7 +902,28 @@ export class CaptureService {
   }
 
   private captureSurface(): CaptureSurface {
-    return this.runtime.liveSelection && !this.liveSelectionUnavailable ? 'live' : 'frozen'
+    return this.supportsLiveSelection() && this.liveSelectionPreferred && !this.liveSelectionUnavailable ? 'live' : 'frozen'
+  }
+
+  /** Whether this machine and launch can use live selection at all, ignoring the user's choice. */
+  supportsLiveSelection(): boolean {
+    return this.runtime.liveSelection
+  }
+
+  isLiveSelectionEnabled(): boolean {
+    return this.supportsLiveSelection() && this.liveSelectionPreferred
+  }
+
+  /**
+   * Turning the setting back on also clears a fallback recorded earlier in this session, so a
+   * user who fixed the underlying problem does not have to restart to try live selection again.
+   */
+  setLiveSelectionEnabled(enabled: boolean): void {
+    if (this.liveSelectionPreferred === enabled) return
+    this.liveSelectionPreferred = enabled
+    if (enabled) this.liveSelectionUnavailable = false
+    // Prewarmed overlays are built for one surface, so they cannot be reused across the change.
+    this.releaseAllPrewarmedOverlays()
   }
 
   private async captureLiveFrame(candidate: PendingDisplay, exposeFrozenFrame: boolean, expectedBounds?: Rectangle): Promise<void> {
