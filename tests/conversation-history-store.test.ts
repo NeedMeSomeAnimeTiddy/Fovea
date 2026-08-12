@@ -1,6 +1,6 @@
 import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, relative, sep } from 'node:path'
+import { isAbsolute, join, relative, sep } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -178,11 +178,16 @@ describe('ConversationHistoryStore', () => {
 
     const image = join(location.images, 'relative.png')
     await writeFile(image, 'must remain')
+    // Measured from the image directory's own parent, so this stays relative wherever the
+    // temporary directory lands. `relative()` from an unrelated base returns an absolute path
+    // when the two sit on different Windows drives, which would test nothing.
+    const relativePath = relative(location.root, image)
+    expect(isAbsolute(relativePath)).toBe(false)
     const database = new DatabaseSync(location.databasePath)
     database.prepare(`
       INSERT INTO conversation_attachments (conversation_id, id, image_path, edited)
       VALUES (?, ?, ?, ?)
-    `).run('relative', 'relative-path', relative(process.cwd(), image), 0)
+    `).run('relative', 'relative-path', relativePath, 0)
     database.close()
 
     const reopened = await openStore(location)
