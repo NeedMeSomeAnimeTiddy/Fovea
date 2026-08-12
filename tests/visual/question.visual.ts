@@ -36,6 +36,10 @@ test.describe('Question visual states', () => {
     await expect(page.getByRole('heading', { name: 'Recommended interpretation' })).toBeVisible()
     const scrollable = await page.locator('.response-content').evaluate((element) => element.scrollHeight > element.clientHeight)
     expect(scrollable).toBe(true)
+    // Highlighting is loaded on a dynamic import after first paint, so waiting for a token both
+    // settles the race before the screenshot and states the expectation as an assertion: a
+    // highlighter that failed to load reports itself here rather than as a pixel difference.
+    await expect(page.locator('pre code.hljs .hljs-keyword').first()).toBeVisible()
     await expect(page).toHaveScreenshot('question--answer-long--dark--transparent--504x504--dsf1.png')
   })
 

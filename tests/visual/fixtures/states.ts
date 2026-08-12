@@ -331,12 +331,15 @@ The selected panel is a synthetic status report. Its hierarchy is intentionally 
 - Status colour is paired with visible wording.
 - The layout remains understandable without animation.
 
-### Example output
+### Example source
 
-\`\`\`text
-Fixture status: ready
-Items reviewed: 42
-External requests: 0
+A language is named deliberately. A plain fence produces no coloured tokens, so the baseline
+could not tell a working highlighter from a missing one.
+
+\`\`\`ts
+// Fixtures never touch the network.
+const status = { reviewed: 42, external: 0 }
+export const summary = 'Reviewed ' + status.reviewed + ' items'
 \`\`\`
 
 Continue reviewing the remaining rows before accepting any intentional baseline update. This paragraph is deliberately long enough to exercise scrolling, wrapping, code presentation, and the lower action dock without including private or live information.
