@@ -279,7 +279,7 @@ function Overlay(): React.JSX.Element {
   return <div
     ref={root}
     tabIndex={-1}
-    className={`overlay ${context?.surface ?? 'loading'} ${phase} ${analysis ? 'analyze-active' : ''}`}
+    className={`overlay ${overlaySurfaceClass(context, captureError)} ${phase} ${analysis ? 'analyze-active' : ''}`}
     onPointerDown={(event) => {
       if (!context || event.button !== 0 || phase === 'editing' || phase === 'analyzing' || phase === 'submitting') return
       if (analysis) {
@@ -882,6 +882,17 @@ export async function holdLiveSurfaceForAnalyze(
   if (!isCurrent()) return null
   return capture.freeze('analyze')
 }
+/**
+ * `loading` keeps the controls hidden and the overlay inert until a surface is ready. A context
+ * that failed never gets a surface, so it must not reuse that class: the capture bar is the only
+ * thing that renders the error, its title, and Retry, and an inert overlay also swallows the
+ * right-click cancel.
+ */
+export function overlaySurfaceClass(context: CaptureContext | null, captureError: AppError | null): string {
+  if (context) return context.surface
+  return captureError ? 'failed' : 'loading'
+}
+
 function surfaceFeedback(context: CaptureContext): string {
   return context.surface === 'live'
     ? 'Screen stays live until you release'

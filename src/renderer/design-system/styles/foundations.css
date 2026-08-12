@@ -135,7 +135,14 @@ a:hover {
 }
 
 @media (prefers-contrast: more) {
-  :root {
+  /*
+   * The theme tiers set these tokens through `:root[data-theme='…']`, and a media query adds no
+   * specificity of its own, so a bare `:root` here loses to both themes and increased contrast
+   * silently keeps the blur and glow. These selectors have to stay as specific as the themes.
+   */
+  :root,
+  :root[data-theme='light'],
+  :root[data-theme='dark'] {
     --fovea-glass-fill-subtle: var(--fovea-glass-fill-solid-fallback);
     --fovea-glass-fill-default: var(--fovea-glass-fill-solid-fallback);
     --fovea-glass-fill-strong: var(--fovea-surface-overlay);

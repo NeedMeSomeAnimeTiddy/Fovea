@@ -13,6 +13,7 @@ import {
   displayFeatureLabel,
   featuresAtPoint,
   holdLiveSurfaceForAnalyze,
+  overlaySurfaceClass,
   questionsForFeature,
   webQuestionForFeature
 } from '../src/renderer/capture-overlay/main'
@@ -264,5 +265,24 @@ describe('capture Analyze mode', () => {
     ]
 
     expect(featuresAtPoint(features, { x: 0.25, y: 0.24 }).map(({ id }) => id)).toEqual(['button', 'container'])
+  })
+})
+
+describe('capture overlay surface class', () => {
+  const error = { code: 'capture-failed', title: 'Screen image unavailable', message: 'No screen image.', recovery: 'retry' } as const
+
+  it('keeps the controls inert only while a surface is still being prepared', () => {
+    expect(overlaySurfaceClass(null, null)).toBe('loading')
+  })
+
+  it('does not reuse the inert loading class for a context that failed', () => {
+    // `.overlay.loading` hides the capture bar and disables pointer events, which would leave a
+    // failed capture with no visible error, no Retry, and no right-click cancel.
+    expect(overlaySurfaceClass(null, error)).toBe('failed')
+  })
+
+  it('follows the surface once one exists, whatever happened earlier', () => {
+    expect(overlaySurfaceClass(context, null)).toBe('frozen')
+    expect(overlaySurfaceClass({ ...context, surface: 'live', imageDataUrl: null }, error)).toBe('live')
   })
 })
