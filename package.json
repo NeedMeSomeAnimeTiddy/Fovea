@@ -78,6 +78,10 @@
     "appId": "com.fovea.desktop",
     "productName": "Fovea",
     "asar": true,
+    "electronLanguages": [
+      "en-US",
+      "en-GB"
+    ],
     "asarUnpack": [
       "node_modules/tesseract.js/**/*",
       "node_modules/tesseract.js-core/tesseract-core*-lstm.js",

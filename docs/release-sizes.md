@@ -27,6 +27,34 @@ The previous x64 package bundled Codex: its installer was 192.1 MiB and its unpa
 directory was 774.8 MiB. The minimal x64 build therefore removes about 80.5 MiB from
 the installer and 360.0 MiB from the installed core for users of API-key providers.
 
+## 0.1.0 with English-only Electron locales — 2026-08-12
+
+| Architecture | Minimal installer | Minimal unpacked | Change vs 2026-08-06 | Status |
+| --- | ---: | ---: | ---: | --- |
+| x64 | 104.3 MiB (109,373,023 B) | 374.4 MiB (392,557,643 B) | −8.0 MiB installer, −45.5 MiB unpacked | Measured |
+
+Electron ships 55 Chromium locale `.pak` files totalling about 47 MiB. Fovea's interface is
+English only, and these files carry Chromium's own strings — context menus on text fields,
+the internal PDF viewer, permission prompts — not Fovea's. `electronLanguages` keeps `en-US`
+and `en-GB`, which are 1.1 MiB together.
+
+Chromium falls back to its default strings when a user's system locale has no `.pak`, so this
+does not affect whether Fovea starts or which OCR languages are available; local OCR reads its
+languages from Windows, not from Electron. Verified by launching the packaged build with
+`--lang=de-DE`, whose locale is no longer present.
+
+Before this change the unpacked package sat at 90.3% of its ceiling and had begun warning.
+
+The three `tesseract.js-core` LSTM builds — plain, SIMD, and relaxed SIMD, 2.7 MiB each — are
+deliberately all retained. `tesseract.js` selects one at runtime through `wasm-feature-detect`
+and `require`s it by name, so a build that is detected but not shipped throws instead of
+falling back. Electron 43.2.0 (Chromium 150, V8 15.0) reports both `simd` and `relaxedSimd` as
+available in the main process and in a worker thread, meaning only the relaxed SIMD build
+loads on such a machine, but that has been observed on one machine rather than established as
+a floor. Removing about 5.4 MiB unpacked is not worth risking local OCR on hardware or an
+Electron build that reports otherwise, especially now that the locale change has restored
+headroom.
+
 ## Release procedure
 
 1. Run `npm run package:win` on each release architecture.
