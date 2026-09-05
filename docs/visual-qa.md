@@ -84,7 +84,7 @@ question--streaming--dark--transparent--504x504--dsf1.png
 
 Rules:
 
-1. Generate and compare baselines on the pinned `windows-2022` CI image with the Chromium version from the lockfile. Browser rendering varies by OS, fonts, browser, headless mode, and hardware, so baselines from another environment are review aids, not replacements.
+1. Generate and compare baselines on the self-hosted Windows CI runner with the Chromium version from the lockfile. Browser rendering varies by OS, fonts, browser, headless mode, and hardware, so baselines from another environment are review aids, not replacements.
 2. Pull-request CI compares only. It never runs `--update-snapshots`.
 3. To request fresh images, manually dispatch the visual workflow with **Produce baseline candidate artifact** enabled. Download the artifact, inspect every candidate, and commit only intentional files.
 4. Never accept a broad replacement because a run is red. Review expected, actual, and diff images and explain the intended UI change in the pull request.

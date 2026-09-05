@@ -220,15 +220,19 @@ Renderer stylesheets (`settings.css`, `overlay.css`, `question.css`,
 
 ## Release pipeline
 
-- `.github/workflows/desktop.yml` runs on every pull request and push to `main`
-  on `windows-2022`: `npm ci`, restore the cached Codex sidecar, `sidecar:fetch`
+- `.github/workflows/desktop.yml` runs on every push to `main` and every
+  same-repository pull request on the self-hosted Windows runner (fork pull
+  requests are skipped, since the runner is a personal machine): `npm ci`,
+  restore the cached Codex sidecar, `sidecar:fetch`
   (generates `resources/codex-schema` needed by typecheck), then `typecheck`,
   `lint`, `test`, `assets:validate`, and `build`.
 - `.github/workflows/visual.yml` runs the Playwright harness when renderer,
   shared, or visual files change and can produce baseline candidates via
   `workflow_dispatch`.
-- `.github/workflows/website.yml` installs, lints, and builds the nested
-  `website/` project when it changes.
+- `.github/workflows/website.yml` installs, lints, builds, and tests the nested
+  `website/` project when it changes, on the same self-hosted runner.
+- Every validation workflow uses `runs-on: [self-hosted, windows]`; only the
+  signed release workflow still uses GitHub-hosted `windows-latest`.
 - `.github/workflows/release.yml` fires on `v*.*.*` tags: it validates the tag
   (`build/validate-release-tag.cjs`), runs `release:check`, builds with
   `build/electron-builder.release.cjs` (`forceCodeSigning: true`, GitHub publish

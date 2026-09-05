@@ -40,7 +40,10 @@ concurrency:
 jobs:
   compare:
     name: Chromium renderer baselines
-    runs-on: windows-2022
+    runs-on: [self-hosted, windows]
+    # A self-hosted runner executes workflow code on a personal machine, so pull requests from
+    # forks of this public repository are not run here; same-repository branches and pushes are.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     timeout-minutes: 25
 
     steps:
