@@ -96,17 +96,25 @@ jobs:
       - name: Push baseline candidates to a review branch
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.update_baselines }}
         run: |
+          $ErrorActionPreference = 'Stop'
+          # The runner service (NETWORK SERVICE) is not the owner of the checkout, which git
+          # otherwise refuses to touch; without this every git call below fails silently.
+          git config --global --add safe.directory (Get-Location).Path
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           $branch = "visual-baselines/run-${{ github.run_id }}"
           git add tests/visual/__snapshots__
-          if (-not (git status --porcelain -- tests/visual/__snapshots__)) {
+          if ($LASTEXITCODE -ne 0) { throw 'git add failed.' }
+          $changes = git status --porcelain -- tests/visual/__snapshots__
+          if ($LASTEXITCODE -ne 0) { throw 'git status failed.' }
+          if (-not $changes) {
             Write-Host 'Every regenerated baseline matched the committed one; nothing to push.'
             exit 0
           }
           git checkout -b $branch
           git commit -m "Regenerate visual baselines on the CI runner (run ${{ github.run_id }})"
           git push origin $branch
+          if ($LASTEXITCODE -ne 0) { throw 'git push failed.' }
           Write-Host "Pushed $branch for review."
 
       - name: Upload visual failure evidence
