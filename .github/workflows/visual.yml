@@ -45,6 +45,9 @@ jobs:
     # forks of this public repository are not run here; same-repository branches and pushes are.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     timeout-minutes: 25
+    defaults:
+      run:
+        shell: pwsh
 
     steps:
       - name: Check out repository

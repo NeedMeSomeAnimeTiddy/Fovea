@@ -21,6 +21,11 @@ jobs:
     # forks of this public repository are not run here; same-repository branches and pushes are.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     timeout-minutes: 30
+    # PowerShell 7 ships with a RemoteSigned policy; Windows PowerShell 5.1 blocks step scripts
+    # on a fresh self-hosted machine until an execution policy is set.
+    defaults:
+      run:
+        shell: pwsh
 
     steps:
       - name: Check out repository
