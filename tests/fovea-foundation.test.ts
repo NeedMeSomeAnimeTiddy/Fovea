@@ -44,8 +44,8 @@ describe('Fovea secure profile foundation', () => {
     await manager.delete(second.id); expect(manager.list().some((item) => item.id === second.id)).toBe(false)
   })
 
-  it('defaults fresh settings to light appearance and the documented region shortcut', async () => {
-    const { settings } = await stores(); expect(settings.get().appearance).toBe('light'); expect(settings.get().shortcuts.region).toBe('CommandOrControl+Alt+Shift+Space')
+  it('defaults fresh settings to the system appearance and the documented region shortcut', async () => {
+    const { settings } = await stores(); expect(settings.get().appearance).toBe('system'); expect(settings.get().shortcuts.region).toBe('CommandOrControl+Alt+Shift+Space')
   })
 })
 

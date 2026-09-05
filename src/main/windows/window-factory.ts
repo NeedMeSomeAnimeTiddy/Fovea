@@ -1,4 +1,4 @@
-import { BrowserWindow, type BrowserWindowConstructorOptions } from 'electron'
+import { app, BrowserWindow, type BrowserWindowConstructorOptions } from 'electron'
 import { join } from 'node:path'
 import type { WindowMaterial } from '@shared/contracts/ipc'
 
@@ -12,15 +12,26 @@ const rendererDirectory = {
 } as const
 const windowMaterials = new WeakMap<BrowserWindow, WindowMaterial>()
 
-export function secureWindow(options: BrowserWindowConstructorOptions): BrowserWindow {
+export interface SecureWindowOptions {
+  /**
+   * Whether the `window.fovea` preload bridge is attached. A page that is driven purely from the
+   * main process (the hidden PDF renderer) has no use for it, and omitting it keeps the whole IPC
+   * surface out of reach should that page ever be compromised. Defaults to true.
+   */
+  preload?: boolean
+}
+
+export function secureWindow(options: BrowserWindowConstructorOptions, { preload: withPreload = true }: SecureWindowOptions = {}): BrowserWindow {
   const window = new BrowserWindow({
     ...options,
     webPreferences: {
-      preload,
+      ...(withPreload ? { preload } : {}),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      devTools: !process.env.NODE_ENV || process.env.NODE_ENV === 'development',
+      // `process.env.NODE_ENV` is not substituted in the main bundle, so it cannot tell a packaged
+      // build apart from a development run; `app.isPackaged` can.
+      devTools: !app.isPackaged,
       ...options.webPreferences
     }
   })

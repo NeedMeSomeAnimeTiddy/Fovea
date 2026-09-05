@@ -3,10 +3,105 @@
 import { useRef, useState } from 'react'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { ConfirmDialog } from '../src/renderer/design-system'
 import { ConversationExportDialog } from '../src/renderer/export/ConversationExportDialog'
 import { ScreenshotEditor } from '../src/renderer/question-window/ScreenshotEditor'
 
 afterEach(cleanup)
+
+describe('ConfirmDialog', () => {
+  it('names the dialog by its title, focuses cancel first, traps Tab, and restores the trigger', async () => {
+    const onConfirm = vi.fn()
+    render(<ConfirmHarness onConfirm={onConfirm} />)
+    const trigger = screen.getByRole('button', { name: 'Clear history' })
+
+    fireEvent.click(trigger)
+    const dialog = screen.getByRole('dialog', { name: 'Delete everything?' })
+    const cancel = screen.getByRole('button', { name: 'Keep history' })
+    const confirm = screen.getByRole('button', { name: 'Delete' })
+    await waitFor(() => expect(document.activeElement).toBe(cancel))
+    expect(dialog.getAttribute('aria-modal')).toBe('true')
+    expect(dialog.getAttribute('aria-describedby')).toBeTruthy()
+    expect(document.getElementById(dialog.getAttribute('aria-describedby')!)?.textContent).toContain('cannot be undone')
+    expect(dialog.getAttribute('data-tone')).toBe('danger')
+    expect(confirm.getAttribute('data-variant')).toBe('danger')
+    expect(trigger.hasAttribute('inert')).toBe(true)
+
+    fireEvent.keyDown(confirm, { key: 'Tab' })
+    expect(document.activeElement).toBe(cancel)
+    fireEvent.keyDown(cancel, { key: 'Tab', shiftKey: true })
+    expect(document.activeElement).toBe(confirm)
+
+    fireEvent.click(cancel)
+    expect(onConfirm).not.toHaveBeenCalled()
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(trigger.hasAttribute('inert')).toBe(false)
+    expect(document.activeElement).toBe(trigger)
+  })
+
+  it('cancels with Escape and confirms through the confirming action', async () => {
+    const onConfirm = vi.fn()
+    render(<ConfirmHarness onConfirm={onConfirm} />)
+    const trigger = screen.getByRole('button', { name: 'Clear history' })
+
+    fireEvent.click(trigger)
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Keep history' })))
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(document.activeElement).toBe(trigger)
+
+    fireEvent.click(trigger)
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete' }))
+    expect(onConfirm).toHaveBeenCalledOnce()
+  })
+
+  it('shows the destination, blocks dismissal while busy, and announces an error', () => {
+    const onCancel = vi.fn()
+    const { rerender } = render(
+      <ConfirmDialog busy busyLabel="Opening link" confirmLabel="Open link" destination="https://example.com/path" destinationLabel="example.com" title="Open this link?" onCancel={onCancel} onConfirm={vi.fn()}>
+        This will leave Fovea.
+      </ConfirmDialog>
+    )
+
+    expect(screen.getByText('https://example.com/path').tagName).toBe('CODE')
+    expect(screen.getByText('example.com').tagName).toBe('STRONG')
+    expect(screen.getByRole('button', { name: 'Cancel' }).hasAttribute('disabled')).toBe(true)
+    expect(screen.getByRole('status').textContent).toBe('Opening link')
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(onCancel).not.toHaveBeenCalled()
+
+    rerender(
+      <ConfirmDialog busy={false} confirmLabel="Open link" destination="https://example.com/path" error="Fovea could not open this link." title="Open this link?" onCancel={onCancel} onConfirm={vi.fn()}>
+        This will leave Fovea.
+      </ConfirmDialog>
+    )
+    expect(screen.getByRole('alert').textContent).toBe('Fovea could not open this link.')
+    expect(screen.getByRole('button', { name: 'Cancel' }).hasAttribute('disabled')).toBe(false)
+  })
+})
+
+function ConfirmHarness({ onConfirm }: { onConfirm(): void }): React.JSX.Element {
+  const [open, setOpen] = useState(false)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  return (
+    <div>
+      <button ref={triggerRef} type="button" onClick={() => setOpen(true)}>Clear history</button>
+      {open && (
+        <ConfirmDialog
+          cancelLabel="Keep history"
+          confirmLabel="Delete"
+          returnFocus={triggerRef.current}
+          title="Delete everything?"
+          tone="danger"
+          onCancel={() => setOpen(false)}
+          onConfirm={() => { onConfirm(); setOpen(false) }}
+        >
+          Every saved conversation will be deleted. This cannot be undone.
+        </ConfirmDialog>
+      )}
+    </div>
+  )
+}
 
 describe('renderer modal focus management', () => {
   it('traps export-dialog focus, closes with Escape, and restores the trigger', async () => {

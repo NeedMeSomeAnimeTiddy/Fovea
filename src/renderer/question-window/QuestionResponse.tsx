@@ -6,8 +6,7 @@ import type {
   OcrExternalActionKind,
   ResponsePhase
 } from '@shared/types/app'
-import { Button, Card, Spinner } from '../design-system'
-import { useModalDialog } from '../design-system/internal/useModalDialog'
+import { Button, ConfirmDialog, Spinner } from '../design-system'
 import { useSyntaxHighlighting } from './useSyntaxHighlighting'
 
 export interface ConversationTimelineProps {
@@ -274,7 +273,6 @@ function ExternalLinkConfirmationDialog({
 }): React.JSX.Element {
   const [error, setError] = useState('')
   const [opening, setOpening] = useState(false)
-  const dialogRef = useModalDialog<HTMLElement>({ canCancel: !opening, onCancel: onClose, returnFocus: details.returnFocus })
   const open = async (): Promise<void> => {
     if (details.kind !== 'confirm') return
     setOpening(true)
@@ -287,24 +285,36 @@ function ExternalLinkConfirmationDialog({
       setError('Fovea could not open this link. Check the destination and try again.')
     }
   }
+  if (details.kind === 'blocked') {
+    return (
+      <ConfirmDialog
+        cancelLabel="Close"
+        destination={details.destination}
+        label="Blocked external link"
+        returnFocus={details.returnFocus}
+        title="Link blocked"
+        onCancel={onClose}
+      >
+        This AI response does not contain a valid HTTP or HTTPS destination, so Fovea will not open it.
+      </ConfirmDialog>
+    )
+  }
   return (
-    <div className="external-link-dialog__backdrop" role="presentation">
-      <Card ref={dialogRef} as="section" aria-label={details.kind === 'confirm' ? 'Open external link' : 'Blocked external link'} aria-modal="true" className="external-link-dialog" role="dialog" tabIndex={-1}>
-        <h2>{details.kind === 'confirm' ? 'Open external link?' : 'Link blocked'}</h2>
-        <p>{details.kind === 'confirm'
-          ? 'This destination came from an AI response. Check it before leaving Fovea.'
-          : 'This AI response does not contain a valid HTTP or HTTPS destination, so Fovea will not open it.'}</p>
-        <div className="external-link-dialog__destination">
-          {details.kind === 'confirm' && <strong>{details.host}</strong>}
-          <code>{details.kind === 'confirm' ? details.url : details.destination}</code>
-        </div>
-        {error && <p className="external-link-dialog__error" role="alert">{error}</p>}
-        <div className="external-link-dialog__actions">
-          <Button data-modal-initial-focus disabled={opening} variant="secondary" onClick={onClose}>{details.kind === 'confirm' ? 'Cancel' : 'Close'}</Button>
-          {details.kind === 'confirm' && <Button loading={opening} loadingLabel="Opening external link" onClick={() => void open()}>Open link</Button>}
-        </div>
-      </Card>
-    </div>
+    <ConfirmDialog
+      busy={opening}
+      busyLabel="Opening external link"
+      confirmLabel="Open link"
+      destination={details.url}
+      destinationLabel={details.host}
+      error={error || undefined}
+      label="Open external link"
+      returnFocus={details.returnFocus}
+      title="Open external link?"
+      onCancel={onClose}
+      onConfirm={() => void open()}
+    >
+      This destination came from an AI response. Check it before leaving Fovea.
+    </ConfirmDialog>
   )
 }
 

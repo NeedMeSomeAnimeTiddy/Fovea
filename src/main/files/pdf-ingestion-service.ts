@@ -37,8 +37,12 @@ export class PdfIngestionService implements PdfIngestion {
     let window: BrowserWindow | null = null
     try {
       // A never-shown window still runs canvas work; throttling is disabled so a background
-      // render is not stalled while the user is looking at something else.
-      window = secureWindow({ show: false, width: 1, height: 1, frame: false, skipTaskbar: true, webPreferences: { backgroundThrottling: false } })
+      // render is not stalled while the user is looking at something else. The page is driven
+      // entirely by executeJavaScript below and never touches window.fovea, so it gets no preload.
+      window = secureWindow(
+        { show: false, width: 1, height: 1, frame: false, skipTaskbar: true, webPreferences: { backgroundThrottling: false } },
+        { preload: false }
+      )
       window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
       await loadRenderer(window, 'document-render')
       const options: DocumentRenderOptions = {

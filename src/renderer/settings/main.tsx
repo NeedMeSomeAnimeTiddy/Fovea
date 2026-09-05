@@ -1,6 +1,13 @@
 import { StrictMode, useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { SETTINGS_CATEGORIES, isSettingsCategory, type LiveCaptureState, type SettingsCategory, type SettingsViewState, type ShellIntegrationState } from '@shared/contracts/ipc'
+import {
+  SETTINGS_CATEGORIES,
+  isSettingsCategory,
+  type LiveCaptureState,
+  type SettingsCategory,
+  type SettingsViewState,
+  type ShellIntegrationState
+} from '@shared/contracts/ipc'
 import { acceleratorFromKeyInput } from '../../shared/shortcut-accelerator'
 import {
   PROVIDER_CHOICES,
@@ -9,13 +16,24 @@ import {
   parseModelIds,
   providerChoice
 } from '../../shared/provider-endpoint'
-import type { CaptureRecipe, ConversationExportOptions, ConversationExportPreview, ConversationHistorySummary, CustomPrompt, ProviderKind, ProviderModelCapability, ShortcutAction, SpectralEdgeState } from '@shared/types/app'
+import type {
+  CaptureRecipe,
+  ConversationExportOptions,
+  ConversationExportPreview,
+  ConversationHistorySummary,
+  CustomPrompt,
+  ProviderKind,
+  ProviderModelCapability,
+  ShortcutAction,
+  SpectralEdgeState
+} from '@shared/types/app'
 import type { AppError, AppRecoveryKind } from '@shared/types/app-error'
 import {
   Badge,
   BrandMark,
   Button,
   Card,
+  ConfirmDialog,
   IconButton,
   Select,
   Spinner,
@@ -75,7 +93,11 @@ function SettingsApp(): React.JSX.Element {
   const [historyExport, setHistoryExport] = useState<{ id: string; preview: ConversationExportPreview } | null>(null)
   const historyExportReturnFocusRef = useRef<HTMLElement | null>(null)
 
-  useEffect(() => { void initialiseAppearance(); void window.fovea.settings.get().then(setState).catch((reason) => setError(appErrorFromUnknown(reason))); return window.fovea.settings.onChanged(setState) }, [])
+  useEffect(() => {
+    void initialiseAppearance()
+    void window.fovea.settings.get().then(setState).catch((reason) => setError(appErrorFromUnknown(reason)))
+    return window.fovea.settings.onChanged(setState)
+  }, [])
   useEffect(() => window.fovea.settings.onNavigate(setCategory), [])
   useEffect(() => {
     if (category !== 'History') return
@@ -85,16 +107,49 @@ function SettingsApp(): React.JSX.Element {
         .then((items) => { if (active) setHistoryItems(items) })
         .catch((reason) => { if (active) setError(appErrorFromUnknown(reason)) })
     }, 120)
-    return () => { active = false; clearTimeout(timer) }
+    return () => {
+      active = false
+      clearTimeout(timer)
+    }
   }, [category, historyQuery, historyRefresh])
-  const run = async (operation: () => Promise<unknown>, success = '', label = 'Saving changes…', edgeState: SpectralEdgeState = 'thinking'): Promise<boolean> => { setWorking(true); setActivity({ label, edgeState }); setError(null); setNotice(''); try { const result = await operation(); setState(await window.fovea.settings.get()); if (success && result !== false && result !== 0) setNotice(success); return true } catch (reason) { setError(appErrorFromUnknown(reason)); return false } finally { setWorking(false); setActivity(null) } }
+  const run = async (
+    operation: () => Promise<unknown>,
+    success = '',
+    label = 'Saving changes…',
+    edgeState: SpectralEdgeState = 'thinking'
+  ): Promise<boolean> => {
+    setWorking(true)
+    setActivity({ label, edgeState })
+    setError(null)
+    setNotice('')
+    try {
+      const result = await operation()
+      setState(await window.fovea.settings.get())
+      if (success && result !== false && result !== 0) setNotice(success)
+      return true
+    } catch (reason) {
+      setError(appErrorFromUnknown(reason))
+      return false
+    } finally {
+      setWorking(false)
+      setActivity(null)
+    }
+  }
   const recover = (recovery: AppRecoveryKind): void => {
     if (recovery === 'authenticate' || recovery === 'choose-provider' || recovery === 'open-settings') setCategory('Account')
-    if (recovery === 'retry') { setError(null); void window.fovea.settings.get().then(setState).catch((reason) => setError(appErrorFromUnknown(reason))) }
+    if (recovery === 'retry') {
+      setError(null)
+      void window.fovea.settings.get().then(setState).catch((reason) => setError(appErrorFromUnknown(reason)))
+    }
   }
   if (!state) {
     return (
-      <WindowFrame title="Settings" edgeState={error ? 'error' : 'connecting'} showTitlebar={false} showResizeRegions={false}>
+      <WindowFrame
+        title="Settings"
+        edgeState={error ? 'error' : 'connecting'}
+        showTitlebar={false}
+        showResizeRegions={false}
+      >
         <ToastViewport className="settings-toasts">
           {error && <AppStatusNotice error={error} onDismiss={() => setError(null)} onRecovery={recover} />}
         </ToastViewport>
@@ -122,7 +177,11 @@ function SettingsApp(): React.JSX.Element {
     await window.fovea.profiles.authenticate(profile.id)
     setState(await window.fovea.settings.get())
   }
-  const createApiProfileForOnboarding = async (providerKind: Exclude<ProviderKind, 'chatgpt'>, name: string, key: string): Promise<void> => {
+  const createApiProfileForOnboarding = async (
+    providerKind: Exclude<ProviderKind, 'chatgpt'>,
+    name: string,
+    key: string
+  ): Promise<void> => {
     await window.fovea.profiles.createApiKey(providerKind, name, key)
     setState(await window.fovea.settings.get())
   }
@@ -161,7 +220,12 @@ function SettingsApp(): React.JSX.Element {
     }
   }
 
-  return <WindowFrame title={onboardingOpen ? 'Welcome to Fovea' : 'Settings'} edgeState={edgeState} showTitlebar={false} showResizeRegions={false}>
+  return <WindowFrame
+    title={onboardingOpen ? 'Welcome to Fovea' : 'Settings'}
+    edgeState={edgeState}
+    showTitlebar={false}
+    showResizeRegions={false}
+  >
     {!onboardingOpen && (
       <ToastViewport className="settings-toasts">
         {chatGptStatus?.state === 'starting' && (
@@ -196,10 +260,33 @@ function SettingsApp(): React.JSX.Element {
           onTestCapture={() => window.fovea.settings.testOnboardingCapture()}
         />
       : <main className="settings-shell">
-    <aside className="settings-nav" aria-label="Settings categories"><div className="brand"><BrandMark className="brand-mark" /><div><strong>Fovea</strong><small>Settings</small></div></div><div className="settings-nav__items">{CATEGORIES.map((item) => <button aria-current={category === item ? 'page' : undefined} key={item} className={category === item ? 'active' : ''} onClick={() => setCategory(item)}><SettingsIcon category={item} /><span>{item}</span></button>)}</div><div className="settings-nav__footer"><span>Local-first</span><small>v{state.appVersion}</small></div></aside>
-    <section className="settings-content"><header className="settings-header"><div><h1>{category}</h1><p>{CATEGORY_DETAILS[category]}</p></div>{working && <Badge icon={<Spinner size="small" />} role="status" tone="info">{activity?.label ?? 'Working…'}</Badge>}</header>
+    <aside className="settings-nav" aria-label="Settings categories">
+      <div className="brand">
+        <BrandMark className="brand-mark" />
+        <div><strong>Fovea</strong><small>Settings</small></div>
+      </div>
+      <div className="settings-nav__items">
+        {CATEGORIES.map((item) => <button
+          aria-current={category === item ? 'page' : undefined}
+          key={item}
+          className={category === item ? 'active' : ''}
+          onClick={() => setCategory(item)}
+        >
+          <SettingsIcon category={item} />
+          <span>{item}</span>
+        </button>)}
+      </div>
+      <div className="settings-nav__footer"><span>Local-first</span><small>v{state.appVersion}</small></div>
+    </aside>
+    <section className="settings-content">
+      <header className="settings-header">
+        <div><h1>{category}</h1><p>{CATEGORY_DETAILS[category]}</p></div>
+        {working && <Badge icon={<Spinner size="small" />} role="status" tone="info">{activity?.label ?? 'Working…'}</Badge>}
+      </header>
       {category === 'Account' && <>
-        {state.profiles.length === 0 && <StatusBanner title="Connect a provider" tone="warning">Add a ChatGPT subscription or API-key profile before asking questions.</StatusBanner>}
+        {state.profiles.length === 0 && <StatusBanner title="Connect a provider" tone="warning">
+          Add a ChatGPT subscription or API-key profile before asking questions.
+        </StatusBanner>}
         <Card as="section" className="settings-section runtime-card">
           <div>
             <h2>Optional ChatGPT runtime</h2>
@@ -288,7 +375,11 @@ function SettingsApp(): React.JSX.Element {
                 </optgroup>
               ))}
             </Select>
-            <TextInput label="Profile name" value={profileName} onChange={(event) => setProfileName(event.target.value)} />
+            <TextInput
+              label="Profile name"
+              value={profileName}
+              onChange={(event) => setProfileName(event.target.value)}
+            />
             <div className="key-field">
               <TextInput
                 autoComplete="off"
@@ -358,37 +449,181 @@ function SettingsApp(): React.JSX.Element {
           </Button>
         </Card>
       </>}
-      {category === 'Models' && <Card as="section" className="settings-section"><h2>Profile defaults</h2>{state.profiles.length === 0 && <StatusBanner title="No provider profiles" tone="warning">Add a provider from the Account page before choosing a model.</StatusBanner>}{state.profiles.map((profile) => { const available = models[profile.id] ?? []; return <div className="model-row" key={profile.id}><div><strong>{profile.name}</strong><small>Only confirmed image-capable models are offered.</small></div><Select label="Default model" value={profile.defaultModelId ?? ''} onFocus={() => { if (!models[profile.id]) void window.fovea.profiles.models(profile.id).then((items) => setModels((current) => ({ ...current, [profile.id]: items }))).catch((reason) => setError(appErrorFromUnknown(reason))) }} onChange={(event) => void run(() => window.fovea.profiles.setDefaults(profile.id, event.target.value || null, null), '', 'Saving model…')}><option value="">Choose automatically</option>{available.map((model) => <option key={model.id} value={model.id}>{model.displayName}</option>)}</Select></div> })}</Card>}
-      {category === 'Prompts' && <CustomPromptsSettings prompts={state.customPrompts} working={working} onSave={(id, label, prompt) => run(() => window.fovea.settings.saveCustomPrompt(id, label, prompt), id ? 'Prompt updated.' : 'Prompt added.')} onDelete={(id) => run(() => window.fovea.settings.deleteCustomPrompt(id), 'Prompt deleted.')} />}
+      {category === 'Models' && <Card as="section" className="settings-section">
+        <h2>Profile defaults</h2>
+        {state.profiles.length === 0 && <StatusBanner title="No provider profiles" tone="warning">
+          Add a provider from the Account page before choosing a model.
+        </StatusBanner>}
+        {state.profiles.map((profile) => {
+          const available = models[profile.id] ?? []
+          return <div className="model-row" key={profile.id}>
+            <div><strong>{profile.name}</strong><small>Only confirmed image-capable models are offered.</small></div>
+            <Select
+              label="Default model"
+              value={profile.defaultModelId ?? ''}
+              onFocus={() => {
+                if (!models[profile.id]) void window.fovea.profiles.models(profile.id).then((items) => setModels((current) => ({ ...current, [profile.id]: items }))).catch((reason) => setError(appErrorFromUnknown(reason)))
+              }}
+              onChange={(event) => void run(
+                () => window.fovea.profiles.setDefaults(profile.id, event.target.value || null, null),
+                '',
+                'Saving model…'
+              )}
+            >
+              <option value="">Choose automatically</option>
+              {available.map((model) => <option key={model.id} value={model.id}>{model.displayName}</option>)}
+            </Select>
+          </div>
+        })}
+      </Card>}
+      {category === 'Prompts' && <CustomPromptsSettings
+        prompts={state.customPrompts}
+        working={working}
+        onSave={(id, label, prompt) => run(
+          () => window.fovea.settings.saveCustomPrompt(id, label, prompt),
+          id ? 'Prompt updated.' : 'Prompt added.'
+        )}
+        onDelete={(id) => run(() => window.fovea.settings.deleteCustomPrompt(id), 'Prompt deleted.')}
+      />}
       {category === 'Recipes' && <RecipeSettings state={state} working={working} onRun={run} />}
-      {category === 'Capture' && <><Card as="section" className="settings-section"><h2>Global shortcuts</h2><p className="muted">Click a shortcut then press a key combination. Suggested: Display +D, Window +W, Settings +S, Repeat +R.</p>{state.shortcuts.map((shortcut) => <ShortcutRecorder key={shortcut.action} action={shortcut.action} value={shortcut.accelerator} error={shortcut.error} onSave={(value) => run(() => window.fovea.settings.setShortcut(shortcut.action, value))} />)}<Button variant="secondary" onClick={() => void run(() => window.fovea.settings.resetShortcuts())}>Reset shortcuts</Button></Card><LiveCaptureSettings state={state.liveCapture} onChange={(enabled) => void run(() => window.fovea.settings.setLiveCapture(enabled))} /><OcrLanguageSettings working={working} onOpen={() => void run(() => window.fovea.settings.openOcrLanguages(), 'Windows language settings opened.')} /><Card as="section" className="settings-section"><Switch label="Launch Fovea when Windows starts" checked={state.launchAtLogin} onChange={(event) => void run(() => window.fovea.settings.setLaunchAtLogin(event.target.checked))} /></Card><ShellIntegrationSettings state={state.shellIntegration} onChange={(enabled) => void run(() => window.fovea.settings.setShellIntegration(enabled))} /></>}
-      {category === 'Appearance' && <Card as="section" className="settings-section"><h2>Colour mode</h2><div className="appearance-options">{(['light','dark','system'] as const).map((item) => <button className={state.appearance.preference === item ? 'selected' : ''} key={item} onClick={() => void run(() => window.fovea.settings.setAppearance(item))}><span className={`theme-preview ${item}`} />{item[0]!.toUpperCase()+item.slice(1)}</button>)}</div><p className="muted">System follows the Windows app theme. Reduced-motion preferences are respected automatically.</p></Card>}
-      {category === 'History' && <HistorySettings items={historyItems} query={historyQuery} working={working} onQuery={setHistoryQuery} onRefresh={() => setHistoryRefresh((value) => value + 1)} onRun={run} onExport={(id) => void openHistoryExport(id)} />}
+      {category === 'Capture' && <>
+        <Card as="section" className="settings-section">
+          <h2>Global shortcuts</h2>
+          <p className="muted">
+            Click a shortcut then press a key combination. Suggested: Display +D, Window +W, Settings +S, Repeat +R.
+          </p>
+          {state.shortcuts.map((shortcut) => <ShortcutRecorder
+            key={shortcut.action}
+            action={shortcut.action}
+            value={shortcut.accelerator}
+            error={shortcut.error}
+            onSave={(value) => run(() => window.fovea.settings.setShortcut(shortcut.action, value))}
+          />)}
+          <Button
+            variant="secondary"
+            onClick={() => void run(() => window.fovea.settings.resetShortcuts())}
+          >
+            Reset shortcuts
+          </Button>
+        </Card>
+        <LiveCaptureSettings
+          state={state.liveCapture}
+          onChange={(enabled) => void run(() => window.fovea.settings.setLiveCapture(enabled))}
+        />
+        <OcrLanguageSettings
+          working={working}
+          onOpen={() => void run(() => window.fovea.settings.openOcrLanguages(), 'Windows language settings opened.')}
+        />
+        <Card as="section" className="settings-section">
+          <Switch
+            label="Launch Fovea when Windows starts"
+            checked={state.launchAtLogin}
+            onChange={(event) => void run(() => window.fovea.settings.setLaunchAtLogin(event.target.checked))}
+          />
+        </Card>
+        <ShellIntegrationSettings
+          state={state.shellIntegration}
+          onChange={(enabled) => void run(() => window.fovea.settings.setShellIntegration(enabled))}
+        />
+      </>}
+      {category === 'Appearance' && <Card as="section" className="settings-section">
+        <h2>Colour mode</h2>
+        <div className="appearance-options">
+          {(['light','dark','system'] as const).map((item) => <button
+            className={state.appearance.preference === item ? 'selected' : ''}
+            key={item}
+            onClick={() => void run(() => window.fovea.settings.setAppearance(item))}
+          >
+            <span className={`theme-preview ${item}`} />
+            {item[0]!.toUpperCase()+item.slice(1)}
+          </button>)}
+        </div>
+        <p className="muted">
+          System follows the Windows app theme. Reduced-motion preferences are respected automatically.
+        </p>
+      </Card>}
+      {category === 'History' && <HistorySettings
+        items={historyItems}
+        query={historyQuery}
+        working={working}
+        onQuery={setHistoryQuery}
+        onRefresh={() => setHistoryRefresh((value) => value + 1)}
+        onRun={run}
+        onExport={(id) => void openHistoryExport(id)}
+      />}
       {category === 'Privacy' && <>
         <Card as="section" className="settings-section">
           <h2>How Fovea handles data</h2>
-          <p className="muted">Settings, temporary captures, and optional conversation history are stored on this PC. When you send a request, the selected provider receives your prompt, the images shown in the request preview, and any OCR text you chose to include. Fovea has no app account and does not collect analytics or telemetry.</p>
+          <p className="muted">
+            Settings, temporary captures, and optional conversation history are stored on this PC. When you send a request, the selected provider receives your prompt, the images shown in the request preview, and any OCR text you chose to include. Fovea has no app account and does not collect analytics or telemetry.
+          </p>
         </Card>
         <Card as="section" className="settings-section">
           <h2>Conversation history</h2>
-          <Switch label="Private mode — do not save conversations or screenshots" checked={state.history.privateMode} onChange={(event) => void run(() => window.fovea.settings.setPrivateMode(event.target.checked), event.target.checked ? 'Private mode enabled.' : 'Conversation history enabled.')} />
-          <Select label="Keep conversation history" value={String(state.history.retentionDays)} disabled={state.history.privateMode} onChange={(event) => void run(() => window.fovea.settings.setHistoryRetention(Number(event.target.value)), 'History retention updated.')}>
+          <Switch
+            label="Private mode — do not save conversations or screenshots"
+            checked={state.history.privateMode}
+            onChange={(event) => void run(
+              () => window.fovea.settings.setPrivateMode(event.target.checked),
+              event.target.checked ? 'Private mode enabled.' : 'Conversation history enabled.'
+            )}
+          />
+          <Select
+            label="Keep conversation history"
+            value={String(state.history.retentionDays)}
+            disabled={state.history.privateMode}
+            onChange={(event) => void run(
+              () => window.fovea.settings.setHistoryRetention(Number(event.target.value)),
+              'History retention updated.'
+            )}
+          >
             <option value="7">7 days</option>
             <option value="30">30 days</option>
             <option value="90">90 days</option>
             <option value="365">1 year</option>
             <option value="3650">10 years</option>
           </Select>
-          <Switch label="Keep screenshot copies with history" checked={state.history.retainScreenshots} disabled={state.history.privateMode} onChange={(event) => void run(() => window.fovea.settings.setScreenshotRetention(event.target.checked), event.target.checked ? 'Screenshot history enabled.' : 'Stored screenshot copies removed.')} />
-          <p className="muted">Screenshot copies are off by default. Turning this off removes existing history copies; temporary captures still disappear when their panel closes.</p>
+          <Switch
+            label="Keep screenshot copies with history"
+            checked={state.history.retainScreenshots}
+            disabled={state.history.privateMode}
+            onChange={(event) => void run(
+              () => window.fovea.settings.setScreenshotRetention(event.target.checked),
+              event.target.checked ? 'Screenshot history enabled.' : 'Stored screenshot copies removed.'
+            )}
+          />
+          <p className="muted">
+            Screenshot copies are off by default. Turning this off removes existing history copies; temporary captures still disappear when their panel closes.
+          </p>
         </Card>
-        <Card as="section" className="settings-section"><h2>Temporary data</h2><p className="muted">Secrets are encrypted by Windows and never enter renderer state, settings, or diagnostics.</p><code className="path">{state.tempLocation}</code><Button variant="secondary" onClick={() => void run(async () => { const count = await window.fovea.settings.deleteTemporaryFiles(); setNotice(`Deleted ${count} temporary screenshot${count === 1 ? '' : 's'}.`) }, '', 'Cleaning temporary files…')}>Clean temporary files</Button></Card>
+        <Card as="section" className="settings-section">
+          <h2>Temporary data</h2>
+          <p className="muted">
+            Secrets are encrypted by Windows and never enter renderer state, settings, or diagnostics.
+          </p>
+          <code className="path">{state.tempLocation}</code>
+          <Button
+            variant="secondary"
+            onClick={() => void run(async () => {
+              const count = await window.fovea.settings.deleteTemporaryFiles()
+              setNotice(`Deleted ${count} temporary screenshot${count === 1 ? '' : 's'}.`)
+            }, '', 'Cleaning temporary files…')}
+          >
+            Clean temporary files
+          </Button>
+        </Card>
       </>}
       {category === 'Updates' && <UpdateSettings state={state.updates} working={working} onRun={run} />}
       {category === 'About' && <AboutSettings appVersion={state.appVersion} onOpenTour={() => setTourOpen(true)} />}
     </section>
   </main>}
-    {historyExport && <ConversationExportDialog preview={historyExport.preview} busy={working} returnFocus={historyExportReturnFocusRef.current} onCancel={() => setHistoryExport(null)} onExport={exportHistory} />}
+    {historyExport && <ConversationExportDialog
+      preview={historyExport.preview}
+      busy={working}
+      returnFocus={historyExportReturnFocusRef.current}
+      onCancel={() => setHistoryExport(null)}
+      onExport={exportHistory}
+    />}
   </WindowFrame>
 }
 
@@ -579,7 +814,15 @@ function formatBytes(bytes: number): string {
 }
 
 export function AboutSettings({ appVersion, onOpenTour }: { appVersion: string; onOpenTour(): void }): React.JSX.Element {
-  return <Card as="section" className="settings-section about-card"><div className="about-hero"><BrandMark className="about-hero__mark" /><div><h2>Fovea</h2><span>Version {appVersion}</span></div></div><p>Ask questions about any part of your screen with the provider profile you choose.</p><p className="muted">MIT licensed · No analytics · Official provider APIs only</p><Button variant="secondary" onClick={onOpenTour}>Run welcome tour again</Button></Card>
+  return <Card as="section" className="settings-section about-card">
+    <div className="about-hero">
+      <BrandMark className="about-hero__mark" />
+      <div><h2>Fovea</h2><span>Version {appVersion}</span></div>
+    </div>
+    <p>Ask questions about any part of your screen with the provider profile you choose.</p>
+    <p className="muted">MIT licensed · No analytics · Official provider APIs only</p>
+    <Button variant="secondary" onClick={onOpenTour}>Run welcome tour again</Button>
+  </Card>
 }
 
 export function UpdateSettings({
@@ -610,25 +853,55 @@ export function UpdateSettings({
   const downloaded = state.phase === 'downloaded'
   const canRetryDownload = state.phase === 'error' && update !== null && state.failure?.retryable !== false
   const action = downloaded
-    ? { label: 'Install and restart', activity: 'Starting signed installer…', run: () => window.fovea.updates.install() }
+    ? {
+      label: 'Install and restart',
+      activity: 'Starting signed installer…',
+      run: () => window.fovea.updates.install()
+    }
     : state.phase === 'available' || canRetryDownload
-      ? { label: canRetryDownload ? 'Retry download' : 'Download update', activity: 'Downloading signed update…', run: () => window.fovea.updates.download() }
-      : { label: state.phase === 'up-to-date' ? 'Check again' : 'Check for updates', activity: 'Checking signed releases…', run: () => window.fovea.updates.check() }
+      ? {
+        label: canRetryDownload ? 'Retry download' : 'Download update',
+        activity: 'Downloading signed update…',
+        run: () => window.fovea.updates.download()
+      }
+      : {
+        label: state.phase === 'up-to-date' ? 'Check again' : 'Check for updates',
+        activity: 'Checking signed releases…',
+        run: () => window.fovea.updates.check()
+      }
 
   return <>
     <Card as="section" className="settings-section update-card">
       <div className="update-card__heading">
-        <div><h2>Application updates</h2><p className="muted">Installed version {state.currentVersion}{state.lastCheckedAt ? ` · last checked ${formatUpdateDate(state.lastCheckedAt)}` : ''}</p></div>
-        <Badge tone={downloaded ? 'success' : update ? 'info' : 'neutral'}>{update ? `Version ${update.version}` : updatePhaseLabel(state.phase)}</Badge>
+        <div>
+          <h2>Application updates</h2>
+          <p className="muted">Installed version {state.currentVersion}{state.lastCheckedAt ? ` · last checked ${formatUpdateDate(state.lastCheckedAt)}` : ''}</p>
+        </div>
+        <Badge tone={downloaded ? 'success' : update ? 'info' : 'neutral'}>
+          {update ? `Version ${update.version}` : updatePhaseLabel(state.phase)}
+        </Badge>
       </div>
       <Switch
         label="Check automatically for stable updates"
         checked={state.automaticChecks}
         disabled={working}
-        onChange={(event) => void onRun(() => window.fovea.updates.setAutomaticChecks(event.target.checked), '', 'Saving update preference…')}
+        onChange={(event) => void onRun(
+          () => window.fovea.updates.setAutomaticChecks(event.target.checked),
+          '',
+          'Saving update preference…'
+        )}
       />
-      <p className="muted">Automatic checks are opt-in and only retrieve release metadata. Fovea never downloads or installs an update without your explicit choice.</p>
-      {downloading && <div className="update-progress" role="status" aria-label={`Downloaded ${Math.round(state.downloadProgress?.percent ?? 0)} percent`}><progress max={100} value={state.downloadProgress?.percent ?? 0} /><small>{Math.round(state.downloadProgress?.percent ?? 0)}% downloaded</small></div>}
+      <p className="muted">
+        Automatic checks are opt-in and only retrieve release metadata. Fovea never downloads or installs an update without your explicit choice.
+      </p>
+      {downloading && <div
+        className="update-progress"
+        role="status"
+        aria-label={`Downloaded ${Math.round(state.downloadProgress?.percent ?? 0)} percent`}
+      >
+        <progress max={100} value={state.downloadProgress?.percent ?? 0} />
+        <small>{Math.round(state.downloadProgress?.percent ?? 0)}% downloaded</small>
+      </div>}
       <div className="update-card__actions">
         <Button
           disabled={working || checking || downloading || installing || (state.phase === 'error' && state.failure?.retryable === false)}
@@ -640,20 +913,35 @@ export function UpdateSettings({
         </Button>
       </div>
     </Card>
-    {state.failure && <StatusBanner title={state.failure.title} tone="error">{state.failure.message}{state.failure.technicalDetails ? ` ${state.failure.technicalDetails}` : ''}</StatusBanner>}
+    {state.failure && <StatusBanner title={state.failure.title} tone="error">
+      {state.failure.message}
+      {state.failure.technicalDetails ? ` ${state.failure.technicalDetails}` : ''}
+    </StatusBanner>}
     {update && <Card as="section" className="settings-section update-notes">
       <h2>{update.releaseName ?? `Fovea ${update.version}`}</h2>
       {update.releaseDate && <small>Released {formatUpdateDate(update.releaseDate)}</small>}
       {update.releaseNotes.length > 0
         ? <ul>{update.releaseNotes.map((note, index) => <li key={`${update.version}-${index}`}>{note}</li>)}</ul>
         : <p className="muted">No release notes were provided.</p>}
-      <p className="muted">The installer must match the release SHA-512 metadata and the publisher trusted by this installed build.</p>
+      <p className="muted">
+        The installer must match the release SHA-512 metadata and the publisher trusted by this installed build.
+      </p>
     </Card>}
   </>
 }
 
 function updatePhaseLabel(phase: SettingsViewState['updates']['phase']): string {
-  return ({ unavailable: 'Unavailable', idle: 'Not checked', checking: 'Checking', 'up-to-date': 'Up to date', available: 'Available', downloading: 'Downloading', downloaded: 'Ready', installing: 'Installing', error: 'Action needed' })[phase]
+  return ({
+    unavailable: 'Unavailable',
+    idle: 'Not checked',
+    checking: 'Checking',
+    'up-to-date': 'Up to date',
+    available: 'Available',
+    downloading: 'Downloading',
+    downloaded: 'Ready',
+    installing: 'Installing',
+    error: 'Action needed'
+  })[phase]
 }
 
 function formatUpdateDate(value: string): string {
@@ -787,11 +1075,30 @@ export function CustomPromptsSettings({
       <h2>{editingId ? 'Edit prompt' : 'Add custom prompt'}</h2>
       <p className="muted">Saved prompts appear in the Ask dropdown and are sent as normal follow-up questions.</p>
       <div className="prompt-form">
-        <TextInput label="Name" maxLength={80} placeholder="For example: Summarise for Slack" value={label} onChange={(event) => setLabel(event.target.value)} />
-        <TextArea label="Prompt" maxLength={2_000} placeholder="Write the question or instruction to send…" resize="vertical" rows={4} value={prompt} onChange={(event) => setPrompt(event.target.value)} />
+        <TextInput
+          label="Name"
+          maxLength={80}
+          placeholder="For example: Summarise for Slack"
+          value={label}
+          onChange={(event) => setLabel(event.target.value)}
+        />
+        <TextArea
+          label="Prompt"
+          maxLength={2_000}
+          placeholder="Write the question or instruction to send…"
+          resize="vertical"
+          rows={4}
+          value={prompt}
+          onChange={(event) => setPrompt(event.target.value)}
+        />
         <div className="prompt-form__actions">
           {editingId && <Button variant="secondary" disabled={working} onClick={reset}>Cancel</Button>}
-          <Button disabled={working || !label.trim() || !prompt.trim() || (!editingId && prompts.length >= 20)} onClick={() => void save()}>{editingId ? 'Save changes' : 'Add prompt'}</Button>
+          <Button
+            disabled={working || !label.trim() || !prompt.trim() || (!editingId && prompts.length >= 20)}
+            onClick={() => void save()}
+          >
+            {editingId ? 'Save changes' : 'Add prompt'}
+          </Button>
         </div>
       </div>
       {!editingId && prompts.length >= 20 && <small className="error-text">You can save up to 20 custom prompts.</small>}
@@ -800,19 +1107,40 @@ export function CustomPromptsSettings({
       <h2>Saved prompts</h2>
       {prompts.length === 0
         ? <p className="muted">No custom prompts yet.</p>
-        : <div className="prompt-list">{prompts.map((item) => <div className="prompt-row" key={item.id}><div><strong>{item.label}</strong><small>{item.prompt}</small></div><div className="prompt-row__actions"><Button size="compact" variant="secondary" disabled={working} onClick={() => edit(item)}>Edit</Button><Button size="compact" variant="danger" disabled={working} onClick={() => void onDelete(item.id)}>Delete</Button></div></div>)}</div>}
+        : <div className="prompt-list">
+          {prompts.map((item) => <div className="prompt-row" key={item.id}>
+            <div><strong>{item.label}</strong><small>{item.prompt}</small></div>
+            <div className="prompt-row__actions">
+              <Button size="compact" variant="secondary" disabled={working} onClick={() => edit(item)}>Edit</Button>
+              <Button
+                size="compact"
+                variant="danger"
+                disabled={working}
+                onClick={() => void onDelete(item.id)}
+              >
+                Delete
+              </Button>
+            </div>
+          </div>)}
+        </div>}
     </Card>
   </>
 }
 
 const RECIPE_PROMPT_STARTERS = [
   { label: 'Analyse this capture', prompt: 'Analyse this capture' },
-  { label: 'Troubleshoot an error', prompt: 'Explain the visible error, identify the most likely cause, and give me the safest next steps.' },
+  {
+    label: 'Troubleshoot an error',
+    prompt: 'Explain the visible error, identify the most likely cause, and give me the safest next steps.'
+  },
   { label: 'Summarise', prompt: 'Summarise the important information in this capture.' },
-  { label: 'Review the interface', prompt: 'Review this interface and point out anything confusing, incorrect, or worth improving.' }
+  {
+    label: 'Review the interface',
+    prompt: 'Review this interface and point out anything confusing, incorrect, or worth improving.'
+  }
 ]
 
-function RecipeSettings({
+export function RecipeSettings({
   state,
   working,
   onRun
@@ -823,6 +1151,7 @@ function RecipeSettings({
 }): React.JSX.Element {
   const [draft, setDraft] = useState<CaptureRecipe | null>(null)
   const [availableModels, setAvailableModels] = useState<ProviderModelCapability[]>([])
+  const [autoSendConsent, setAutoSendConsent] = useState<{ returnFocus: HTMLElement | null } | null>(null)
   const fixedSelection = draft?.provider.mode === 'fixed' ? draft.provider.selection : null
   const fixedModel = fixedSelection ? availableModels.find((model) => model.id === fixedSelection.modelId) : undefined
   const shortcutState = (id: string) => state.recipeShortcuts.find((item) => item.recipeId === id)
@@ -856,12 +1185,22 @@ function RecipeSettings({
   const save = async (): Promise<void> => {
     if (!draft?.name.trim() || !draft.prompt.trim()) return
     if (draft.provider.mode === 'fixed' && !draft.provider.selection.modelId) return
-    if (await onRun(() => window.fovea.settings.saveRecipe(draft), draft.autoSend ? 'Recipe saved with auto-send consent.' : 'Recipe saved.')) setDraft(null)
+    if (await onRun(
+      () => window.fovea.settings.saveRecipe(draft),
+      draft.autoSend ? 'Recipe saved with auto-send consent.' : 'Recipe saved.'
+    )) setDraft(null)
   }
   const setAutoSend = (enabled: boolean): void => {
     if (!draft) return
-    if (enabled && !window.confirm('Auto-send uploads the captured image, selected OCR text, and prompt to this recipe’s chosen provider immediately after capture. Enable it for this recipe?')) return
-    setDraft({ ...draft, autoSend: enabled, autoSendConsentVersion: enabled ? 1 : 0 })
+    if (enabled) {
+      setAutoSendConsent({ returnFocus: document.activeElement instanceof HTMLElement ? document.activeElement : null })
+      return
+    }
+    setDraft({ ...draft, autoSend: false, autoSendConsentVersion: 0 })
+  }
+  const grantAutoSendConsent = (): void => {
+    setAutoSendConsent(null)
+    setDraft((current) => current && { ...current, autoSend: true, autoSendConsentVersion: 1 })
   }
   const move = (index: number, offset: number): void => {
     const target = index + offset
@@ -874,106 +1213,486 @@ function RecipeSettings({
 
   return <>
     <Card as="section" className="settings-section">
-      <div className="history-section__heading"><h2>Capture recipes</h2><Button disabled={working || state.recipes.length >= 50} size="compact" onClick={() => begin()}>New recipe</Button></div>
-      <p className="muted">Recipes open a fully reviewable draft. Auto-send is optional, recipe-specific, and revoked after material changes.</p>
+      <div className="history-section__heading">
+        <h2>Capture recipes</h2>
+        <Button
+          disabled={working || state.recipes.length >= 50}
+          size="compact"
+          onClick={() => begin()}
+        >
+          New recipe
+        </Button>
+      </div>
+      <p className="muted">
+        Recipes open a fully reviewable draft. Auto-send is optional, recipe-specific, and revoked after material changes.
+      </p>
       {state.recipes.length === 0
         ? <p className="muted">No capture recipes yet.</p>
         : <div className="prompt-list">{state.recipes.map((recipe, index) => {
             const binding = shortcutState(recipe.id)
             return <div className="prompt-row" key={recipe.id}>
-              <div><strong>{recipe.name}</strong><small>{captureModeLabel(recipe.captureMode)} · {recipe.shortcut ?? 'No shortcut'} · {recipe.enabled ? binding?.registered ? 'active' : binding?.error ?? 'enabled' : 'disabled'}{recipe.autoSend ? ' · auto-send' : ''}</small></div>
+              <div>
+                <strong>{recipe.name}</strong>
+                <small>{captureModeLabel(recipe.captureMode)} · {recipe.shortcut ?? 'No shortcut'} · {recipe.enabled ? binding?.registered ? 'active' : binding?.error ?? 'enabled' : 'disabled'}{recipe.autoSend ? ' · auto-send' : ''}</small>
+              </div>
               <div className="prompt-row__actions">
-                <Button disabled={working || index === 0} size="compact" variant="ghost" onClick={() => move(index, -1)}>Up</Button>
-                <Button disabled={working || index === state.recipes.length - 1} size="compact" variant="ghost" onClick={() => move(index, 1)}>Down</Button>
-                <Button disabled={working} size="compact" variant="secondary" onClick={() => begin(recipe)}>Edit</Button>
-                <Button disabled={working} size="compact" variant="secondary" onClick={() => void onRun(() => window.fovea.settings.duplicateRecipe(recipe.id), 'Recipe duplicated.')}>Duplicate</Button>
-                <Button disabled={working} size="compact" variant={recipe.enabled ? 'ghost' : 'secondary'} onClick={() => void onRun(() => window.fovea.settings.saveRecipe({ ...recipe, enabled: !recipe.enabled }), recipe.enabled ? 'Recipe disabled.' : 'Recipe enabled.')}>{recipe.enabled ? 'Disable' : 'Enable'}</Button>
-                <Button disabled={working} size="compact" variant="danger" onClick={() => void onRun(() => window.fovea.settings.deleteRecipe(recipe.id), 'Recipe deleted.')}>Delete</Button>
+                <Button
+                  disabled={working || index === 0}
+                  size="compact"
+                  variant="ghost"
+                  onClick={() => move(index, -1)}
+                >
+                  Up
+                </Button>
+                <Button
+                  disabled={working || index === state.recipes.length - 1}
+                  size="compact"
+                  variant="ghost"
+                  onClick={() => move(index, 1)}
+                >
+                  Down
+                </Button>
+                <Button
+                  disabled={working}
+                  size="compact"
+                  variant="secondary"
+                  onClick={() => begin(recipe)}
+                >
+                  Edit
+                </Button>
+                <Button
+                  disabled={working}
+                  size="compact"
+                  variant="secondary"
+                  onClick={() => void onRun(
+                    () => window.fovea.settings.duplicateRecipe(recipe.id),
+                    'Recipe duplicated.'
+                  )}
+                >
+                  Duplicate
+                </Button>
+                <Button
+                  disabled={working}
+                  size="compact"
+                  variant={recipe.enabled ? 'ghost' : 'secondary'}
+                  onClick={() => void onRun(
+                    () => window.fovea.settings.saveRecipe({ ...recipe, enabled: !recipe.enabled }),
+                    recipe.enabled ? 'Recipe disabled.' : 'Recipe enabled.'
+                  )}
+                >
+                  {recipe.enabled ? 'Disable' : 'Enable'}
+                </Button>
+                <Button
+                  disabled={working}
+                  size="compact"
+                  variant="danger"
+                  onClick={() => void onRun(() => window.fovea.settings.deleteRecipe(recipe.id), 'Recipe deleted.')}
+                >
+                  Delete
+                </Button>
               </div>
             </div>
           })}</div>}
       <div className="prompt-form__actions">
-        <Button disabled={working || state.recipes.length === 0} variant="secondary" onClick={() => void onRun(() => window.fovea.settings.exportRecipes(), 'Recipes exported.')}>Export</Button>
-        <Button disabled={working || state.recipes.length >= 50} variant="secondary" onClick={() => void onRun(() => window.fovea.settings.importRecipes(), 'Recipes imported disabled for review.')}>Import</Button>
+        <Button
+          disabled={working || state.recipes.length === 0}
+          variant="secondary"
+          onClick={() => void onRun(() => window.fovea.settings.exportRecipes(), 'Recipes exported.')}
+        >
+          Export
+        </Button>
+        <Button
+          disabled={working || state.recipes.length >= 50}
+          variant="secondary"
+          onClick={() => void onRun(
+            () => window.fovea.settings.importRecipes(),
+            'Recipes imported disabled for review.'
+          )}
+        >
+          Import
+        </Button>
       </div>
     </Card>
     {draft && <Card as="section" className="settings-section">
       <h2>{state.recipes.some((item) => item.id === draft.id) ? 'Edit recipe' : 'New recipe'}</h2>
       <div className="prompt-form">
-        <TextInput label="Name" maxLength={80} value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
-        <Select label="Capture mode" value={draft.captureMode} onChange={(event) => setDraft({ ...draft, captureMode: event.target.value as CaptureRecipe['captureMode'] })}>
-          <option value="region">Region</option><option value="display">Current display</option><option value="window">Focused window</option><option value="repeat-last">Repeat last capture</option>
+        <TextInput
+          label="Name"
+          maxLength={80}
+          value={draft.name}
+          onChange={(event) => setDraft({ ...draft, name: event.target.value })}
+        />
+        <Select
+          label="Capture mode"
+          value={draft.captureMode}
+          onChange={(event) => setDraft({ ...draft, captureMode: event.target.value as CaptureRecipe['captureMode'] })}
+        >
+          <option value="region">Region</option>
+          <option value="display">Current display</option>
+          <option value="window">Focused window</option>
+          <option value="repeat-last">Repeat last capture</option>
         </Select>
-        <Select label="Prompt starter" value="" onChange={(event) => { const prompt = [...RECIPE_PROMPT_STARTERS, ...state.customPrompts].find((item) => item.label === event.target.value)?.prompt; if (prompt) setDraft({ ...draft, prompt }) }}>
+        <Select
+          label="Prompt starter"
+          value=""
+          onChange={(event) => {
+            const prompt = [...RECIPE_PROMPT_STARTERS, ...state.customPrompts].find((item) => item.label === event.target.value)?.prompt
+            if (prompt) setDraft({ ...draft, prompt })
+          }}
+        >
           <option value="">Choose a built-in or saved prompt…</option>
           {RECIPE_PROMPT_STARTERS.map((item) => <option key={`built-in:${item.label}`} value={item.label}>{item.label}</option>)}
           {state.customPrompts.map((item) => <option key={item.id} value={item.label}>{item.label}</option>)}
         </Select>
-        <TextArea label="Prompt" maxLength={10_000} rows={4} value={draft.prompt} onChange={(event) => setDraft({ ...draft, prompt: event.target.value })} />
-        <Select label="Provider and model" value={draft.provider.mode === 'current-default' ? '' : draft.provider.selection.profileId} onChange={(event) => event.target.value ? chooseFixedProfile(event.target.value) : setDraft({ ...draft, provider: { mode: 'current-default' } })}>
-          <option value="">Use current default when run</option>{state.profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}
+        <TextArea
+          label="Prompt"
+          maxLength={10_000}
+          rows={4}
+          value={draft.prompt}
+          onChange={(event) => setDraft({ ...draft, prompt: event.target.value })}
+        />
+        <Select
+          label="Provider and model"
+          value={draft.provider.mode === 'current-default' ? '' : draft.provider.selection.profileId}
+          onChange={(event) => event.target.value ? chooseFixedProfile(event.target.value) : setDraft({ ...draft, provider: { mode: 'current-default' } })}
+        >
+          <option value="">Use current default when run</option>
+          {state.profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}
         </Select>
-        {draft.provider.mode === 'fixed' && <Select label="Model" value={draft.provider.selection.modelId} onChange={(event) => setDraft({ ...draft, provider: { mode: 'fixed', selection: { ...(draft.provider as Extract<CaptureRecipe['provider'], { mode: 'fixed' }>).selection, modelId: event.target.value, reasoningEffort: availableModels.find((item) => item.id === event.target.value)?.defaultReasoningEffort ?? null } } })}>
-          <option value="">Choose model…</option>{availableModels.map((model) => <option key={model.id} value={model.id}>{model.displayName}</option>)}
+        {draft.provider.mode === 'fixed' && <Select
+          label="Model"
+          value={draft.provider.selection.modelId}
+          onChange={(event) => setDraft({
+            ...draft,
+            provider: {
+              mode: 'fixed',
+              selection: {
+                ...(draft.provider as Extract<CaptureRecipe['provider'], { mode: 'fixed' }>).selection,
+                modelId: event.target.value,
+                reasoningEffort: availableModels.find((item) => item.id === event.target.value)?.defaultReasoningEffort ?? null
+              }
+            }
+          })}
+        >
+          <option value="">Choose model…</option>
+          {availableModels.map((model) => <option key={model.id} value={model.id}>{model.displayName}</option>)}
         </Select>}
-        {draft.provider.mode === 'fixed' && fixedSelection && fixedModel && fixedModel.supportedReasoningEfforts.length > 0 && <Select label="Thinking effort" value={fixedSelection.reasoningEffort ?? ''} onChange={(event) => setDraft({ ...draft, provider: { mode: 'fixed', selection: { ...fixedSelection, reasoningEffort: event.target.value || null } } })}>
-          <option value="">Default</option>{fixedModel.supportedReasoningEfforts.map((effort) => <option key={effort} value={effort}>{effort}</option>)}
+        {draft.provider.mode === 'fixed' && fixedSelection && fixedModel && fixedModel.supportedReasoningEfforts.length > 0 && <Select
+          label="Thinking effort"
+          value={fixedSelection.reasoningEffort ?? ''}
+          onChange={(event) => setDraft({
+            ...draft,
+            provider: { mode: 'fixed', selection: { ...fixedSelection, reasoningEffort: event.target.value || null } }
+          })}
+        >
+          <option value="">Default</option>
+          {fixedModel.supportedReasoningEfforts.map((effort) => <option key={effort} value={effort}>{effort}</option>)}
         </Select>}
         <RecipeShortcutRecorder value={draft.shortcut} onChange={(shortcut) => setDraft({ ...draft, shortcut })} />
-        <Switch label="Run local OCR and include selected text with the request" checked={draft.extractText} onChange={(event) => setDraft({ ...draft, extractText: event.target.checked, ...(event.target.checked ? {} : { ocrLanguageCode: undefined }) })} />
-        {draft.extractText && <TextInput label="OCR language code (optional)" maxLength={35} placeholder="Automatic" value={draft.ocrLanguageCode ?? ''} onChange={(event) => setDraft({ ...draft, ocrLanguageCode: event.target.value || undefined })} />}
-        <Switch label="Prefer web search for this request" checked={draft.preferWebSearch} onChange={(event) => setDraft({ ...draft, preferWebSearch: event.target.checked })} />
-        <Switch label="Auto-send after capture" checked={draft.autoSend} onChange={(event) => setAutoSend(event.target.checked)} />
-        <Switch label="Recipe enabled" checked={draft.enabled} onChange={(event) => setDraft({ ...draft, enabled: event.target.checked })} />
-        <div className="prompt-form__actions"><Button variant="secondary" onClick={() => setDraft(null)}>Cancel</Button><Button disabled={working || !draft.name.trim() || !draft.prompt.trim() || (draft.provider.mode === 'fixed' && !draft.provider.selection.modelId)} onClick={() => void save()}>Save recipe</Button></div>
+        <Switch
+          label="Run local OCR and include selected text with the request"
+          checked={draft.extractText}
+          onChange={(event) => setDraft({
+            ...draft,
+            extractText: event.target.checked,
+            ...(event.target.checked ? {} : { ocrLanguageCode: undefined })
+          })}
+        />
+        {draft.extractText && <TextInput
+          label="OCR language code (optional)"
+          maxLength={35}
+          placeholder="Automatic"
+          value={draft.ocrLanguageCode ?? ''}
+          onChange={(event) => setDraft({ ...draft, ocrLanguageCode: event.target.value || undefined })}
+        />}
+        <Switch
+          label="Prefer web search for this request"
+          checked={draft.preferWebSearch}
+          onChange={(event) => setDraft({ ...draft, preferWebSearch: event.target.checked })}
+        />
+        <Switch
+          label="Auto-send after capture"
+          checked={draft.autoSend}
+          onChange={(event) => setAutoSend(event.target.checked)}
+        />
+        <Switch
+          label="Recipe enabled"
+          checked={draft.enabled}
+          onChange={(event) => setDraft({ ...draft, enabled: event.target.checked })}
+        />
+        <div className="prompt-form__actions">
+          <Button variant="secondary" onClick={() => setDraft(null)}>Cancel</Button>
+          <Button
+            disabled={working || !draft.name.trim() || !draft.prompt.trim() || (draft.provider.mode === 'fixed' && !draft.provider.selection.modelId)}
+            onClick={() => void save()}
+          >
+            Save recipe
+          </Button>
+        </div>
       </div>
     </Card>}
+    {draft && autoSendConsent && (
+      <ConfirmDialog
+        confirmLabel="Enable auto-send"
+        returnFocus={autoSendConsent.returnFocus}
+        title="Enable auto-send for this recipe?"
+        onCancel={() => setAutoSendConsent(null)}
+        onConfirm={grantAutoSendConsent}
+      >
+        Auto-send uploads the captured image, selected OCR text, and prompt to this recipe’s chosen provider immediately after capture, without a chance to review them first.
+      </ConfirmDialog>
+    )}
   </>
 }
 
-function RecipeShortcutRecorder({ value, onChange }: { value: string | null; onChange(value: string | null): void }): React.JSX.Element {
+function RecipeShortcutRecorder({ value, onChange }: {
+  value: string | null
+  onChange(value: string | null): void
+}): React.JSX.Element {
   const [recording, setRecording] = useState(false)
-  return <div className="shortcut-row"><div><strong>Global shortcut</strong><small>Optional; built-in shortcuts keep priority.</small></div><button className={recording ? 'shortcut-input recording' : 'shortcut-input'} onClick={() => setRecording(true)} onBlur={() => setRecording(false)} onKeyDown={(event) => { if (!recording) return; event.preventDefault(); if (event.key === 'Escape') { setRecording(false); return } if (event.key === 'Backspace' || event.key === 'Delete') { onChange(null); setRecording(false); return } const accelerator = acceleratorFromKeyInput(event); if (!accelerator) return; onChange(accelerator); setRecording(false) }}>{recording ? 'Press shortcut…' : value ?? 'Unassigned'}</button></div>
+  return <div className="shortcut-row">
+    <div><strong>Global shortcut</strong><small>Optional; built-in shortcuts keep priority.</small></div>
+    <button
+      className={recording ? 'shortcut-input recording' : 'shortcut-input'}
+      onClick={() => setRecording(true)}
+      onBlur={() => setRecording(false)}
+      onKeyDown={(event) => {
+        if (!recording) return
+        event.preventDefault()
+        if (event.key === 'Escape') {
+          setRecording(false)
+          return
+        }
+        if (event.key === 'Backspace' || event.key === 'Delete') {
+          onChange(null)
+          setRecording(false)
+          return
+        }
+        const accelerator = acceleratorFromKeyInput(event)
+        if (!accelerator) return
+        onChange(accelerator)
+        setRecording(false)
+      }}
+    >
+      {recording ? 'Press shortcut…' : value ?? 'Unassigned'}
+    </button>
+  </div>
 }
 
 function newRecipe(): CaptureRecipe {
-  return { id: crypto.randomUUID(), name: '', enabled: true, captureMode: 'region', prompt: 'Analyse this capture', preferWebSearch: false, extractText: false, provider: { mode: 'current-default' }, shortcut: null, autoSend: false, autoSendConsentVersion: 0 }
+  return {
+    id: crypto.randomUUID(),
+    name: '',
+    enabled: true,
+    captureMode: 'region',
+    prompt: 'Analyse this capture',
+    preferWebSearch: false,
+    extractText: false,
+    provider: { mode: 'current-default' },
+    shortcut: null,
+    autoSend: false,
+    autoSendConsentVersion: 0
+  }
 }
 
 function captureModeLabel(mode: CaptureRecipe['captureMode']): string {
-  return ({ region: 'Region', display: 'Current display', window: 'Focused window', 'repeat-last': 'Repeat last' })[mode]
+  return ({
+    region: 'Region',
+    display: 'Current display',
+    window: 'Focused window',
+    'repeat-last': 'Repeat last'
+  })[mode]
 }
 
-function ShortcutRecorder({ action, value, error, onSave }: { action: ShortcutAction; value: string | null; error?: string; onSave(value: string | null): Promise<unknown> }): React.JSX.Element {
+function ShortcutRecorder({ action, value, error, onSave }: {
+  action: ShortcutAction
+  value: string | null
+  error?: string
+  onSave(value: string | null): Promise<unknown>
+}): React.JSX.Element {
   const [recording, setRecording] = useState(false)
-  return <div className="shortcut-row"><div><strong>{actionLabel(action)}</strong>{error && <small className="error-text">{error}</small>}</div><button className={recording ? 'shortcut-input recording' : 'shortcut-input'} onClick={() => setRecording(true)} onBlur={() => setRecording(false)} onKeyDown={(event) => { if (!recording) return; event.preventDefault(); if (event.key === 'Escape') { setRecording(false); return } if (event.key === 'Backspace' || event.key === 'Delete') { void onSave(null); setRecording(false); return } const accelerator = acceleratorFromKeyInput(event); if (!accelerator) return; void onSave(accelerator); setRecording(false) }}>{recording ? 'Press shortcut…' : value ?? 'Unassigned'}</button></div>
+  return <div className="shortcut-row">
+    <div><strong>{actionLabel(action)}</strong>{error && <small className="error-text">{error}</small>}</div>
+    <button
+      className={recording ? 'shortcut-input recording' : 'shortcut-input'}
+      onClick={() => setRecording(true)}
+      onBlur={() => setRecording(false)}
+      onKeyDown={(event) => {
+        if (!recording) return
+        event.preventDefault()
+        if (event.key === 'Escape') {
+          setRecording(false)
+          return
+        }
+        if (event.key === 'Backspace' || event.key === 'Delete') {
+          void onSave(null)
+          setRecording(false)
+          return
+        }
+        const accelerator = acceleratorFromKeyInput(event)
+        if (!accelerator) return
+        void onSave(accelerator)
+        setRecording(false)
+      }}
+    >
+      {recording ? 'Press shortcut…' : value ?? 'Unassigned'}
+    </button>
+  </div>
 }
-function actionLabel(action: ShortcutAction): string { return ({ region: 'Region capture', display: 'Current display', window: 'Focused window', 'repeat-last': 'Repeat last', settings: 'Open Settings' })[action] }
-function HistorySettings({ items, query, working, onQuery, onRefresh, onRun, onExport }: { items: ConversationHistorySummary[]; query: string; working: boolean; onQuery(value: string): void; onRefresh(): void; onRun(operation: () => Promise<unknown>, success?: string, label?: string, edgeState?: SpectralEdgeState): Promise<boolean>; onExport(id: string): void }): React.JSX.Element {
+function actionLabel(action: ShortcutAction): string {
+  return ({
+    region: 'Region capture',
+    display: 'Current display',
+    window: 'Focused window',
+    'repeat-last': 'Repeat last',
+    settings: 'Open Settings'
+  })[action]
+}
+export function HistorySettings({
+  items,
+  query,
+  working,
+  onQuery,
+  onRefresh,
+  onRun,
+  onExport
+}: {
+  items: ConversationHistorySummary[]
+  query: string
+  working: boolean
+  onQuery(value: string): void
+  onRefresh(): void
+  onRun(operation: () => Promise<unknown>, success?: string, label?: string, edgeState?: SpectralEdgeState): Promise<boolean>
+  onExport(id: string): void
+}): React.JSX.Element {
+  const [clearConfirmation, setClearConfirmation] = useState<{ returnFocus: HTMLElement | null } | null>(null)
+  const clearHistory = (): void => {
+    void onRun(async () => {
+      const count = await window.fovea.history.clear()
+      onRefresh()
+      return count
+    }, 'All conversation history deleted.', 'Clearing history…')
+      .finally(() => setClearConfirmation(null))
+  }
   return <Card as="section" className="settings-section history-section">
-    <div className="history-section__heading"><h2>Saved conversations</h2><Button size="compact" variant="ghost" onClick={onRefresh}>Refresh</Button></div>
-    <TextInput label="Search history" placeholder="Search questions and answers" value={query} onChange={(event) => onQuery(event.target.value)} />
+    <div className="history-section__heading">
+      <h2>Saved conversations</h2>
+      <Button size="compact" variant="ghost" onClick={onRefresh}>Refresh</Button>
+    </div>
+    <TextInput
+      label="Search history"
+      placeholder="Search questions and answers"
+      value={query}
+      onChange={(event) => onQuery(event.target.value)}
+    />
     {items.length === 0
-      ? <p className="muted">{query ? 'No saved conversations match this search.' : 'No conversations have been saved yet.'}</p>
-      : <div className="history-list">{items.map((item) => <div className="history-row" key={item.id}><div><strong>{item.title}</strong><small>{formatHistoryDate(item.updatedAt)} · {item.messageCount} {item.messageCount === 1 ? 'message' : 'messages'}{item.hasScreenshots ? ' · screenshots retained' : ''}</small></div><div className="history-row__actions"><Button disabled={working} size="compact" variant="secondary" onClick={() => void onRun(() => window.fovea.history.open(item.id), '', 'Opening conversation…')}>Open</Button><Button disabled={working} size="compact" variant="secondary" onClick={() => onExport(item.id)}>Export</Button><Button disabled={working} size="compact" variant="danger" onClick={() => void onRun(async () => { await window.fovea.history.delete(item.id); onRefresh() }, 'Conversation deleted.')}>Delete</Button></div></div>)}</div>}
-    <Button disabled={working || items.length === 0} variant="danger" onClick={() => { if (window.confirm('Delete all saved conversation history? This cannot be undone.')) void onRun(async () => { const count = await window.fovea.history.clear(); onRefresh(); return count }, 'All conversation history deleted.', 'Clearing history…') }}>Clear all history</Button>
+      ? <p className="muted">
+        {query ? 'No saved conversations match this search.' : 'No conversations have been saved yet.'}
+      </p>
+      : <div className="history-list">
+        {items.map((item) => <div className="history-row" key={item.id}>
+          <div>
+            <strong>{item.title}</strong>
+            <small>{formatHistoryDate(item.updatedAt)} · {item.messageCount} {item.messageCount === 1 ? 'message' : 'messages'}{item.hasScreenshots ? ' · screenshots retained' : ''}</small>
+          </div>
+          <div className="history-row__actions">
+            <Button
+              disabled={working}
+              size="compact"
+              variant="secondary"
+              onClick={() => void onRun(() => window.fovea.history.open(item.id), '', 'Opening conversation…')}
+            >
+              Open
+            </Button>
+            <Button
+              disabled={working}
+              size="compact"
+              variant="secondary"
+              onClick={() => onExport(item.id)}
+            >
+              Export
+            </Button>
+            <Button
+              disabled={working}
+              size="compact"
+              variant="danger"
+              onClick={() => void onRun(async () => {
+                await window.fovea.history.delete(item.id)
+                onRefresh()
+              }, 'Conversation deleted.')}
+            >
+              Delete
+            </Button>
+          </div>
+        </div>)}
+      </div>}
+    <Button
+      disabled={working || items.length === 0}
+      variant="danger"
+      onClick={() => setClearConfirmation({ returnFocus: document.activeElement instanceof HTMLElement ? document.activeElement : null })}
+    >
+      Clear all history
+    </Button>
+    {clearConfirmation && (
+      <ConfirmDialog
+        busy={working}
+        busyLabel="Clearing history"
+        confirmLabel="Delete all history"
+        returnFocus={clearConfirmation.returnFocus}
+        title="Delete all saved conversations?"
+        tone="danger"
+        onCancel={() => setClearConfirmation(null)}
+        onConfirm={clearHistory}
+      >
+        Every saved conversation on this device will be deleted, including retained screenshots. This cannot be undone.
+      </ConfirmDialog>
+    )}
   </Card>
 }
-function formatHistoryDate(value: string): string { const date = new Date(value); return Number.isNaN(date.getTime()) ? 'Unknown date' : date.toLocaleString() }
+function formatHistoryDate(value: string): string {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? 'Unknown date' : date.toLocaleString()
+}
 function SettingsIcon({ category }: { category: Category }): React.JSX.Element {
   const paths: Record<Category, React.JSX.Element> = {
     Account: <><circle cx="12" cy="8" r="3.25" /><path d="M5.5 19c.7-3.8 2.8-5.7 6.5-5.7s5.8 1.9 6.5 5.7" /></>,
-    Models: <><rect x="5" y="5" width="14" height="14" rx="3" /><path d="M9 2v3m6-3v3M9 19v3m6-3v3M2 9h3m-3 6h3m14-6h3m-3 6h3" /><circle cx="12" cy="12" r="2.5" /></>,
+    Models: <>
+      <rect x="5" y="5" width="14" height="14" rx="3" />
+      <path d="M9 2v3m6-3v3M9 19v3m6-3v3M2 9h3m-3 6h3m14-6h3m-3 6h3" />
+      <circle cx="12" cy="12" r="2.5" />
+    </>,
     Prompts: <><path d="M4 5.5h16v11H9l-5 4v-15Z" /><path d="M8 9h8m-8 3.5h6" /></>,
     Recipes: <><path d="M5 4h14v16H5z" /><path d="M8 8h8M8 12h5M8 16h7" /><path d="m15 11 2 2 3-4" /></>,
-    Capture: <><path d="M4 8V5a1 1 0 0 1 1-1h3m8 0h3a1 1 0 0 1 1 1v3m0 8v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3" /><rect x="7.5" y="7.5" width="9" height="9" rx="2" /></>,
-    Appearance: <><circle cx="12" cy="12" r="4" /><path d="M12 2v2m0 16v2M2 12h2m16 0h2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4m0-14.2-1.4 1.4M6.3 17.7l-1.4 1.4" /></>,
+    Capture: <>
+      <path d="M4 8V5a1 1 0 0 1 1-1h3m8 0h3a1 1 0 0 1 1 1v3m0 8v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3" />
+      <rect x="7.5" y="7.5" width="9" height="9" rx="2" />
+    </>,
+    Appearance: <>
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 2v2m0 16v2M2 12h2m16 0h2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4m0-14.2-1.4 1.4M6.3 17.7l-1.4 1.4" />
+    </>,
     History: <><path d="M4 12a8 8 0 1 0 2.3-5.7L4 8.6" /><path d="M4 4v4.6h4.6M12 7.5V12l3 2" /></>,
-    Privacy: <><rect x="5" y="10" width="14" height="10" rx="3" /><path d="M8.5 10V7.5a3.5 3.5 0 0 1 7 0V10" /><circle cx="12" cy="15" r="1" /></>,
+    Privacy: <>
+      <rect x="5" y="10" width="14" height="10" rx="3" />
+      <path d="M8.5 10V7.5a3.5 3.5 0 0 1 7 0V10" />
+      <circle cx="12" cy="15" r="1" />
+    </>,
     Updates: <><path d="M12 3v12m0 0 4-4m-4 4-4-4" /><path d="M5 19h14" /></>,
     About: <><circle cx="12" cy="12" r="9" /><path d="M12 11v5m0-8h.01" /></>
   }
-  return <svg aria-hidden="true" className="settings-nav__icon" fill="none" focusable="false" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.7" viewBox="0 0 24 24">{paths[category]}</svg>
+  return <svg
+    aria-hidden="true"
+    className="settings-nav__icon"
+    fill="none"
+    focusable="false"
+    stroke="currentColor"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    strokeWidth="1.7"
+    viewBox="0 0 24 24"
+  >
+    {paths[category]}
+  </svg>
 }
 const root = document.getElementById('root')
 if (root) createRoot(root).render(<StrictMode><SettingsApp /></StrictMode>)

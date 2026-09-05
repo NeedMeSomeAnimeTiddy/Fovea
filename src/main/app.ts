@@ -1,4 +1,4 @@
-import { app, dialog, globalShortcut, safeStorage, shell } from 'electron'
+import { app, dialog, globalShortcut, Menu, safeStorage, shell } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -72,6 +72,9 @@ if (!app.requestSingleInstanceLock()) {
 async function startApplication(): Promise<void> {
   app.setAppUserModelId('com.fovea.desktop')
   await app.whenReady()
+  // Electron's default menu wires Ctrl+R, Ctrl+Shift+I, and friends into every window. Fovea has no
+  // menu bar of its own, so a packaged build drops it entirely; development keeps it for DevTools.
+  if (app.isPackaged) Menu.setApplicationMenu(null)
   const userData = app.getPath('userData')
   const settings = new SettingsStore(join(userData, 'settings.v2.json'))
   const credentials = new CredentialStore(join(userData, 'credentials.v1.json'), safeStorage)

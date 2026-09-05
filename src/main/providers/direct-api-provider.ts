@@ -19,6 +19,19 @@ const ENDPOINTS = {
 const WEB_SEARCH_REQUEST_INSTRUCTION = `Web search is disabled for this turn. First inspect the screenshot carefully and answer from visible evidence and stable knowledge when you are confident. If you cannot confidently identify a visible object, product, logo, place, artwork, interface, error, or other subject and a focused web search could identify or explain it, do not stop at saying it is unidentifiable. Request approval by responding with exactly <fovea-web-search-request>{"query":"a concise search query based on the visible clues"}</fovea-web-search-request>. Use the same request when current or unfamiliar information is essential and you are not confident. Do not request web access when the screenshot lacks enough clues for a useful search or for ordinary stable facts you already know.`
 const WEB_SEARCH_APPROVED_INSTRUCTION = `The user approved web access for this turn. Use web search only if it is necessary to resolve the uncertainty in their question. Prefer authoritative sources and cite them with links. Do not use any other tools.`
 const WEB_SEARCH_PREFERRED_INSTRUCTION = `The user explicitly prioritised web search for this turn. Search before answering whenever current sources could improve identification, accuracy, context, or verification. Do not stop at "I don't know" without attempting a focused search from the visible clues. Prefer authoritative sources, cite them with links, and do not use any other tools.`
+/**
+ * Anthropic stops generating at this many output tokens and reports `stop_reason: "max_tokens"`
+ * rather than failing, so the stream watches for that signal to surface the truncation.
+ */
+const ANTHROPIC_MAX_OUTPUT_TOKENS = 8192
+/**
+ * OpenAI model identifiers that can never read a screenshot even when they share a vision-capable
+ * family prefix: speech, transcription, embeddings, moderation, search-tuned, legacy completion
+ * models, image generation, and coding agents.
+ */
+const OPENAI_NON_VISION_MODEL = /audio|realtime|tts|transcribe|whisper|embedding|moderation|search|instruct|image|codex|davinci|babbage/
+
+type HistoryEntry = NonNullable<VisionTurnInput['history']>[number]
 
 export interface DirectApiOptions {
   /** Overrides the built-in endpoint. Required for the `custom` kind. */
@@ -70,6 +83,13 @@ export class DirectApiProvider {
       }
       const delta = this.extractDelta(payload, event.event)
       if (delta) yield { type: 'delta', text: delta }
+      // Checked after the delta so any text carried by the same frame reaches the user before the
+      // notice that the answer was cut short.
+      const truncation = this.streamTruncation(payload)
+      if (truncation) {
+        const detail = redactTechnicalDetails(describeStreamFailure(truncation), [apiKey])
+        throw new FoveaError(streamFailureAppError(truncation, detail))
+      }
     }
     yield { type: 'completed' }
   }
@@ -107,9 +127,9 @@ export class DirectApiProvider {
     const id = typeof item.id === 'string' ? item.id : ''
     if (!id) return []
     if (this.kind === 'openai') {
-      const imageCapable = /^(gpt-5|gpt-4\.1|gpt-4o|o[34])/.test(id)
-      if (!imageCapable) return []
-      const reasoning = /^(gpt-5|o[34])/.test(id) ? ['low', 'medium', 'high'] : []
+      const family = openAiVisionFamily(id)
+      if (!family) return []
+      const reasoning = family.reasoning ? ['low', 'medium', 'high'] : []
       return [{ id, displayName: id, provider: this.kind, inputModalities: ['text', 'image'], supportedReasoningEfforts: reasoning, defaultReasoningEffort: reasoning[0], isDefault: false }]
     }
     if (this.kind === 'anthropic') {
@@ -126,6 +146,9 @@ export class DirectApiProvider {
     const instructions = input.webSearchPreferred
       ? WEB_SEARCH_PREFERRED_INSTRUCTION
       : input.webSearchAllowed ? WEB_SEARCH_APPROVED_INSTRUCTION : WEB_SEARCH_REQUEST_INSTRUCTION
+    // These endpoints hold no conversation state, so every earlier exchange travels with the
+    // request as real prior messages. Images belong only to the current turn.
+    const history = usableHistory(input.history)
     if (this.kind === 'openai') {
       return {
         model: input.modelId,
@@ -133,23 +156,49 @@ export class DirectApiProvider {
         instructions,
         ...(input.webSearchAllowed ? { tools: [{ type: 'web_search' }] } : {}),
         ...(input.reasoningEffort ? { reasoning: { effort: input.reasoningEffort } } : {}),
-         input: [{ role: 'user', content: [
-           { type: 'input_text', text: input.text },
-           ...images.map((image) => ({ type: 'input_image', image_url: `data:${image.mediaType};base64,${image.data}` }))
-         ] }]
+        input: [
+          ...history.map((entry) => entry.role === 'user'
+            ? { role: 'user', content: [{ type: 'input_text', text: entry.text }] }
+            : { role: 'assistant', content: [{ type: 'output_text', text: entry.text }] }),
+          { role: 'user', content: [
+            { type: 'input_text', text: input.text },
+            ...images.map((image) => ({ type: 'input_image', image_url: `data:${image.mediaType};base64,${image.data}` }))
+          ] }
+        ]
       }
     }
-    const content = [
-      ...images.map((image) => ({ type: 'image', source: { type: 'base64', media_type: image.mediaType, data: image.data } })),
-      { type: 'text', text: input.text }
-    ]
-    if (this.kind === 'anthropic') return { model: input.modelId, max_tokens: 4096, stream: true, system: instructions, ...(input.webSearchAllowed ? { tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 3 }] } : {}), messages: [{ role: 'user', content }] }
-     // OpenAI-compatible chat completions, shared by OpenRouter and any custom endpoint. The
-     // web-search tool is an OpenRouter extension, so a custom endpoint never receives it.
-     return { model: input.modelId, stream: true, ...(input.webSearchAllowed && this.kind === 'openrouter' ? { tools: [{ type: 'openrouter:web_search' }] } : {}), messages: [{ role: 'system', content: instructions }, { role: 'user', content: [
-       { type: 'text', text: input.text },
-       ...images.map((image) => ({ type: 'image_url', image_url: { url: `data:${image.mediaType};base64,${image.data}` } }))
-     ] }] }
+    if (this.kind === 'anthropic') {
+      const content = [
+        ...images.map((image) => ({ type: 'image', source: { type: 'base64', media_type: image.mediaType, data: image.data } })),
+        { type: 'text', text: input.text }
+      ]
+      return {
+        model: input.modelId,
+        max_tokens: ANTHROPIC_MAX_OUTPUT_TOKENS,
+        stream: true,
+        system: instructions,
+        ...(input.webSearchAllowed ? { tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 3 }] } : {}),
+        messages: anthropicMessages([
+          ...history.map((entry) => ({ role: entry.role, content: [{ type: 'text', text: entry.text }] })),
+          { role: 'user', content }
+        ])
+      }
+    }
+    // OpenAI-compatible chat completions, shared by OpenRouter and any custom endpoint. The
+    // web-search tool is an OpenRouter extension, so a custom endpoint never receives it.
+    return {
+      model: input.modelId,
+      stream: true,
+      ...(input.webSearchAllowed && this.kind === 'openrouter' ? { tools: [{ type: 'openrouter:web_search' }] } : {}),
+      messages: [
+        { role: 'system', content: instructions },
+        ...history.map((entry) => ({ role: entry.role, content: entry.text })),
+        { role: 'user', content: [
+          { type: 'text', text: input.text },
+          ...images.map((image) => ({ type: 'image_url', image_url: { url: `data:${image.mediaType};base64,${image.data}` } }))
+        ] }
+      ]
+    }
   }
 
   private extractDelta(payload: Record<string, unknown>, eventName?: string): string {
@@ -161,6 +210,65 @@ export class DirectApiProvider {
     const choices = payload.choices as Array<{ delta?: { content?: unknown } }> | undefined
     return typeof choices?.[0]?.delta?.content === 'string' ? choices[0].delta.content : ''
   }
+
+  /**
+   * A response that ran out of output tokens ends as a normal stream: Anthropic reports it on the
+   * final `message_delta`, chat completions on the last choice. The OpenAI Responses API sends
+   * `response.incomplete`, which {@link streamFailure} already catches.
+   */
+  private streamTruncation(payload: Record<string, unknown>): StreamFailure | null {
+    if (this.kind === 'anthropic') {
+      if (payload.type !== 'message_delta') return null
+      const delta = recordValue(payload.delta)
+      return delta?.stop_reason === 'max_tokens'
+        ? { signal: 'message_delta', error: undefined, outcome: 'incomplete', reason: 'max_tokens' }
+        : null
+    }
+    if (this.kind === 'openai') return null
+    const choices = payload.choices as Array<{ finish_reason?: unknown }> | undefined
+    return choices?.[0]?.finish_reason === 'length'
+      ? { signal: 'finish_reason', error: undefined, outcome: 'incomplete', reason: 'length' }
+      : null
+  }
+}
+
+function usableHistory(history: VisionTurnInput['history']): HistoryEntry[] {
+  return (history ?? []).filter((entry) => entry.text.trim().length > 0)
+}
+
+/**
+ * Anthropic insists on strictly alternating roles that begin with `user`, so neighbouring entries
+ * from the same speaker are folded into one message and anything before the first user turn is
+ * dropped.
+ */
+function anthropicMessages(messages: Array<{ role: 'user' | 'assistant'; content: unknown[] }>): Array<{ role: 'user' | 'assistant'; content: unknown[] }> {
+  const merged: Array<{ role: 'user' | 'assistant'; content: unknown[] }> = []
+  for (const message of messages) {
+    if (!merged.length && message.role !== 'user') continue
+    const previous = merged.at(-1)
+    if (previous && previous.role === message.role) previous.content.push(...message.content)
+    else merged.push({ role: message.role, content: [...message.content] })
+  }
+  return merged
+}
+
+/**
+ * OpenAI keeps releasing vision-capable models under the `gpt-<major>` and `o<n>` families, so
+ * the allow-list keys on the family number rather than on an enumerated list of ids: every GPT
+ * generation from 4 onwards reads images, as does every o-series reasoning model from o3. Ids
+ * whose name marks them as a different modality are refused whatever their family.
+ */
+export function openAiVisionFamily(id: string): { reasoning: boolean } | null {
+  const lower = id.toLocaleLowerCase()
+  if (OPENAI_NON_VISION_MODEL.test(lower)) return null
+  const gpt = /^gpt-(\d+)/.exec(lower)
+  if (gpt) {
+    const major = Number(gpt[1])
+    return major >= 4 ? { reasoning: major >= 5 } : null
+  }
+  const reasoning = /^o(\d+)/.exec(lower)
+  if (reasoning) return Number(reasoning[1]) >= 3 ? { reasoning: true } : null
+  return null
 }
 
 function imageMediaType(path: string): 'image/png' | 'image/jpeg' | 'image/webp' {

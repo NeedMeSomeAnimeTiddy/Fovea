@@ -1,13 +1,46 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, shell, type IpcMainEvent, type IpcMainInvokeEvent, type OpenDialogOptions } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  clipboard,
+  dialog,
+  ipcMain,
+  shell,
+  type IpcMainEvent,
+  type IpcMainInvokeEvent,
+  type OpenDialogOptions
+} from 'electron'
 import { randomUUID } from 'node:crypto'
 import { readFile, rename, writeFile } from 'node:fs/promises'
-import { IPC, isSettingsCategory, isWindowResizeEdge, type CaptureFreezeReason, type CaptureVideoFrameMetadata, type SettingsCategory, type SettingsViewState } from '@shared/contracts/ipc'
-import type { AppearancePreference, CaptureMode, CaptureRecipe, ConversationExportOptions, ConversationSelection, ImageEditOperation, OcrExternalActionKind, OnboardingStatus, ProviderKind, ShortcutAction } from '@shared/types/app'
+import {
+  IPC,
+  isSettingsCategory,
+  isWindowResizeEdge,
+  type CaptureFreezeReason,
+  type CaptureVideoFrameMetadata,
+  type SettingsCategory,
+  type SettingsViewState
+} from '@shared/contracts/ipc'
+import type {
+  AppearancePreference,
+  CaptureMode,
+  CaptureRecipe,
+  ConversationExportOptions,
+  ConversationSelection,
+  ImageEditOperation,
+  OcrExternalActionKind,
+  OnboardingStatus,
+  ProviderKind,
+  ShortcutAction
+} from '@shared/types/app'
 import type { Rectangle } from '@shared/types/geometry'
 import type { AppErrorCode } from '@shared/types/app-error'
 import { MAX_BASE_URL_LENGTH, MAX_CUSTOM_MODEL_IDS, normaliseBaseUrl } from '@shared/provider-endpoint'
 import { toIpcResult } from '../errors/app-error'
-import { conversationExportPreview, exportConversation, type ConversationExportRecord } from '../export/conversation-export-service'
+import {
+  conversationExportPreview,
+  exportConversation,
+  type ConversationExportRecord
+} from '../export/conversation-export-service'
 import type { CustomEndpoint } from '../providers/profile-manager'
 import { ocrEntityExternalTarget } from '../external/ocr-entity-target'
 import type { AppearanceController } from '../appearance/appearance-controller'
@@ -22,9 +55,25 @@ import type { ConversationHistoryStore } from '../storage/conversation-history-s
 import type { UpdateController } from '../updates/update-controller'
 import type { QuestionSessions } from '../windows/question-sessions'
 import { ownsSettingsWebContents, showSettingsWindow } from '../windows/settings-window'
-import { resolveWindowChromeController, type WindowChromeController, type WindowChromeIpcEvent } from '../windows/window-chrome'
+import {
+  resolveWindowChromeController,
+  type WindowChromeController,
+  type WindowChromeIpcEvent
+} from '../windows/window-chrome'
 
-export interface IpcDependencies { providers: ProviderRegistry; settings: SettingsStore; screenshots: TempScreenshotStore; history: ConversationHistoryStore; capture: CaptureService; onboarding: OnboardingController; questions: QuestionSessions; shortcuts: ShortcutManager; appearance: AppearanceController; explorer: ExplorerIntegration; updates: UpdateController }
+export interface IpcDependencies {
+  providers: ProviderRegistry
+  settings: SettingsStore
+  screenshots: TempScreenshotStore
+  history: ConversationHistoryStore
+  capture: CaptureService
+  onboarding: OnboardingController
+  questions: QuestionSessions
+  shortcuts: ShortcutManager
+  appearance: AppearanceController
+  explorer: ExplorerIntegration
+  updates: UpdateController
+}
 
 export function registerIpc(dependencies: IpcDependencies): void {
   ipcMain.on(IPC.appearanceGet, (event) => { event.returnValue = dependencies.appearance.getState() })
@@ -41,8 +90,15 @@ export function registerIpc(dependencies: IpcDependencies): void {
       customPrompts: settings.customPrompts,
       recipes: settings.recipes,
       launchAtLogin: settings.launchAtLogin,
-      shellIntegration: { enabled: settings.shellIntegrationEnabled, supported: process.platform === 'win32', registered: shellRegistered },
-      liveCapture: { enabled: dependencies.capture.isLiveSelectionEnabled(), supported: dependencies.capture.supportsLiveSelection() },
+      shellIntegration: {
+        enabled: settings.shellIntegrationEnabled,
+        supported: process.platform === 'win32',
+        registered: shellRegistered
+      },
+      liveCapture: {
+        enabled: dependencies.capture.isLiveSelectionEnabled(),
+        supported: dependencies.capture.supportsLiveSelection()
+      },
       onboardingStatus: settings.onboardingStatus,
       history: settings.history,
       ocrLanguageCode: settings.ocrLanguageCode,
@@ -69,34 +125,70 @@ export function registerIpc(dependencies: IpcDependencies): void {
   void refreshShellIntegration().then(broadcastSettings).catch(() => undefined)
   dependencies.providers.on('status', broadcastSettings)
   dependencies.updates.onStateChanged(broadcastSettings)
-  const mutate = async (operation: () => Promise<unknown>): Promise<void> => { await operation(); broadcastSettings() }
-  const handle = (
-    channel: string,
-    operation: (event: IpcMainInvokeEvent, ...arguments_: unknown[]) => unknown,
-    fallbackCode?: AppErrorCode
-  ): void => {
+  const mutate = async (operation: () => Promise<unknown>): Promise<void> => {
+    await operation()
+    broadcastSettings()
+  }
+  type Operation = (event: IpcMainInvokeEvent, ...arguments_: unknown[]) => unknown
+  const handle = (channel: string, operation: Operation, fallbackCode?: AppErrorCode): void => {
     ipcMain.handle(channel, (event, ...arguments_) => toIpcResult(() => operation(event, ...arguments_), fallbackCode))
+  }
+  /**
+   * Only the Settings window may change preferences, manage profiles, or touch history. Every
+   * renderer shares the same preload bridge, so this is checked per sender rather than assumed.
+   * Reads that other windows need (`settingsGet`, `settingsOpenOcrLanguages`) stay open.
+   */
+  const settingsOnly = (operation: Operation): Operation => (event, ...arguments_) => {
+    requireSettingsSender(event)
+    return operation(event, ...arguments_)
+  }
+  /** A conversation may only be driven from the question window that displays it. */
+  const requireOwnedQuestion = (event: IpcMainInvokeEvent, value: unknown): string => {
+    const id = requireId(value)
+    if (event.sender.isDestroyed() || !dependencies.questions.owns(id, event.sender.id)) throw new Error('This conversation can only be changed from its own window.')
+    return id
+  }
+  /** The image-preview window is a separate BrowserWindow, so it may read (not change) its session. */
+  const requireOwnedOrPreviewQuestion = (event: IpcMainInvokeEvent, value: unknown): string => {
+    const id = requireId(value)
+    if (event.sender.isDestroyed() || !dependencies.questions.ownsOrPreviews(id, event.sender.id)) throw new Error('This conversation can only be read from its own windows.')
+    return id
   }
 
   handle(IPC.settingsGet, buildSettingsState)
   handle(IPC.settingsOpenOcrLanguages, () => shell.openExternal('ms-settings:regionlanguage'))
-  handle(IPC.settingsSetAppearance, (_event, value) => mutate(() => dependencies.appearance.setPreference(requireAppearance(value))), 'validation')
-  handle(IPC.settingsSetLaunchAtLogin, (_event, enabled) => mutate(async () => { if (typeof enabled !== 'boolean') throw new Error('Invalid launch setting.'); app.setLoginItemSettings({ openAtLogin: enabled, path: process.execPath }); await dependencies.settings.update({ launchAtLogin: enabled }) }), 'validation')
-  handle(IPC.settingsSetLiveCapture, (_event, enabled) => mutate(async () => {
+  handle(
+    IPC.settingsSetAppearance,
+    settingsOnly((_event, value) => mutate(() => dependencies.appearance.setPreference(requireAppearance(value)))),
+    'validation'
+  )
+  handle(IPC.settingsSetLaunchAtLogin, settingsOnly((_event, enabled) => mutate(async () => {
+    if (typeof enabled !== 'boolean') throw new Error('Invalid launch setting.')
+    app.setLoginItemSettings({ openAtLogin: enabled, path: process.execPath })
+    await dependencies.settings.update({ launchAtLogin: enabled })
+  })), 'validation')
+  handle(IPC.settingsSetLiveCapture, settingsOnly((_event, enabled) => mutate(async () => {
     if (typeof enabled !== 'boolean') throw new Error('Invalid live capture setting.')
     dependencies.capture.setLiveSelectionEnabled(enabled)
     await dependencies.settings.update({ liveCaptureEnabled: enabled })
-  }), 'validation')
-  handle(IPC.settingsSetShellIntegration, (_event, enabled) => mutate(async () => {
+  })), 'validation')
+  handle(IPC.settingsSetShellIntegration, settingsOnly((_event, enabled) => mutate(async () => {
     if (typeof enabled !== 'boolean') throw new Error('Invalid context-menu setting.')
     if (enabled) await dependencies.explorer.enable()
     else await dependencies.explorer.disable()
     await dependencies.settings.update({ shellIntegrationEnabled: enabled })
     await refreshShellIntegration()
-  }), 'validation')
-  handle(IPC.settingsSetShortcut,(_event, action, accelerator) => mutate(() => dependencies.shortcuts.set(requireShortcutAction(action), requireAccelerator(accelerator))), 'validation')
-  handle(IPC.settingsResetShortcuts, () => mutate(() => dependencies.shortcuts.reset()))
-  handle(IPC.settingsSaveCustomPrompt, (_event, id, label, prompt) => mutate(async () => {
+  })), 'validation')
+  handle(
+    IPC.settingsSetShortcut,
+    settingsOnly((_event, action, accelerator) => mutate(() => dependencies.shortcuts.set(
+      requireShortcutAction(action),
+      requireAccelerator(accelerator)
+    ))),
+    'validation'
+  )
+  handle(IPC.settingsResetShortcuts, settingsOnly(() => mutate(() => dependencies.shortcuts.reset())))
+  handle(IPC.settingsSaveCustomPrompt, settingsOnly((_event, id, label, prompt) => mutate(async () => {
     const settings = dependencies.settings.get()
     const promptId = id === null ? randomUUID() : requireId(id)
     const nextPrompt = {
@@ -112,15 +204,15 @@ export function registerIpc(dependencies: IpcDependencies): void {
     else customPrompts.push(nextPrompt)
     await dependencies.settings.update({ customPrompts })
     await rewriteShellIntegration()
-  }), 'validation')
-  handle(IPC.settingsDeleteCustomPrompt, (_event, id) => mutate(async () => {
+  })), 'validation')
+  handle(IPC.settingsDeleteCustomPrompt, settingsOnly((_event, id) => mutate(async () => {
     const promptId = requireId(id)
     const settings = dependencies.settings.get()
     if (!settings.customPrompts.some((item) => item.id === promptId)) throw new Error('Custom prompt not found.')
     await dependencies.settings.update({ customPrompts: settings.customPrompts.filter((item) => item.id !== promptId) })
     await rewriteShellIntegration()
-  }), 'validation')
-  handle(IPC.settingsSaveRecipe, (_event, value) => mutate(async () => {
+  })), 'validation')
+  handle(IPC.settingsSaveRecipe, settingsOnly((_event, value) => mutate(async () => {
     const recipe = requireCaptureRecipe(value)
     const current = dependencies.settings.get().recipes
     const index = current.findIndex((item) => item.id === recipe.id)
@@ -133,8 +225,8 @@ export function registerIpc(dependencies: IpcDependencies): void {
     if (index >= 0) recipes[index] = nextRecipe
     else recipes.push(nextRecipe)
     await dependencies.shortcuts.setRecipes(recipes)
-  }), 'validation')
-  handle(IPC.settingsDuplicateRecipe, (_event, value) => mutate(async () => {
+  })), 'validation')
+  handle(IPC.settingsDuplicateRecipe, settingsOnly((_event, value) => mutate(async () => {
     const id = requireId(value)
     const current = dependencies.settings.get().recipes
     const recipe = current.find((item) => item.id === id)
@@ -144,20 +236,20 @@ export function registerIpc(dependencies: IpcDependencies): void {
       ...structuredClone(recipe), id: randomUUID(), name: `${recipe.name} copy`.slice(0, 80), enabled: false,
       shortcut: null, autoSend: false, autoSendConsentVersion: 0
     }])
-  }), 'validation')
-  handle(IPC.settingsDeleteRecipe, (_event, value) => mutate(async () => {
+  })), 'validation')
+  handle(IPC.settingsDeleteRecipe, settingsOnly((_event, value) => mutate(async () => {
     const id = requireId(value)
     const current = dependencies.settings.get().recipes
     if (!current.some((item) => item.id === id)) throw new Error('Capture recipe not found.')
     await dependencies.shortcuts.setRecipes(current.filter((item) => item.id !== id))
-  }), 'validation')
-  handle(IPC.settingsReorderRecipes, (_event, value) => mutate(async () => {
+  })), 'validation')
+  handle(IPC.settingsReorderRecipes, settingsOnly((_event, value) => mutate(async () => {
     if (!Array.isArray(value) || !value.every((id) => typeof id === 'string')) throw new Error('Invalid recipe order.')
     const current = dependencies.settings.get().recipes
     if (value.length !== current.length || new Set(value).size !== current.length || value.some((id) => !current.some((item) => item.id === id))) throw new Error('Recipe order is incomplete.')
     await dependencies.shortcuts.setRecipes(value.map((id) => current.find((item) => item.id === id)!))
-  }), 'validation')
-  handle(IPC.settingsExportRecipes, async (event) => {
+  })), 'validation')
+  handle(IPC.settingsExportRecipes, settingsOnly(async (event) => {
     const owner = BrowserWindow.fromWebContents(event.sender) ?? undefined
     const options = {
       title: 'Export capture recipes', defaultPath: 'fovea-capture-recipes.json',
@@ -167,14 +259,19 @@ export function registerIpc(dependencies: IpcDependencies): void {
     if (result.canceled || !result.filePath) return false
     const payload = {
       schemaVersion: 1,
-      recipes: dependencies.settings.get().recipes.map((recipe) => ({ ...recipe, enabled: false, autoSend: false, autoSendConsentVersion: 0 }))
+      recipes: dependencies.settings.get().recipes.map((recipe) => ({
+        ...recipe,
+        enabled: false,
+        autoSend: false,
+        autoSendConsentVersion: 0
+      }))
     }
     const temporary = `${result.filePath}.tmp`
     await writeFile(temporary, JSON.stringify(payload, null, 2), { encoding: 'utf8', mode: 0o600 })
     await rename(temporary, result.filePath)
     return true
-  }, 'validation')
-  handle(IPC.settingsImportRecipes, async (event) => {
+  }), 'validation')
+  handle(IPC.settingsImportRecipes, settingsOnly(async (event) => {
     const owner = BrowserWindow.fromWebContents(event.sender) ?? undefined
     const options: OpenDialogOptions = {
       title: 'Import capture recipes', properties: ['openFile'],
@@ -192,60 +289,143 @@ export function registerIpc(dependencies: IpcDependencies): void {
     await dependencies.shortcuts.setRecipes([...current, ...imported])
     broadcastSettings()
     return imported.length
-  }, 'validation')
-  handle(IPC.settingsSetOnboardingStatus, (_event, status) => mutate(() => dependencies.settings.update({ onboardingStatus: requireOnboardingOutcome(status) })), 'validation')
-  handle(IPC.settingsSetPrivateMode, (_event, enabled) => mutate(() => {
+  }), 'validation')
+  // Onboarding is rendered inside the Settings window, so its outcome is a Settings-only write.
+  handle(
+    IPC.settingsSetOnboardingStatus,
+    settingsOnly((_event, status) => mutate(() => dependencies.settings.update({ onboardingStatus: requireOnboardingOutcome(status) }))),
+    'validation'
+  )
+  handle(IPC.settingsSetPrivateMode, settingsOnly((_event, enabled) => mutate(() => {
     if (typeof enabled !== 'boolean') throw new Error('Invalid private mode setting.')
     return dependencies.settings.update({ history: { ...dependencies.settings.get().history, privateMode: enabled } })
-  }), 'validation')
-  handle(IPC.settingsSetHistoryRetention, (_event, days) => mutate(async () => {
+  })), 'validation')
+  handle(IPC.settingsSetHistoryRetention, settingsOnly((_event, days) => mutate(async () => {
     const retentionDays = requireInteger(days, 1, 3650)
     await dependencies.settings.update({ history: { ...dependencies.settings.get().history, retentionDays } })
     await dependencies.history.applyRetention(retentionDays)
-  }), 'validation')
-  handle(IPC.settingsSetScreenshotRetention, (_event, enabled) => mutate(async () => {
+  })), 'validation')
+  handle(IPC.settingsSetScreenshotRetention, settingsOnly((_event, enabled) => mutate(async () => {
     if (typeof enabled !== 'boolean') throw new Error('Invalid screenshot retention setting.')
-    await dependencies.settings.update({ history: { ...dependencies.settings.get().history, retainScreenshots: enabled } })
+    await dependencies.settings.update({ history: {
+      ...dependencies.settings.get().history,
+      retainScreenshots: enabled
+    } })
     if (!enabled) await dependencies.history.removeAllScreenshots()
-  }), 'validation')
+  })), 'validation')
   handle(IPC.settingsTestOnboardingCapture, (event) => {
     if (event.sender.isDestroyed() || !ownsSettingsWebContents(event.sender.id)) throw new Error('Test capture is only available from Settings.')
     return dependencies.onboarding.testCapture()
   }, 'capture-failed')
   // Files created by this process still belong to capture overlays or question sessions. Their
   // owners delete them when they close; manual cleanup removes only orphaned files from older runs.
-  handle(IPC.settingsDeleteTemp, () => dependencies.screenshots.cleanup(0, { preserveActive: true }))
+  handle(IPC.settingsDeleteTemp, settingsOnly(() => dependencies.screenshots.cleanup(0, { preserveActive: true })))
 
   handle(IPC.updatesSetAutomaticChecks, (event, enabled) => {
     requireSettingsSender(event)
     if (typeof enabled !== 'boolean') throw new Error('Invalid automatic update setting.')
     return dependencies.updates.setAutomaticChecks(enabled)
   }, 'validation')
-  handle(IPC.updatesCheck, (event) => { requireSettingsSender(event); return dependencies.updates.check('manual') })
-  handle(IPC.updatesDownload, (event) => { requireSettingsSender(event); return dependencies.updates.download() })
-  handle(IPC.updatesInstall, (event) => { requireSettingsSender(event); return dependencies.updates.install() })
+  handle(IPC.updatesCheck, (event) => {
+    requireSettingsSender(event)
+    return dependencies.updates.check('manual')
+  })
+  handle(IPC.updatesDownload, (event) => {
+    requireSettingsSender(event)
+    return dependencies.updates.download()
+  })
+  handle(IPC.updatesInstall, (event) => {
+    requireSettingsSender(event)
+    return dependencies.updates.install()
+  })
 
-  handle(IPC.profilesList, () => dependencies.providers.listProfiles())
-  handle(IPC.profilesCreateApiKey, async (_event, provider, name, apiKey, endpoint) => { const result = await dependencies.providers.profiles.createApiKey(requireApiProvider(provider), requireString(name, 80), requireString(apiKey, 2048), requireCustomEndpoint(endpoint)); broadcastSettings(); return result }, 'validation')
-  handle(IPC.profilesCreateChatGpt, async (_event, name) => { const result = await dependencies.providers.profiles.createChatGpt(name === undefined ? undefined : requireString(name, 80)); broadcastSettings(); return result }, 'validation')
-  handle(IPC.profilesRename, (_event, id, name) => mutate(() => dependencies.providers.profiles.rename(requireId(id), requireString(name, 80))), 'validation')
-  handle(IPC.profilesAuthenticate, (_event, id) => mutate(() => dependencies.providers.authenticate(requireId(id))), 'authentication-required')
-  handle(IPC.profilesTest, async (_event, id) => { const result = await dependencies.providers.test(requireId(id)); broadcastSettings(); return result }, 'provider-unavailable')
-  handle(IPC.profilesSignOut, (_event, id) => mutate(() => dependencies.providers.signOut(requireId(id))))
-  handle(IPC.profilesDelete, (_event, id) => mutate(() => dependencies.providers.delete(requireId(id))))
-  handle(IPC.profilesSetDefault, (_event, id) => mutate(() => dependencies.providers.profiles.setDefault(requireId(id))))
-  handle(IPC.profilesSetDefaults, (_event, id, model, reasoning) => mutate(() => dependencies.providers.profiles.setDefaults(requireId(id), requireNullableString(model, 200), requireNullableString(reasoning, 50))), 'validation')
-  handle(IPC.profilesModels, (_event, id) => dependencies.providers.listModels(requireId(id)), 'no-compatible-models')
-  handle(IPC.chatGptRuntimeInstall, () => mutate(() => dependencies.providers.installChatGptRuntime()), 'provider-unavailable')
-  handle(IPC.chatGptRuntimeRemove, () => mutate(() => dependencies.providers.removeChatGptRuntime()), 'provider-unavailable')
+  // Profiles are managed from Settings alone; question windows receive the profile list and the
+  // models for their selection through `questionGet`, never by calling these directly.
+  handle(IPC.profilesList, settingsOnly(() => dependencies.providers.listProfiles()))
+  handle(IPC.profilesCreateApiKey, settingsOnly(async (_event, provider, name, apiKey, endpoint) => {
+    const result = await dependencies.providers.profiles.createApiKey(
+      requireApiProvider(provider),
+      requireString(name, 80),
+      requireString(apiKey, 2048),
+      requireCustomEndpoint(endpoint)
+    )
+    broadcastSettings()
+    return result
+  }), 'validation')
+  handle(IPC.profilesCreateChatGpt, settingsOnly(async (_event, name) => {
+    const result = await dependencies.providers.profiles.createChatGpt(name === undefined ? undefined : requireString(name, 80))
+    broadcastSettings()
+    return result
+  }), 'validation')
+  handle(
+    IPC.profilesRename,
+    settingsOnly((_event, id, name) => mutate(() => dependencies.providers.profiles.rename(requireId(id), requireString(name, 80)))),
+    'validation'
+  )
+  handle(
+    IPC.profilesAuthenticate,
+    settingsOnly((_event, id) => mutate(() => dependencies.providers.authenticate(requireId(id)))),
+    'authentication-required'
+  )
+  handle(IPC.profilesTest, settingsOnly(async (_event, id) => {
+    const result = await dependencies.providers.test(requireId(id))
+    broadcastSettings()
+    return result
+  }), 'provider-unavailable')
+  handle(IPC.profilesSignOut, settingsOnly((_event, id) => mutate(() => dependencies.providers.signOut(requireId(id)))))
+  handle(IPC.profilesDelete, settingsOnly((_event, id) => mutate(() => dependencies.providers.delete(requireId(id)))))
+  handle(
+    IPC.profilesSetDefault,
+    settingsOnly((_event, id) => mutate(() => dependencies.providers.profiles.setDefault(requireId(id))))
+  )
+  handle(
+    IPC.profilesSetDefaults,
+    settingsOnly((_event, id, model, reasoning) => mutate(() => dependencies.providers.profiles.setDefaults(
+      requireId(id),
+      requireNullableString(model, 200),
+      requireNullableString(reasoning, 50)
+    ))),
+    'validation'
+  )
+  handle(
+    IPC.profilesModels,
+    settingsOnly((_event, id) => dependencies.providers.listModels(requireId(id))),
+    'no-compatible-models'
+  )
+  handle(
+    IPC.chatGptRuntimeInstall,
+    settingsOnly(() => mutate(() => dependencies.providers.installChatGptRuntime())),
+    'provider-unavailable'
+  )
+  handle(
+    IPC.chatGptRuntimeRemove,
+    settingsOnly(() => mutate(() => dependencies.providers.removeChatGptRuntime())),
+    'provider-unavailable'
+  )
 
   handle(IPC.captureStart, (_event, mode) => dependencies.capture.begin(requireCaptureMode(mode)), 'capture-failed')
   handle(IPC.captureGetContext, (event) => dependencies.capture.getContext(event.sender.id), 'capture-failed')
   handle(IPC.captureReadyToShow, (event) => dependencies.capture.readyToShow(event.sender.id), 'capture-failed')
   handle(IPC.captureArmVideoFrame, (event) => dependencies.capture.armVideoFrame(event.sender.id), 'capture-failed')
-  handle(IPC.captureProvideVideoFrame, (event, png, metadata) => dependencies.capture.provideVideoFrame(event.sender.id, requireCaptureFrame(png), requireCaptureVideoFrameMetadata(metadata)), 'capture-failed')
-  handle(IPC.captureCancelVideoFrame, (event) => dependencies.capture.cancelVideoFrame(event.sender.id), 'capture-failed')
-  handle(IPC.captureFreeze, (event, reason) => dependencies.capture.freeze(event.sender.id, requireCaptureFreezeReason(reason)), 'capture-failed')
+  handle(
+    IPC.captureProvideVideoFrame,
+    (event, png, metadata) => dependencies.capture.provideVideoFrame(
+      event.sender.id,
+      requireCaptureFrame(png),
+      requireCaptureVideoFrameMetadata(metadata)
+    ),
+    'capture-failed'
+  )
+  handle(
+    IPC.captureCancelVideoFrame,
+    (event) => dependencies.capture.cancelVideoFrame(event.sender.id),
+    'capture-failed'
+  )
+  handle(
+    IPC.captureFreeze,
+    (event, reason) => dependencies.capture.freeze(event.sender.id, requireCaptureFreezeReason(reason)),
+    'capture-failed'
+  )
   handle(IPC.captureAnalyze, (event, requestId) => {
     const id = requireId(requestId)
     return dependencies.capture.analyze(event.sender.id, (analysis) => {
@@ -262,41 +442,101 @@ export function registerIpc(dependencies: IpcDependencies): void {
     }
     await dependencies.settings.update({ ocrLanguageCode: code })
   }, 'validation')
-  handle(IPC.captureSelect, (event, rectangle, operations = [], preferWebSearch = false, extractText = false, ocrLanguageCode, initialQuestion) => {
-    if (!isRectangle(rectangle)) throw new Error('Invalid selection.')
-    if (!Array.isArray(operations)) throw new Error('Invalid screenshot edits.')
-    if (typeof preferWebSearch !== 'boolean') throw new Error('Invalid web-search preference.')
-    if (typeof extractText !== 'boolean') throw new Error('Invalid text-extraction preference.')
-    if (preferWebSearch && extractText) throw new Error('Web search and text extraction cannot both be enabled.')
-    if (ocrLanguageCode !== undefined && (typeof ocrLanguageCode !== 'string' || !/^[A-Za-z0-9-]{2,35}$/.test(ocrLanguageCode))) throw new Error('Invalid OCR language.')
-    if (!extractText && ocrLanguageCode !== undefined) throw new Error('OCR language requires text extraction.')
-    if (initialQuestion !== undefined && (typeof initialQuestion !== 'string' || !initialQuestion.trim() || initialQuestion.length > 500)) throw new Error('Invalid initial question.')
-    return dependencies.capture.select(rectangle, event.sender.id, operations as ImageEditOperation[], preferWebSearch, extractText, ocrLanguageCode, initialQuestion?.trim())
-  }, 'capture-failed')
+  handle(
+    IPC.captureSelect,
+    (
+      event,
+      rectangle,
+      operations = [],
+      preferWebSearch = false,
+      extractText = false,
+      ocrLanguageCode,
+      initialQuestion
+    ) => {
+      if (!isRectangle(rectangle)) throw new Error('Invalid selection.')
+      if (!Array.isArray(operations)) throw new Error('Invalid screenshot edits.')
+      if (typeof preferWebSearch !== 'boolean') throw new Error('Invalid web-search preference.')
+      if (typeof extractText !== 'boolean') throw new Error('Invalid text-extraction preference.')
+      if (preferWebSearch && extractText) throw new Error('Web search and text extraction cannot both be enabled.')
+      if (ocrLanguageCode !== undefined && (typeof ocrLanguageCode !== 'string' || !/^[A-Za-z0-9-]{2,35}$/.test(ocrLanguageCode))) throw new Error('Invalid OCR language.')
+      if (!extractText && ocrLanguageCode !== undefined) throw new Error('OCR language requires text extraction.')
+      if (initialQuestion !== undefined && (typeof initialQuestion !== 'string' || !initialQuestion.trim() || initialQuestion.length > 500)) throw new Error('Invalid initial question.')
+      return dependencies.capture.select(
+        rectangle,
+        event.sender.id,
+        operations as ImageEditOperation[],
+        preferWebSearch,
+        extractText,
+        ocrLanguageCode,
+        initialQuestion?.trim()
+      )
+    },
+    'capture-failed'
+  )
   handle(IPC.captureCancel, () => dependencies.capture.cancel())
 
-  handle(IPC.questionGet, (_event, id) => dependencies.questions.get(requireId(id)))
-  handle(IPC.questionGetFullImage, (_event, id, attachmentId) => dependencies.questions.getFullImage(requireId(id), requireId(attachmentId)), 'capture-failed')
-  handle(IPC.questionRunOcr, (_event, id, attachmentId) => dependencies.questions.runOcr(requireId(id), requireId(attachmentId)), 'ocr-failed')
-  handle(IPC.questionGetOcrResult, (_event, id, attachmentId) => dependencies.questions.getOcrResult(requireId(id), requireId(attachmentId)), 'ocr-failed')
-  handle(IPC.questionSetOcrSelection, (_event, id, attachmentId, regionIds, includeNextRequest) => {
+  handle(IPC.questionGet, (event, id) => dependencies.questions.get(requireOwnedQuestion(event, id)))
+  // The full-quality image is also read by the session's image-preview window, a separate
+  // BrowserWindow that QuestionSessions tracks privately, so ownership cannot be checked here.
+  handle(
+    IPC.questionGetFullImage,
+    (event, id, attachmentId) => dependencies.questions.getFullImage(
+      requireOwnedOrPreviewQuestion(event, id),
+      requireId(attachmentId)
+    ),
+    'capture-failed'
+  )
+  handle(
+    IPC.questionRunOcr,
+    (event, id, attachmentId) => dependencies.questions.runOcr(requireOwnedQuestion(event, id), requireId(attachmentId)),
+    'ocr-failed'
+  )
+  handle(
+    IPC.questionGetOcrResult,
+    (event, id, attachmentId) => dependencies.questions.getOcrResult(requireOwnedQuestion(event, id), requireId(attachmentId)),
+    'ocr-failed'
+  )
+  handle(IPC.questionSetOcrSelection, (event, id, attachmentId, regionIds, includeNextRequest) => {
     if (!Array.isArray(regionIds) || regionIds.length > 2_000 || !regionIds.every((regionId) => typeof regionId === 'string' && regionId.length <= 100)) throw new Error('Invalid OCR region selection.')
     if (typeof includeNextRequest !== 'boolean') throw new Error('Invalid OCR inclusion preference.')
-    return dependencies.questions.setOcrSelection(requireId(id), requireId(attachmentId), regionIds, includeNextRequest)
+    return dependencies.questions.setOcrSelection(
+      requireOwnedQuestion(event, id),
+      requireId(attachmentId),
+      regionIds,
+      includeNextRequest
+    )
   }, 'validation')
-  handle(IPC.questionSetSelection, (_event, id, selection) => dependencies.questions.setSelection(requireId(id), requireSelection(selection)), 'validation')
-  handle(IPC.questionSetPinned, (_event, id, pinned) => {
+  handle(
+    IPC.questionSetSelection,
+    (event, id, selection) => dependencies.questions.setSelection(
+      requireOwnedQuestion(event, id),
+      requireSelection(selection)
+    ),
+    'validation'
+  )
+  handle(IPC.questionSetPinned, (event, id, pinned) => {
     if (typeof pinned !== 'boolean') throw new Error('Invalid pin state.')
-    return dependencies.questions.setPinned(requireId(id), pinned)
+    return dependencies.questions.setPinned(requireOwnedQuestion(event, id), pinned)
   }, 'validation')
-  handle(IPC.questionSetPreviewOpen, (_event, id, attachmentId) => {
+  handle(IPC.questionSetPreviewOpen, (event, id, attachmentId) => {
     if (attachmentId !== null && typeof attachmentId !== 'string') throw new Error('Invalid preview attachment.')
-    return dependencies.questions.setPreviewOpen(requireId(id), attachmentId === null ? null : requireId(attachmentId))
+    // Opening a preview must come from the question window; closing one (null) is also sent by
+    // the preview window itself.
+    if (attachmentId === null) return dependencies.questions.setPreviewOpen(requireOwnedOrPreviewQuestion(event, id), null)
+    return dependencies.questions.setPreviewOpen(requireOwnedQuestion(event, id), requireId(attachmentId))
   }, 'validation')
-  handle(IPC.questionRemoveAttachment, (_event, id, attachmentId) => dependencies.questions.removeAttachment(requireId(id), requireId(attachmentId)), 'validation')
-  handle(IPC.questionApplyAttachmentEdits, (_event, id, attachmentId, operations) => {
+  handle(
+    IPC.questionRemoveAttachment,
+    (event, id, attachmentId) => dependencies.questions.removeAttachment(requireOwnedQuestion(event, id), requireId(attachmentId)),
+    'validation'
+  )
+  handle(IPC.questionApplyAttachmentEdits, (event, id, attachmentId, operations) => {
     if (!Array.isArray(operations)) throw new Error('Invalid screenshot edits.')
-    return dependencies.questions.applyAttachmentEdits(requireId(id), requireId(attachmentId), operations as ImageEditOperation[])
+    return dependencies.questions.applyAttachmentEdits(
+      requireOwnedQuestion(event, id),
+      requireId(attachmentId),
+      operations as ImageEditOperation[]
+    )
   }, 'validation')
   handle(IPC.questionImportClipboardImage, (event, value) => {
     const id = requireId(value)
@@ -334,31 +574,58 @@ export function registerIpc(dependencies: IpcDependencies): void {
     const owner = BrowserWindow.fromWebContents(event.sender) ?? undefined
     return exportConversation(owner, await dependencies.questions.getExportRecord(id), requireExportOptions(rawOptions))
   }, 'validation')
-  handle(IPC.questionSend, (_event, id, text, preferWebSearch = false) => {
+  handle(IPC.questionSend, (event, id, text, preferWebSearch = false) => {
     if (typeof preferWebSearch !== 'boolean') throw new Error('Invalid web-search preference.')
-    return dependencies.questions.send(requireId(id), requireString(text, 10_000), preferWebSearch)
+    return dependencies.questions.send(requireOwnedQuestion(event, id), requireString(text, 10_000), preferWebSearch)
   }, 'provider-unavailable')
-  handle(IPC.questionRetry, (_event, id, exchangeId) => dependencies.questions.retry(requireId(id), requireId(exchangeId)), 'provider-unavailable')
-  handle(IPC.questionResolveWebSearch, (_event, id, requestId, approved) => { if (typeof approved !== 'boolean') throw new Error('Invalid web-search approval.'); return dependencies.questions.resolveWebSearch(requireId(id), requireId(requestId), approved) }, 'provider-unavailable')
-  handle(IPC.questionStop, (_event, id) => dependencies.questions.stop(requireId(id)))
-  handle(IPC.questionClose, (_event, id) => dependencies.questions.close(requireId(id)))
-  handle(IPC.questionAddSnip, (_event, id) => dependencies.questions.addSnip(requireId(id)), 'capture-failed')
-  handle(IPC.questionNewChat, (_event, id) => dependencies.questions.newChat(requireId(id)), 'capture-failed')
-  handle(IPC.historyList, (_event, query = '') => dependencies.history.list(requireString(query, 200)), 'validation')
-  handle(IPC.historyOpen, (_event, id) => dependencies.questions.openHistory(requireId(id)))
-  handle(IPC.historyDelete, (_event, id) => dependencies.history.delete(requireId(id)))
-  handle(IPC.historyClear, () => dependencies.history.clear())
-  handle(IPC.historyExportPreview, (_event, value) => {
+  handle(
+    IPC.questionRetry,
+    (event, id, exchangeId) => dependencies.questions.retry(requireOwnedQuestion(event, id), requireId(exchangeId)),
+    'provider-unavailable'
+  )
+  handle(IPC.questionResolveWebSearch, (event, id, requestId, approved) => {
+    if (typeof approved !== 'boolean') throw new Error('Invalid web-search approval.')
+    return dependencies.questions.resolveWebSearch(requireOwnedQuestion(event, id), requireId(requestId), approved)
+  }, 'provider-unavailable')
+  handle(IPC.questionStop, (event, id) => dependencies.questions.stop(requireOwnedQuestion(event, id)))
+  handle(IPC.questionClose, (event, id) => dependencies.questions.close(requireOwnedQuestion(event, id)))
+  handle(
+    IPC.questionAddSnip,
+    (event, id) => dependencies.questions.addSnip(requireOwnedQuestion(event, id)),
+    'capture-failed'
+  )
+  handle(
+    IPC.questionNewChat,
+    (event, id) => dependencies.questions.newChat(requireOwnedQuestion(event, id)),
+    'capture-failed'
+  )
+  handle(
+    IPC.historyList,
+    settingsOnly((_event, query = '') => dependencies.history.list(requireString(query, 200))),
+    'validation'
+  )
+  handle(IPC.historyOpen, settingsOnly((_event, id) => dependencies.questions.openHistory(requireId(id))))
+  handle(IPC.historyDelete, settingsOnly((_event, id) => dependencies.history.delete(requireId(id))))
+  handle(IPC.historyClear, settingsOnly(() => dependencies.history.clear()))
+  handle(IPC.historyExportPreview, settingsOnly((_event, value) => {
     const record = dependencies.history.get(requireId(value))
     if (!record) throw new Error('That saved conversation no longer exists.')
     return conversationExportPreview(historyExportRecord(record))
-  })
-  handle(IPC.historyExport, (event, value, rawOptions) => {
+  }))
+  handle(IPC.historyExport, settingsOnly((event, value, rawOptions) => {
     const record = dependencies.history.get(requireId(value))
     if (!record) throw new Error('That saved conversation no longer exists.')
-    return exportConversation(BrowserWindow.fromWebContents(event.sender) ?? undefined, historyExportRecord(record), requireExportOptions(rawOptions))
-  }, 'validation')
-  handle(IPC.applicationOpenSettings, (_event, category) => showSettingsWindow(undefined, requireOptionalSettingsCategory(category)), 'validation')
+    return exportConversation(
+      BrowserWindow.fromWebContents(event.sender) ?? undefined,
+      historyExportRecord(record),
+      requireExportOptions(rawOptions)
+    )
+  }), 'validation')
+  handle(
+    IPC.applicationOpenSettings,
+    (_event, category) => showSettingsWindow(undefined, requireOptionalSettingsCategory(category)),
+    'validation'
+  )
   handle(IPC.clipboardWriteText, (_event, value) => {
     const text = requireString(value, 200_000)
     clipboard.writeText(text)
@@ -369,30 +636,77 @@ export function registerIpc(dependencies: IpcDependencies): void {
   ipcMain.handle(IPC.windowChromeMinimize, (event) => requireWindowChromeController(event).minimizeWindow())
   ipcMain.handle(IPC.windowChromeToggleMaximize, (event) => requireWindowChromeController(event).toggleMaximize())
   ipcMain.handle(IPC.windowChromeClose, (event) => requireWindowChromeController(event).closeWindow())
-  ipcMain.handle(IPC.windowChromeBeginResize, (event, edge: unknown) => { if (!isWindowResizeEdge(edge)) throw new Error('Invalid window resize edge.'); requireWindowChromeController(event).beginResize(edge) })
+  ipcMain.handle(IPC.windowChromeBeginResize, (event, edge: unknown) => {
+    if (!isWindowResizeEdge(edge)) throw new Error('Invalid window resize edge.')
+    requireWindowChromeController(event).beginResize(edge)
+  })
   ipcMain.on(IPC.windowChromeUpdateResize, (event) => getWindowChromeController(event)?.requestResizeUpdate())
   ipcMain.on(IPC.windowChromeEndResize, (event) => getWindowChromeController(event)?.endResize())
-  handle(IPC.externalOpen, async (_event, value) => { const url = new URL(requireString(value, 2048)); if (!['https:', 'http:'].includes(url.protocol)) throw new Error('Only web links can be opened.'); await shell.openExternal(url.toString()) }, 'validation')
+  handle(IPC.externalOpen, async (_event, value) => {
+    const url = new URL(requireString(value, 2048))
+    if (!['https:', 'http:'].includes(url.protocol)) throw new Error('Only web links can be opened.')
+    await shell.openExternal(url.toString())
+  }, 'validation')
   handle(IPC.externalOpenOcrEntity, async (_event, kind, value) => {
     await shell.openExternal(ocrEntityExternalTarget(requireOcrExternalActionKind(kind), requireString(value, 2_048)))
   }, 'validation')
 }
 
-function requireSettingsSender(event: IpcMainInvokeEvent): void { if (event.sender.isDestroyed() || !ownsSettingsWebContents(event.sender.id)) throw new Error('Application updates are only available from Settings.') }
-function requireWindowChromeController(event: IpcMainInvokeEvent | IpcMainEvent): WindowChromeController { const controller = resolveWindowChromeController(event as WindowChromeIpcEvent); const target = BrowserWindow.fromWebContents(event.sender); if (!target || target.isDestroyed() || target.id !== controller.windowId || target.webContents.id !== controller.webContentsId) throw new Error('Window chrome is unavailable for this sender.'); return controller }
-function getWindowChromeController(event: IpcMainEvent): WindowChromeController | null { try { return requireWindowChromeController(event) } catch { return null } }
-function requireString(value: unknown, max: number): string { if (typeof value !== 'string' || value.length > max) throw new Error('Invalid text value.'); return value }
-function requireTrimmedString(value: unknown, max: number): string { const text = requireString(value, max).trim(); if (!text) throw new Error('Text value is required.'); return text }
+function requireSettingsSender(event: IpcMainInvokeEvent): void {
+  if (event.sender.isDestroyed() || !ownsSettingsWebContents(event.sender.id)) throw new Error('This action is only available from Settings.')
+}
+function requireWindowChromeController(event: IpcMainInvokeEvent | IpcMainEvent): WindowChromeController {
+  const controller = resolveWindowChromeController(event as WindowChromeIpcEvent)
+  const target = BrowserWindow.fromWebContents(event.sender)
+  if (!target || target.isDestroyed() || target.id !== controller.windowId || target.webContents.id !== controller.webContentsId) throw new Error('Window chrome is unavailable for this sender.')
+  return controller
+}
+function getWindowChromeController(event: IpcMainEvent): WindowChromeController | null {
+  try { return requireWindowChromeController(event) } catch { return null }
+}
+function requireString(value: unknown, max: number): string {
+  if (typeof value !== 'string' || value.length > max) throw new Error('Invalid text value.')
+  return value
+}
+function requireTrimmedString(value: unknown, max: number): string {
+  const text = requireString(value, max).trim()
+  if (!text) throw new Error('Text value is required.')
+  return text
+}
 function requireId(value: unknown): string { return requireString(value, 100) }
-function requireNullableString(value: unknown, max: number): string | null { return value === null ? null : requireString(value, max) }
+function requireNullableString(value: unknown, max: number): string | null {
+  return value === null ? null : requireString(value, max)
+}
 function requireAccelerator(value: unknown): string | null { return requireNullableString(value, 100) }
-function requireAppearance(value: unknown): AppearancePreference { if (!['system', 'dark', 'light'].includes(String(value))) throw new Error('Invalid appearance.'); return value as AppearancePreference }
-function requireOptionalSettingsCategory(value: unknown): SettingsCategory | undefined { if (value === undefined) return undefined; if (!isSettingsCategory(value)) throw new Error('Invalid Settings category.'); return value }
-function requireOnboardingOutcome(value: unknown): Exclude<OnboardingStatus, 'pending'> { if (!['skipped', 'completed'].includes(String(value))) throw new Error('Invalid onboarding outcome.'); return value as Exclude<OnboardingStatus, 'pending'> }
-function requireShortcutAction(value: unknown): ShortcutAction { if (!['region', 'display', 'window', 'repeat-last', 'settings'].includes(String(value))) throw new Error('Invalid shortcut action.'); return value as ShortcutAction }
-function requireCaptureMode(value: unknown): CaptureMode { if (!['region', 'display', 'window', 'repeat-last'].includes(String(value))) throw new Error('Invalid capture mode.'); return value as CaptureMode }
-function requireCaptureFreezeReason(value: unknown): CaptureFreezeReason { if (!['edit', 'analyze'].includes(String(value))) throw new Error('Invalid capture freeze reason.'); return value as CaptureFreezeReason }
-function requireCaptureFrame(value: unknown): Uint8Array { if (!(value instanceof Uint8Array) || value.byteLength < 24 || value.byteLength > 64 * 1024 * 1024) throw new Error('Invalid live capture frame.'); return value }
+function requireAppearance(value: unknown): AppearancePreference {
+  if (!['system', 'dark', 'light'].includes(String(value))) throw new Error('Invalid appearance.')
+  return value as AppearancePreference
+}
+function requireOptionalSettingsCategory(value: unknown): SettingsCategory | undefined {
+  if (value === undefined) return undefined
+  if (!isSettingsCategory(value)) throw new Error('Invalid Settings category.')
+  return value
+}
+function requireOnboardingOutcome(value: unknown): Exclude<OnboardingStatus, 'pending'> {
+  if (!['skipped', 'completed'].includes(String(value))) throw new Error('Invalid onboarding outcome.')
+  return value as Exclude<OnboardingStatus, 'pending'>
+}
+function requireShortcutAction(value: unknown): ShortcutAction {
+  if (!['region', 'display', 'window', 'repeat-last', 'settings'].includes(String(value))) throw new Error('Invalid shortcut action.')
+  return value as ShortcutAction
+}
+function requireCaptureMode(value: unknown): CaptureMode {
+  if (!['region', 'display', 'window', 'repeat-last'].includes(String(value))) throw new Error('Invalid capture mode.')
+  return value as CaptureMode
+}
+function requireCaptureFreezeReason(value: unknown): CaptureFreezeReason {
+  if (!['edit', 'analyze'].includes(String(value))) throw new Error('Invalid capture freeze reason.')
+  return value as CaptureFreezeReason
+}
+function requireCaptureFrame(value: unknown): Uint8Array {
+  if (!(value instanceof Uint8Array) || value.byteLength < 24 || value.byteLength > 64 * 1024 * 1024) throw new Error('Invalid live capture frame.')
+  return value
+}
 function requireCaptureVideoFrameMetadata(value: unknown): CaptureVideoFrameMetadata {
   if (!value || typeof value !== 'object') throw new Error('Invalid live capture metadata.')
   const item = value as Record<string, unknown>
@@ -404,9 +718,19 @@ function requireCaptureVideoFrameMetadata(value: unknown): CaptureVideoFrameMeta
   if (!isRectangle(item.rectangle)) throw new Error('Invalid live capture selection.')
   return { viewport: { width, height }, rectangle: item.rectangle }
 }
-function requireOcrExternalActionKind(value: unknown): OcrExternalActionKind { if (!['url', 'email', 'phone'].includes(String(value))) throw new Error('Invalid OCR action.'); return value as OcrExternalActionKind }
-function requireOcrLanguagePreference(value: unknown): string { const code = requireString(value, 35); if (code && !/^[A-Za-z0-9-]{2,35}$/.test(code)) throw new Error('Invalid OCR language.'); return code }
-function requireApiProvider(value: unknown): Exclude<ProviderKind, 'chatgpt'> { if (!['openai', 'anthropic', 'openrouter', 'custom'].includes(String(value))) throw new Error('Invalid API provider.'); return value as Exclude<ProviderKind, 'chatgpt'> }
+function requireOcrExternalActionKind(value: unknown): OcrExternalActionKind {
+  if (!['url', 'email', 'phone'].includes(String(value))) throw new Error('Invalid OCR action.')
+  return value as OcrExternalActionKind
+}
+function requireOcrLanguagePreference(value: unknown): string {
+  const code = requireString(value, 35)
+  if (code && !/^[A-Za-z0-9-]{2,35}$/.test(code)) throw new Error('Invalid OCR language.')
+  return code
+}
+function requireApiProvider(value: unknown): Exclude<ProviderKind, 'chatgpt'> {
+  if (!['openai', 'anthropic', 'openrouter', 'custom'].includes(String(value))) throw new Error('Invalid API provider.')
+  return value as Exclude<ProviderKind, 'chatgpt'>
+}
 function requireCustomEndpoint(value: unknown): CustomEndpoint {
   if (value === undefined || value === null) return {}
   if (typeof value !== 'object') throw new Error('Invalid API address.')
@@ -421,9 +745,25 @@ function requireCustomEndpoint(value: unknown): CustomEndpoint {
     ...(modelIds === undefined ? {} : { modelIds: modelIds as string[] })
   }
 }
-function requireSelection(value: unknown): ConversationSelection { if (!value || typeof value !== 'object') throw new Error('Invalid conversation selection.'); const item = value as Record<string, unknown>; const provider = String(item.provider); if (!['chatgpt', 'openai', 'anthropic', 'openrouter', 'custom'].includes(provider)) throw new Error('Invalid provider selection.'); return { profileId: requireTrimmedString(item.profileId, 100), provider: provider as ProviderKind, modelId: requireTrimmedString(item.modelId, 200), reasoningEffort: requireNullableString(item.reasoningEffort, 50) } }
-function isRectangle(value: unknown): value is Rectangle { return Boolean(value && typeof value === 'object' && ['x','y','width','height'].every((key) => typeof (value as Record<string, unknown>)[key] === 'number' && Number.isFinite((value as Record<string, unknown>)[key]))) }
-function requireInteger(value: unknown, minimum: number, maximum: number): number { if (typeof value !== 'number' || !Number.isInteger(value) || value < minimum || value > maximum) throw new Error('Invalid number.'); return value }
+function requireSelection(value: unknown): ConversationSelection {
+  if (!value || typeof value !== 'object') throw new Error('Invalid conversation selection.')
+  const item = value as Record<string, unknown>
+  const provider = String(item.provider)
+  if (!['chatgpt', 'openai', 'anthropic', 'openrouter', 'custom'].includes(provider)) throw new Error('Invalid provider selection.')
+  return {
+    profileId: requireTrimmedString(item.profileId, 100),
+    provider: provider as ProviderKind,
+    modelId: requireTrimmedString(item.modelId, 200),
+    reasoningEffort: requireNullableString(item.reasoningEffort, 50)
+  }
+}
+function isRectangle(value: unknown): value is Rectangle {
+  return Boolean(value && typeof value === 'object' && ['x','y','width','height'].every((key) => typeof (value as Record<string, unknown>)[key] === 'number' && Number.isFinite((value as Record<string, unknown>)[key])))
+}
+function requireInteger(value: unknown, minimum: number, maximum: number): number {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < minimum || value > maximum) throw new Error('Invalid number.')
+  return value
+}
 
 function requireCaptureRecipe(value: unknown): CaptureRecipe {
   if (!value || typeof value !== 'object') throw new Error('Invalid capture recipe.')
@@ -478,7 +818,11 @@ function requireExportOptions(value: unknown): ConversationExportOptions {
   const options = value as Record<string, unknown>
   if (!['markdown', 'json'].includes(String(options.format))) throw new Error('Invalid export format.')
   if (typeof options.includeScreenshots !== 'boolean' || typeof options.includeProviderMetadata !== 'boolean') throw new Error('Invalid export privacy options.')
-  return { format: options.format as ConversationExportOptions['format'], includeScreenshots: options.includeScreenshots, includeProviderMetadata: options.includeProviderMetadata }
+  return {
+    format: options.format as ConversationExportOptions['format'],
+    includeScreenshots: options.includeScreenshots,
+    includeProviderMetadata: options.includeProviderMetadata
+  }
 }
 
 function historyExportRecord(record: ReturnType<ConversationHistoryStore['get']> & {}): ConversationExportRecord {

@@ -65,7 +65,8 @@ export const DEFAULT_SHORTCUTS: ShortcutSettings = {
 
 const DEFAULTS: AppSettings = {
   version: 5,
-  appearance: 'light',
+  /** Follow the operating system so a fresh install matches the desktop it lands on. */
+  appearance: 'system',
   onboardingStatus: 'pending',
   launchAtLogin: false,
   automaticUpdateChecks: false,
@@ -187,7 +188,7 @@ function sanitize(value: StoredSettingsInput): AppSettings {
     version: 5,
     appearance: APPEARANCES.has(value.appearance as AppearancePreference)
       ? (value.appearance as AppearancePreference)
-      : 'light',
+      : DEFAULTS.appearance,
     onboardingStatus: ONBOARDING_STATUSES.has(value.onboardingStatus as OnboardingStatus)
       ? (value.onboardingStatus as OnboardingStatus)
       : value.onboardingCompleted === true

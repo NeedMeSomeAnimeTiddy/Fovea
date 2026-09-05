@@ -2,18 +2,32 @@ import { memo, useCallback, useEffect, useId, useMemo, useRef, useState, type Re
 import { createRoot } from 'react-dom/client'
 import { createPortal } from 'react-dom'
 import type { QuestionViewState, RequestDisclosureState } from '@shared/contracts/ipc'
-import type { ConversationExchange, ConversationExportOptions, ConversationExportPreview, ConversationSelection, CustomPrompt, ImageImportResult, OcrEntity, ProviderModelCapability, QuestionAttachment, QuestionDraft, ResponsePhase } from '@shared/types/app'
+import type {
+  ConversationExchange,
+  ConversationExportOptions,
+  ConversationExportPreview,
+  ConversationSelection,
+  CustomPrompt,
+  ImageImportResult,
+  OcrEntity,
+  ProviderModelCapability,
+  QuestionAttachment,
+  QuestionDraft,
+  ResponsePhase
+} from '@shared/types/app'
 import type { ProviderEvent } from '@shared/types/provider'
 import type { AppError, AppRecoveryKind } from '@shared/types/app-error'
 import {
   Button,
+  ConfirmDialog,
   IconButton,
   Spinner,
   StatusBanner,
   TextArea,
   Toast,
   ToastViewport,
-  Tooltip
+  Tooltip,
+  type ButtonProps
 } from '../design-system'
 import { initialiseAppearance } from '../appearance'
 import { AppStatusNotice, appErrorFromUnknown, spectralStateForPhase } from '../status/status-presentation'
@@ -75,6 +89,13 @@ export function QuestionApp(): React.JSX.Element {
   const [expandedModelId, setExpandedModelId] = useState<string | null>(null)
   const [editor, setEditor] = useState<{ attachmentId: string; imageDataUrl: string } | null>(null)
   const [editorSaving, setEditorSaving] = useState(false)
+  const [pendingOcrEntity, setPendingOcrEntity] = useState<{
+    action: NonNullable<ReturnType<typeof ocrEntityExternalAction>>
+    entity: OcrEntity
+    error: string
+    opening: boolean
+    returnFocus: HTMLElement | null
+  } | null>(null)
   const [dropActive, setDropActive] = useState(false)
   const [exportPreview, setExportPreview] = useState<ConversationExportPreview | null>(null)
   const [exportBusy, setExportBusy] = useState(false)
@@ -88,7 +109,10 @@ export function QuestionApp(): React.JSX.Element {
   const draftApplied = useRef(false)
   const updateLatest = useCallback((update: (exchange: ConversationExchange) => ConversationExchange): void => {
     setState((current) => current
-      ? { ...current, exchanges: current.exchanges.map((item, index) => index === current.exchanges.length - 1 ? update(item) : item) }
+      ? {
+        ...current,
+        exchanges: current.exchanges.map((item, index) => index === current.exchanges.length - 1 ? update(item) : item)
+      }
       : current)
   }, [])
   const setPhase = useCallback((phase: ResponsePhase): void => {
@@ -242,9 +266,19 @@ export function QuestionApp(): React.JSX.Element {
       phase: 'connecting',
       segmentId: state.segments.at(-1)?.id ?? '',
       attachmentIds: state.attachments.filter((attachment) => attachment.status === 'draft').map((attachment) => attachment.id),
-      ...(searchPreferred ? { webSearch: { id: `preferred-${Date.now()}`, query: question, status: 'searching' as const } } : {})
+      ...(searchPreferred ? { webSearch: {
+        id: `preferred-${Date.now()}`,
+        query: question,
+        status: 'searching' as const
+      } } : {})
     }
-    setState({ ...state, attachments: state.attachments.map((attachment) => attachment.status === 'draft' ? { ...attachment, status: 'sent' } : attachment), busy: true, phase: 'connecting', exchanges: [...state.exchanges, optimistic] })
+    setState({
+      ...state,
+      attachments: state.attachments.map((attachment) => attachment.status === 'draft' ? { ...attachment, status: 'sent' } : attachment),
+      busy: true,
+      phase: 'connecting',
+      exchanges: [...state.exchanges, optimistic]
+    })
     void window.fovea.question.send(sessionId, question, searchPreferred).catch((reason) => {
       setError(appErrorFromUnknown(reason))
       setPhase('failed')
@@ -346,10 +380,18 @@ export function QuestionApp(): React.JSX.Element {
   const openOcrEntity = (entity: OcrEntity): void => {
     const action = ocrEntityExternalAction(entity)
     if (!action) return
-    if (!window.confirm(`${action.confirmation} This will leave Fovea.`)) return
-    void window.fovea.openOcrEntity(action.kind, entity.value).catch((reason) => {
-      setError(appErrorFromUnknown(reason))
-    })
+    setPendingOcrEntity({ action, entity, error: '', opening: false, returnFocus: focusedElement() })
+  }
+  const confirmOcrEntity = async (): Promise<void> => {
+    if (!pendingOcrEntity || pendingOcrEntity.opening) return
+    setPendingOcrEntity({ ...pendingOcrEntity, error: '', opening: true })
+    try {
+      await window.fovea.openOcrEntity(pendingOcrEntity.action.kind, pendingOcrEntity.entity.value)
+      setPendingOcrEntity(null)
+    } catch (reason) {
+      const message = appErrorFromUnknown(reason).message
+      setPendingOcrEntity((current) => current && { ...current, error: message, opening: false })
+    }
   }
   const changeModel = async (modelId: string, reasoningEffort: string | null): Promise<void> => {
     if (!state?.selection || state.busy || state.exchanges.some((exchange) => exchange.webSearch?.status === 'requested')) return
@@ -425,7 +467,13 @@ export function QuestionApp(): React.JSX.Element {
 
   if (!state) {
     return (
-      <WindowFrame compactControlsIntegrated title="Fovea" edgeState={error ? 'error' : 'thinking'} showCompactControls showResizeRegions={false} showTitlebar={false}>
+      <WindowFrame
+        compactControlsIntegrated
+        title="Fovea"
+        edgeState={error ? 'error' : 'thinking'}
+        showCompactControls
+        showTitlebar={false}
+      >
         <ToastViewport className="question-toasts" placement="top">
           {error && <AppStatusNotice error={error} onDismiss={() => setError(null)} onRecovery={recover} />}
         </ToastViewport>
@@ -460,21 +508,43 @@ export function QuestionApp(): React.JSX.Element {
       title="Fovea"
       edgeState={error || missingModels ? 'error' : spectralStateForPhase(state.phase)}
       showCompactControls
-      showResizeRegions={false}
       showTitlebar={false}
-      titlebarActions={<QuestionTitlebarActions pinned={state.pinned} onExport={() => void openExport()} onTogglePinned={() => void togglePinned()} />}
+      titlebarActions={<QuestionTitlebarActions
+        pinned={state.pinned}
+        onExport={() => void openExport()}
+        onTogglePinned={() => void togglePinned()}
+      />}
     >
       <main
         className={dropActive ? 'response-shell response-shell--drop-active' : 'response-shell'}
-        onDragEnter={(event) => { if (event.dataTransfer.types.includes('Files')) { event.preventDefault(); setDropActive(true) } }}
-        onDragOver={(event) => { if (event.dataTransfer.types.includes('Files')) { event.preventDefault(); event.dataTransfer.dropEffect = 'copy' } }}
-        onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropActive(false) }}
-        onDrop={(event) => { event.preventDefault(); void dropImages([...event.dataTransfer.files]) }}
+        onDragEnter={(event) => {
+          if (event.dataTransfer.types.includes('Files')) {
+            event.preventDefault()
+            setDropActive(true)
+          }
+        }}
+        onDragOver={(event) => {
+          if (event.dataTransfer.types.includes('Files')) {
+            event.preventDefault()
+            event.dataTransfer.dropEffect = 'copy'
+          }
+        }}
+        onDragLeave={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropActive(false)
+        }}
+        onDrop={(event) => {
+          event.preventDefault()
+          void dropImages([...event.dataTransfer.files])
+        }}
       >
         {dropActive && <div className="image-drop-target" role="status">Drop images to attach them locally</div>}
         <ToastViewport className="question-toasts" placement="top">
           {state.disclosure && (
-            <Toast duration={8000} resetKey={state.disclosure} title={state.draft?.recipeName ? 'Capture recipe ready' : 'Provider changed'}>
+            <Toast
+              duration={8000}
+              resetKey={state.disclosure}
+              title={state.draft?.recipeName ? 'Capture recipe ready' : 'Provider changed'}
+            >
               {state.disclosure}
             </Toast>
           )}
@@ -526,7 +596,10 @@ export function QuestionApp(): React.JSX.Element {
         {!state.selection && !showingLocalOcr
           ? (
               <section className="setup-card">
-                <StatusBanner title={state.launchError ? 'Capture recipe paused' : state.profiles.length ? 'No compatible AI model' : 'Connect an AI provider'} tone="warning">
+                <StatusBanner
+                  title={state.launchError ? 'Capture recipe paused' : state.profiles.length ? 'No compatible AI model' : 'Connect an AI provider'}
+                  tone="warning"
+                >
                   {state.launchError ?? (state.profiles.length
                     ? 'Choose an image-capable model in Settings.'
                     : 'Connect a provider once, then every capture can be answered automatically.')}
@@ -599,7 +672,14 @@ export function QuestionApp(): React.JSX.Element {
                       )
                     : state.busy
                       ? <AnswerSkeleton />
-                      : <EmptyConversation disabled={askDisabled} onAsk={() => { setModelOpen(false); setCustomOpen(false); setAskOpen(true) }} />}
+                      : <EmptyConversation
+                        disabled={askDisabled}
+                        onAsk={() => {
+                          setModelOpen(false)
+                          setCustomOpen(false)
+                          setAskOpen(true)
+                        }}
+                      />}
                 </div>
 
                 {state.requestDisclosure && (
@@ -626,13 +706,14 @@ export function QuestionApp(): React.JSX.Element {
                 <footer className="response-actions">
                   <div className="capture-wrap" ref={captureRef}>
                     <Tooltip content={state.capturePending ? 'Select a screen region' : 'Capture options'}>
-                      <IconButton
+                      <DockAction
                         aria-expanded={captureMenuOpen}
                         aria-haspopup="menu"
                         disabled={state.capturePending}
-                        icon={<Icon name="recapture" />}
+                        icon="recapture"
                         label={state.capturePending ? 'Screen region selection is open' : 'Capture options'}
-                        size="compact"
+                        optionalText
+                        text="Capture"
                         onClick={() => {
                           setAskOpen(false)
                           setCustomOpen(false)
@@ -654,14 +735,15 @@ export function QuestionApp(): React.JSX.Element {
                   {state.selection && (
                     <div className="model-wrap" ref={modelRef}>
                       <Tooltip content={modelLabel}>
-                        <IconButton
+                        <DockAction
                           aria-expanded={modelOpen}
                           aria-haspopup="menu"
                           aria-pressed={modelOpen}
                           disabled={state.busy || hasPendingWebSearch || state.models.length === 0}
-                          icon={<Icon name="chip" />}
+                          icon="chip"
                           label="Choose model and thinking effort"
-                          size="compact"
+                          optionalText
+                          text="Model"
                           onClick={() => {
                             setAskOpen(false)
                             setCustomOpen(false)
@@ -687,10 +769,10 @@ export function QuestionApp(): React.JSX.Element {
                   <span className="response-actions__spacer" />
                   {state.busy && (
                     <Tooltip content={latestExchange?.source === 'ocr' ? 'Stop extracting text' : 'Stop answering'}>
-                      <IconButton
-                        icon={<Icon name="stop" />}
+                      <DockAction
+                        icon="stop"
                         label={latestExchange?.source === 'ocr' ? 'Stop extracting text' : 'Stop answering'}
-                        size="compact"
+                        text="Stop"
                         variant="danger"
                         onClick={() => void window.fovea.question.stop(sessionId)}
                       />
@@ -698,21 +780,21 @@ export function QuestionApp(): React.JSX.Element {
                   )}
                   {!state.busy && latestExchange?.source !== 'ocr' && (
                     <Tooltip content="Generate a fresh answer">
-                      <IconButton
+                      <DockAction
                         disabled={!latestExchange || hasPendingWebSearch}
-                        icon={<Icon name="regenerate" />}
+                        icon="regenerate"
                         label="Generate a fresh answer"
-                        size="compact"
+                        text="Regenerate"
                         onClick={() => latestExchange && retryExchange(latestExchange)}
                       />
                     </Tooltip>
                   )}
                   <Tooltip content={copyStatus || 'Copy answer'}>
-                    <IconButton
+                    <DockAction
                       disabled={!latestExchange || !exchangeText(latestExchange)}
-                      icon={<Icon name={copyStatus ? 'check' : 'copy'} />}
+                      icon={copyStatus ? 'check' : 'copy'}
                       label={copyStatus || 'Copy answer'}
-                      size="compact"
+                      text={copyStatus ? 'Copied' : 'Copy'}
                       onClick={() => latestExchange && void copy(exchangeText(latestExchange))}
                     />
                   </Tooltip>
@@ -742,7 +824,36 @@ export function QuestionApp(): React.JSX.Element {
             }}
           />
         )}
-        {exportPreview && <ConversationExportDialog preview={exportPreview} busy={exportBusy} returnFocus={modalReturnFocusRef.current} onCancel={() => setExportPreview(null)} onExport={exportConversation} />}
+        {exportPreview && <ConversationExportDialog
+          preview={exportPreview}
+          busy={exportBusy}
+          returnFocus={modalReturnFocusRef.current}
+          onCancel={() => setExportPreview(null)}
+          onExport={exportConversation}
+        />}
+        {pendingOcrEntity && (
+          <ConfirmDialog
+            busy={pendingOcrEntity.opening}
+            busyLabel="Leaving Fovea"
+            confirmLabel={{
+              url: 'Open link',
+              email: 'Open email app',
+              phone: 'Open calling app'
+            }[pendingOcrEntity.action.kind]}
+            destination={pendingOcrEntity.entity.value}
+            error={pendingOcrEntity.error || undefined}
+            returnFocus={pendingOcrEntity.returnFocus}
+            title={{
+              url: 'Open this link?',
+              email: 'Email this address?',
+              phone: 'Call this number?'
+            }[pendingOcrEntity.action.kind]}
+            onCancel={() => setPendingOcrEntity(null)}
+            onConfirm={() => void confirmOcrEntity()}
+          >
+            {pendingOcrEntity.action.confirmation} This will leave Fovea.
+          </ConfirmDialog>
+        )}
         <div className="fui-sr-only" aria-live="polite">{copyStatus}</div>
       </main>
     </WindowFrame>
@@ -835,7 +946,11 @@ export function RequestDisclosure({
         </p>
         {requestAttachments.length > 0
           ? (
-              <div className="request-disclosure__attachments" aria-label="Images shared with the next request" role="list">
+              <div
+                className="request-disclosure__attachments"
+                aria-label="Images shared with the next request"
+                role="list"
+              >
                 {requestAttachments.map((attachment, index) => (
                   <div className="request-disclosure__attachment" key={attachment.id} role="listitem">
                     <button
@@ -900,15 +1015,18 @@ export function AttachmentStrip({
     document.addEventListener('keydown', closeOnEscape)
     return () => document.removeEventListener('keydown', closeOnEscape)
   }, [menu])
-  const openMenu = useCallback((event: React.MouseEvent<HTMLButtonElement>, attachmentId: string, index: number): void => {
-    const bounds = event.currentTarget.getBoundingClientRect()
-    const menuWidth = 172
-    const menuHeight = 132
-    const left = Math.max(12, Math.min(innerWidth - menuWidth - 12, bounds.left))
-    const above = bounds.top - menuHeight - 8
-    const top = above >= 12 ? above : Math.min(innerHeight - menuHeight - 12, bounds.bottom + 8)
-    setMenu({ attachmentId, index, left, top })
-  }, [])
+  const openMenu = useCallback(
+    (event: React.MouseEvent<HTMLButtonElement>, attachmentId: string, index: number): void => {
+      const bounds = event.currentTarget.getBoundingClientRect()
+      const menuWidth = 172
+      const menuHeight = 132
+      const left = Math.max(12, Math.min(innerWidth - menuWidth - 12, bounds.left))
+      const above = bounds.top - menuHeight - 8
+      const top = above >= 12 ? above : Math.min(innerHeight - menuHeight - 12, bounds.bottom + 8)
+      setMenu({ attachmentId, index, left, top })
+    },
+    []
+  )
   // Attachments can now be imported pictures or PDF pages, so the wording stays neutral.
   return (
     <section className="attachment-strip" aria-label="Conversation images">
@@ -933,9 +1051,33 @@ export function AttachmentStrip({
             style={{ left: menu.left, top: menu.top }}
             onPointerDown={(event) => event.stopPropagation()}
           >
-            <button role="menuitem" type="button" onClick={() => { setMenu(null); onPreview(selected.id) }}><Icon name="view" />View Full</button>
-            <button disabled={disabled || selected.status !== 'draft'} role="menuitem" type="button" onClick={() => { setMenu(null); onEdit(selected.id) }}><Icon name="edit" />Edit</button>
-            <button className="danger" disabled={disabled || selected.status !== 'draft'} role="menuitem" type="button" onClick={() => { setMenu(null); onRemove(selected.id) }}><Icon name="remove" />Remove</button>
+            <button
+              role="menuitem"
+              type="button"
+              onClick={() => {
+                setMenu(null)
+                onPreview(selected.id)
+              }}
+            ><Icon name="view" />View Full</button>
+            <button
+              disabled={disabled || selected.status !== 'draft'}
+              role="menuitem"
+              type="button"
+              onClick={() => {
+                setMenu(null)
+                onEdit(selected.id)
+              }}
+            ><Icon name="edit" />Edit</button>
+            <button
+              className="danger"
+              disabled={disabled || selected.status !== 'draft'}
+              role="menuitem"
+              type="button"
+              onClick={() => {
+                setMenu(null)
+                onRemove(selected.id)
+              }}
+            ><Icon name="remove" />Remove</button>
           </div>
         </div>,
         document.body
@@ -1012,6 +1154,33 @@ export function requestDisclosureKey(disclosure: RequestDisclosureState): string
     disclosure.modelName,
     disclosure.attachmentIds
   ])
+}
+
+/**
+ * One control in the floating action dock: an icon with a short visible word beside it, while the
+ * fuller accessible name stays on `aria-label` for screen readers, tooltips, and tests. Actions
+ * whose word is a convenience rather than the only cue drop it when the window gets narrow.
+ */
+function DockAction({
+  icon,
+  label,
+  optionalText = false,
+  text,
+  variant = 'ghost',
+  ...buttonProps
+}: Omit<ButtonProps, 'children' | 'size' | 'variant'> & {
+  icon: string
+  label: string
+  optionalText?: boolean
+  text: string
+  variant?: Exclude<ButtonProps['variant'], 'primary'>
+}): React.JSX.Element {
+  return (
+    <Button {...buttonProps} aria-label={label} className="response-actions__button" size="compact" variant={variant}>
+      <Icon name={icon} />
+      <span className={optionalText ? 'response-actions__text response-actions__text--optional' : 'response-actions__text'}>{text}</span>
+    </Button>
+  )
 }
 
 export function CaptureMenu({
@@ -1244,7 +1413,12 @@ export function ModelMenu({
 }
 
 function recipeDraftSummary(draft: QuestionDraft): string {
-  const mode = ({ region: 'Region capture', display: 'Current-display capture', window: 'Focused-window capture', 'repeat-last': 'Repeat-last capture' })[draft.captureMode ?? 'region']
+  const mode = ({
+    region: 'Region capture',
+    display: 'Current-display capture',
+    window: 'Focused-window capture',
+    'repeat-last': 'Repeat-last capture'
+  })[draft.captureMode ?? 'region']
   const web = draft.preferWebSearch ? 'web search preferred' : 'web search off'
   const ocr = draft.extractText ? `local OCR on${draft.ocrLanguageCode ? ` (${draft.ocrLanguageCode})` : ''}` : 'local OCR off'
   return `${mode}; ${web}; ${ocr}.`
@@ -1263,14 +1437,27 @@ function Icon({ name }: { name: string }): React.JSX.Element {
     capture: <><rect x="4" y="5" width="16" height="14" rx="2" /><path d="m7 15 3-3 2.5 2.5L15 12l3 3M8 9h.01" /></>,
     check: <path d="m5 12 4 4L19 6" />,
     chevron: <path d="m8 10 4 4 4-4" />,
-    chip: <><rect x="6" y="6" width="12" height="12" rx="2" /><rect x="9" y="9" width="6" height="6" rx="1" /><path d="M9 1v5m6-5v5M9 18v5m6-5v5M1 9h5m-5 6h5m12-6h5m-5 6h5" /></>,
+    chip: <>
+      <rect x="6" y="6" width="12" height="12" rx="2" />
+      <rect x="9" y="9" width="6" height="6" rx="1" />
+      <path d="M9 1v5m6-5v5M9 18v5m6-5v5M1 9h5m-5 6h5m12-6h5m-5 6h5" />
+    </>,
     close: <path d="m6 6 12 12M18 6 6 18" />,
-    copy: <><rect x="8" y="8" width="11" height="11" rx="2" /><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" /></>,
+    copy: <>
+      <rect x="8" y="8" width="11" height="11" rx="2" />
+      <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />
+    </>,
     edit: <><path d="m4 20 4.5-1 10-10-3.5-3.5-10 10L4 20Z" /><path d="m13.5 7 3.5 3.5" /></>,
-    globe: <><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3c2.2 2.5 3.3 5.5 3.3 9S14.2 18.5 12 21M12 3C9.8 5.5 8.7 8.5 8.7 12S9.8 18.5 12 21" /></>,
+    globe: <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M3 12h18M12 3c2.2 2.5 3.3 5.5 3.3 9S14.2 18.5 12 21M12 3C9.8 5.5 8.7 8.5 8.7 12S9.8 18.5 12 21" />
+    </>,
     'new-chat': <><path d="M5 5h14v11H9l-4 3V5Z" /><path d="M12 8v5m-2.5-2.5h5" /></>,
     recapture: <path d="M20 7v5h-5M4 17v-5h5M6.2 8a7 7 0 0 1 11.2-2l2.6 6M17.8 16a7 7 0 0 1-11.2 2L4 12" />,
-    regenerate: <><path d="m12 3 1.3 4.7L18 9l-4.7 1.3L12 15l-1.3-4.7L6 9l4.7-1.3L12 3Z" /><path d="m18 15 .7 2.3L21 18l-2.3.7L18 21l-.7-2.3L15 18l2.3-.7L18 15Z" /></>,
+    regenerate: <>
+      <path d="m12 3 1.3 4.7L18 9l-4.7 1.3L12 15l-1.3-4.7L6 9l4.7-1.3L12 3Z" />
+      <path d="m18 15 .7 2.3L21 18l-2.3.7L18 21l-.7-2.3L15 18l2.3-.7L18 15Z" />
+    </>,
     remove: <><path d="M5 7h14M9 7V4h6v3m-8 0 1 13h8l1-13" /><path d="M10 11v5m4-5v5" /></>,
     send: <path d="m3 11 18-8-8 18-2-8-8-2Zm8 2 4-4" />,
     stop: <rect x="7" y="7" width="10" height="10" rx="1" />,

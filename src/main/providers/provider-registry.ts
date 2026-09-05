@@ -182,7 +182,11 @@ export class ProviderRegistry extends EventEmitter {
     await this.validateSelection(selection)
     const turn: VisionTurnInput = { ...input, modelId: selection.modelId, reasoningEffort: selection.reasoningEffort }
     if (selection.provider === 'chatgpt') {
-      yield* this.chatgpt.sendMessage(conversationId, turn)
+      // The Codex thread already holds every earlier turn, so replaying them would duplicate the
+      // conversation server-side.
+      const threadTurn = { ...turn }
+      delete threadTurn.history
+      yield* this.chatgpt.sendMessage(conversationId, threadTurn)
       return
     }
     const profile = this.profiles.require(selection.profileId)

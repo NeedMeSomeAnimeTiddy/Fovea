@@ -168,18 +168,24 @@ const mocks = vi.hoisted(() => {
   const listModels = vi.fn(async () => [{ id: 'vision-1', displayName: 'Vision', provider: 'chatgpt', inputModalities: ['text', 'image'], supportedReasoningEfforts: ['low'], defaultReasoningEffort: 'low', isDefault: true }])
   const startNewCapture = vi.fn<(destination?: { onCompleted(capture: any): Promise<void>; onCancelled?(): void }) => Promise<void>>(async () => undefined)
   const readImage = vi.fn(async () => Buffer.from('original-png-bytes'))
+  const chatgptProfile = { id: 'profile-1', name: 'ChatGPT', provider: 'chatgpt', authentication: 'chatgpt-oauth', authenticationState: 'signed-in', defaultModelId: 'vision-1', defaultReasoningEffort: 'low', health: 'available', isDefault: true }
+  const openAiProfile = { id: 'profile-2', name: 'OpenAI key', provider: 'openai', authentication: 'api-key', authenticationState: 'signed-in', defaultModelId: 'vision-1', defaultReasoningEffort: 'low', health: 'available', isDefault: false }
+  const profiles: Array<Record<string, unknown>> = [chatgptProfile]
 
   return {
     FakeWindow,
     cancel,
+    chatgptProfile,
     createConversation,
     deleteConversation,
     deleteScreenshot,
     hasSwitch,
     listModels,
     loadRenderer,
+    openAiProfile,
+    profiles,
     provider: {
-      listProfiles: () => [{ id: 'profile-1', name: 'ChatGPT', provider: 'chatgpt', authentication: 'chatgpt-oauth', authenticationState: 'signed-in', defaultModelId: 'vision-1', defaultReasoningEffort: 'low', health: 'available', isDefault: true }],
+      listProfiles: () => profiles,
       listModels,
       validateSelection: async () => undefined,
       createConversation,
@@ -206,6 +212,7 @@ const mocks = vi.hoisted(() => {
       sendMessage.mockClear()
       startNewCapture.mockClear()
       readImage.mockClear()
+      profiles.splice(0, profiles.length, chatgptProfile)
       screen.cursor = { x: -1200, y: 0 }
       screen.workArea = { x: -1600, y: -120, width: 1600, height: 900 }
       screen.removeAllListeners()
@@ -305,6 +312,7 @@ describe('question-session window migration', () => {
       backgroundColor: '#00000000',
       useContentSize: true,
       hasShadow: false,
+      // Transparent windows resize through the chrome's own edge regions, never a native frame.
       resizable: false,
       maximizable: false,
       minimizable: true,
@@ -397,15 +405,17 @@ describe('question-session window migration', () => {
     expect(secondChrome.getState().focused).toBe(true)
 
     firstChrome.toggleMaximize()
-    expect(firstChrome.getState()).toMatchObject({ maximized: false, canMaximize: false, canResize: false })
+    expect(firstChrome.getState()).toMatchObject({ maximized: false, canMaximize: false, canResize: true })
     expect(secondChrome.getState().maximized).toBe(false)
     expect(first!.movable).toBe(true)
 
-    mocks.screen.cursor = { x: second!.bounds.x, y: second!.bounds.y }
-    expect(secondChrome.beginResize('bottom-right')).toBe(false)
+    // Resizing one window through the chrome's edge regions never leaks a session into the other.
+    mocks.screen.cursor = { x: second!.bounds.x + second!.bounds.width, y: second!.bounds.y + second!.bounds.height }
+    expect(secondChrome.beginResize('bottom-right')).toBe(true)
     expect(firstChrome.getSnapshot().resizeSession).toBeNull()
-    expect(secondChrome.getSnapshot().resizeSession).toBeNull()
+    expect(secondChrome.getSnapshot().resizeSession).toMatchObject({ edge: 'bottom-right' })
     secondChrome.endResize()
+    expect(secondChrome.getSnapshot().resizeSession).toBeNull()
 
     firstChrome.closeWindow()
     await vi.waitFor(() => expect(mocks.deleteScreenshot).toHaveBeenCalledTimes(1))
@@ -493,6 +503,28 @@ describe('question-session window migration', () => {
     expect(second!.destroyed).toBe(false)
   })
 
+  it('opens the next window at the size the user last dragged one to', async () => {
+    const sessions = await createSessions()
+    const firstId = await finishOpening(sessions.open(capture(150)), 0)
+    const first = mocks.windows[0]!
+    try {
+      first.setBounds({ ...first.getBounds(), width: 664, height: 584 })
+      first.emit('resize')
+      // Windows reports an iconic rectangle for a minimised window; that must never be remembered.
+      first.setBounds({ x: -32000, y: -32000, width: 160, height: 28 })
+      first.emit('resize')
+
+      await finishOpening(sessions.open(capture(900)), 1)
+      const second = mocks.windows[1]!
+      expect(second.options).toMatchObject({ width: 664, height: 584, minWidth: 424, minHeight: 344 })
+    } finally {
+      // The memory is process-wide by design, so hand the default size back to the other tests.
+      first.setBounds({ x: -1138, y: -40, width: 504, height: 504 })
+      first.emit('resize')
+      await sessions.close(firstId)
+    }
+  })
+
   it('replaces one timed-out transparent attempt with one solid attempt without cleaning the session', async () => {
     vi.useFakeTimers()
     vi.spyOn(console, 'info').mockImplementation(() => undefined)
@@ -511,9 +543,10 @@ describe('question-session window migration', () => {
       transparent: false,
       backgroundColor: '#edf1f7',
       hasShadow: true,
-      resizable: false,
+      // The solid fallback has no chrome resize regions, so it keeps the native thick frame.
+      resizable: true,
       maximizable: false,
-      thickFrame: false
+      thickFrame: true
     })
     expect(mocks.deleteScreenshot).not.toHaveBeenCalled()
     expect(mocks.loadRenderer.mock.calls[0]![2]).toEqual(mocks.loadRenderer.mock.calls[1]![2])
@@ -544,6 +577,92 @@ describe('question-session window migration', () => {
     await vi.waitFor(() => expect(mocks.deleteScreenshot).toHaveBeenCalledWith(capture().imagePath))
     await vi.waitFor(() => expect(mocks.deleteConversation).toHaveBeenCalledWith('conversation-1'))
     await expect(sessions.get(sessionId)).rejects.toThrow(/already closed/)
+  })
+
+  it('never replays history to a ChatGPT thread, which remembers its own turns', async () => {
+    const sessions = await createSessions()
+    const opening = sessions.open(capture())
+    const sessionId = await finishOpening(opening, 0)
+
+    await sessions.send(sessionId, 'Explain this')
+    await sessions.send(sessionId, 'What should I do next?')
+
+    expect(mocks.sendMessage).toHaveBeenCalledTimes(3)
+    for (const [, input] of mocks.sendMessage.mock.calls) expect(input).not.toHaveProperty('history')
+  })
+
+  it('replays the earlier exchanges to an API-key provider as structured prior messages', async () => {
+    mocks.profiles.splice(0, mocks.profiles.length, { ...mocks.openAiProfile, isDefault: true })
+    const sessions = await createSessions()
+    const opening = sessions.open(capture())
+    const sessionId = await finishOpening(opening, 0)
+
+    expect(mocks.sendMessage.mock.calls[0]?.[1]).not.toHaveProperty('history')
+    await sessions.send(sessionId, 'Explain this')
+    expect(mocks.sendMessage.mock.calls[1]?.[1]).toMatchObject({
+      text: expect.stringContaining('User request:\nExplain this'),
+      history: [
+        { role: 'user', text: 'Analyse this capture' },
+        { role: 'assistant', text: 'Useful answer\nanswer' }
+      ]
+    })
+    expect(String((mocks.sendMessage.mock.calls[1]?.[1] as { text?: string }).text)).not.toContain('[FOVEA_LOCAL_HISTORY_CONTINUATION]')
+
+    await sessions.send(sessionId, 'What should I do next?')
+    expect(mocks.sendMessage.mock.calls[2]?.[1]).toMatchObject({
+      history: [
+        { role: 'user', text: 'Analyse this capture' },
+        { role: 'assistant', text: 'Useful answer\nanswer' },
+        { role: 'user', text: 'Explain this' },
+        { role: 'assistant', text: 'Useful answer\nanswer' }
+      ]
+    })
+    expect(mocks.createConversation).toHaveBeenCalledTimes(1)
+  })
+
+  it('regenerates on an API-key provider with structured history instead of a pasted transcript', async () => {
+    mocks.profiles.splice(0, mocks.profiles.length, { ...mocks.openAiProfile, isDefault: true })
+    const sessions = await createSessions()
+    const opening = sessions.open(capture())
+    const sessionId = await finishOpening(opening, 0)
+    await sessions.send(sessionId, 'Explain this')
+    const latest = (await sessions.get(sessionId)).exchanges.at(-1)!
+
+    await sessions.retry(sessionId, latest.id)
+
+    const input = mocks.sendMessage.mock.calls[2]?.[1] as { text: string; history?: unknown }
+    expect(input.text).toMatch(/\[FOVEA_REGENERATE\][\s\S]*Final user request:\nExplain this$/)
+    expect(input.text).not.toContain('Prior conversation context')
+    expect(input.history).toEqual([
+      { role: 'user', text: 'Analyse this capture' },
+      { role: 'assistant', text: 'Useful answer\nanswer' }
+    ])
+
+    await sessions.send(sessionId, 'And after that?')
+    const followUp = mocks.sendMessage.mock.calls[3]?.[1] as { history: Array<{ role: string; text: string }> }
+    expect(followUp.history.map((entry) => entry.text)).toEqual(['Analyse this capture', 'Useful answer\nanswer', 'Explain this', 'Useful answer\nanswer'])
+  })
+
+  it('starts an API-key provider from the exchanges sent after a provider change, as the disclosure promises', async () => {
+    mocks.profiles.push(mocks.openAiProfile)
+    const sessions = await createSessions()
+    const opening = sessions.open(capture())
+    const sessionId = await finishOpening(opening, 0)
+
+    const changed = await sessions.setSelection(sessionId, { profileId: 'profile-2', provider: 'openai', modelId: 'vision-1', reasoningEffort: 'low' })
+    expect(changed.disclosure).toMatch(/earlier transcript remains local/)
+    await sessions.send(sessionId, 'Explain this')
+    const first = mocks.sendMessage.mock.calls[1]?.[1] as { text: string; history?: unknown }
+    expect(first).not.toHaveProperty('history')
+    expect(first.text).not.toContain('Useful answer')
+
+    await sessions.send(sessionId, 'What should I do next?')
+    expect(mocks.sendMessage.mock.calls[2]?.[1]).toMatchObject({
+      history: [
+        { role: 'user', text: 'Explain this' },
+        { role: 'assistant', text: 'Useful answer\nanswer' }
+      ]
+    })
   })
 
   it('allows a follow-up to prioritise web search immediately in the current conversation', async () => {

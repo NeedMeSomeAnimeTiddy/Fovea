@@ -6,6 +6,8 @@ export { Button } from './components/Button'
 export type { ButtonProps, ButtonSize, ButtonVariant } from './components/Button'
 export { Card } from './components/Card'
 export type { CardElement, CardProps, CardVariant } from './components/Card'
+export { ConfirmDialog } from './components/ConfirmDialog'
+export type { ConfirmDialogProps, ConfirmDialogTone } from './components/ConfirmDialog'
 export { GlassPanel } from './components/GlassPanel'
 export type {
   GlassPanelElement,

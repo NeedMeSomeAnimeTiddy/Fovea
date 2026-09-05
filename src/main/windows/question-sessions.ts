@@ -3,9 +3,21 @@ import { readFile } from 'node:fs/promises'
 import { app, BrowserWindow, nativeImage, screen } from 'electron'
 import { basename, extname } from 'node:path'
 import { IPC, type QuestionViewState, type WindowMaterial } from '../../shared/contracts/ipc'
-import type { CaptureRecipe, ConversationExchange, ConversationSegment, ConversationSelection, ImageImportResult, OcrLanguage, OcrResult, ProviderModelCapability, QuestionAttachment, ResponsePhase } from '@shared/types/app'
+import type {
+  CaptureRecipe,
+  ConversationExchange,
+  ConversationSegment,
+  ConversationSelection,
+  ImageImportResult,
+  OcrLanguage,
+  OcrResult,
+  ProviderModelCapability,
+  QuestionAttachment,
+  ResponsePhase
+} from '@shared/types/app'
 import type { ImageEditOperation } from '@shared/types/app'
 import type { ProviderEvent } from '@shared/types/provider'
+import type { Size } from '@shared/types/geometry'
 import { createAppError, FoveaError, toAppError } from '../errors/app-error'
 import type { CaptureDestination, CompletedCapture } from '../capture/capture-service'
 import type { AnalysedDocument, FileAnalysisService, PreparedFileAnalysis } from '../files/file-analysis-service'
@@ -45,7 +57,15 @@ import {
 /** Whether the opening answer is looking at a screen capture or at a file the user opened. */
 type AnalysisSource = 'capture' | 'file'
 
-export const QUESTION_WINDOW_SIZES: WindowSurfaceSizes ={ surfaceSize: { width: 480, height: 480 }, minimumSurfaceSize: { width: 400, height: 320 } }
+export const QUESTION_WINDOW_SIZES: WindowSurfaceSizes ={
+  surfaceSize: { width: 480, height: 480 },
+  minimumSurfaceSize: { width: 400, height: 320 }
+}
+/**
+ * The surface size the user most recently dragged a question window to, so the next one opens the
+ * same way. Deliberately in-process only: persistent preferences live in the settings store.
+ */
+let rememberedQuestionSurfaceSize: Size | null = null
 export const QUESTION_WINDOW_READY_TIMEOUT_MS = WINDOW_CHROME_READY_TIMEOUT_MS
 const WEB_SEARCH_APPROVED_PREFIX = '[FOVEA_WEB_SEARCH_APPROVED]'
 const WEB_SEARCH_PREFERRED_PREFIX = '[FOVEA_WEB_SEARCH_PREFERRED]'
@@ -79,11 +99,48 @@ export class QuestionSessions {
     const id = randomUUID()
     const createdAt = new Date().toISOString()
     const attachment = createSessionAttachment(capture.imagePath, recipe ? 'draft' : 'sent', capture.edited === true)
-    const session: QuestionSessionState = { id, attachments: [attachment], window: null, previewWindow: null, previewAttachmentId: null, busy: false, cleaningUp: false, capturePending: false, phase: 'idle', selection: null, exchanges: [], segments: [], disclosure: null, models: [], initialization: Promise.resolve(), pinned: false, historyId: id, createdAt, documentContext: '', ocrContextByExchangeId: new Map(), draft: recipe ? { text: recipe.prompt, preferWebSearch: recipe.preferWebSearch, recipeName: recipe.name, captureMode: recipe.captureMode, extractText: recipe.extractText, ocrLanguageCode: recipe.ocrLanguageCode, autoSend: recipe.autoSend } : null, launchError: null }
+    const session: QuestionSessionState = {
+      id,
+      attachments: [attachment],
+      window: null,
+      previewWindow: null,
+      previewAttachmentId: null,
+      busy: false,
+      cleaningUp: false,
+      capturePending: false,
+      phase: 'idle',
+      selection: null,
+      exchanges: [],
+      segments: [],
+      disclosure: null,
+      models: [],
+      initialization: Promise.resolve(),
+      pinned: false,
+      historyId: id,
+      createdAt,
+      documentContext: '',
+      ocrContextByExchangeId: new Map(),
+      draft: recipe ? {
+        text: recipe.prompt,
+        preferWebSearch: recipe.preferWebSearch,
+        recipeName: recipe.name,
+        captureMode: recipe.captureMode,
+        extractText: recipe.extractText,
+        ocrLanguageCode: recipe.ocrLanguageCode,
+        autoSend: recipe.autoSend
+      } : null,
+      launchError: null
+    }
     this.sessions.set(id, session)
     session.initialization = recipe
       ? this.selectRecipeInitial(session, recipe)
-      : this.selectInitial(session, capture.preferWebSearch === true, capture.extractText === true, capture.ocrLanguageCode, capture.initialQuestion)
+      : this.selectInitial(
+        session,
+        capture.preferWebSearch === true,
+        capture.extractText === true,
+        capture.ocrLanguageCode,
+        capture.initialQuestion
+      )
     if (recipe?.autoSend) {
       void session.initialization.then(() => {
         if (!session.launchError && session.selection && session.draft) return this.send(id, session.draft.text, session.draft.preferWebSearch)
@@ -95,9 +152,28 @@ export class QuestionSessions {
     }
     const material = selectWindowMaterial({ disableTransparentWindows: app.commandLine.hasSwitch('disable-transparent-windows') })
     try {
-      const opened = await openBrowserWindowWithChrome({ kind: 'question', label: 'Question window', initialMaterial: material, surfaceSize: QUESTION_WINDOW_SIZES.surfaceSize, minimumSurfaceSize: QUESTION_WINDOW_SIZES.minimumSurfaceSize, screenSource: screen, timeoutMs: QUESTION_WINDOW_READY_TIMEOUT_MS, canMaximize: false, canResize: false, createWindow: (attempt) => this.createQuestionWindow(capture, session, attempt), loadRenderer: (window) => loadRenderer(window, 'question', { session: id }), isWindowCurrent: (window) => this.sessions.get(id) === session && session.window === window, beforeRetry: (window) => { if (session.window === window) session.window = null } })
+      const opened = await openBrowserWindowWithChrome({
+        kind: 'question',
+        label: 'Question window',
+        initialMaterial: material,
+        surfaceSize: QUESTION_WINDOW_SIZES.surfaceSize,
+        minimumSurfaceSize: QUESTION_WINDOW_SIZES.minimumSurfaceSize,
+        screenSource: screen,
+        timeoutMs: QUESTION_WINDOW_READY_TIMEOUT_MS,
+        canMaximize: false,
+        canResize: true,
+        createWindow: (attempt) => this.createQuestionWindow(capture, session, attempt),
+        loadRenderer: (window) => loadRenderer(window, 'question', { session: id }),
+        isWindowCurrent: (window) => this.sessions.get(id) === session && session.window === window,
+        beforeRetry: (window) => {
+          if (session.window === window) session.window = null
+        }
+      })
       if (session.window === opened.window && !opened.window.isDestroyed()) opened.window.focus()
-    } catch (error) { await this.cleanup(id); throw error }
+    } catch (error) {
+      await this.cleanup(id)
+      throw error
+    }
   }
 
   async openHistory(historyId: string): Promise<void> {
@@ -105,7 +181,12 @@ export class QuestionSessions {
     const record = this.history.get(historyId)
     if (!record) throw new Error('That saved conversation no longer exists.')
     const id = randomUUID()
-    const attachments = record.attachments.map((attachment) => createSessionAttachment(attachment.imagePath, 'sent', attachment.edited, attachment.id))
+    const attachments = record.attachments.map((attachment) => createSessionAttachment(
+      attachment.imagePath,
+      'sent',
+      attachment.edited,
+      attachment.id
+    ))
     const session: QuestionSessionState = {
       id,
       attachments,
@@ -145,7 +226,23 @@ export class QuestionSessions {
       }
     }
     try {
-      const opened = await openBrowserWindowWithChrome({ kind: 'question', label: 'Question window', initialMaterial: material, surfaceSize: QUESTION_WINDOW_SIZES.surfaceSize, minimumSurfaceSize: QUESTION_WINDOW_SIZES.minimumSurfaceSize, screenSource: screen, timeoutMs: QUESTION_WINDOW_READY_TIMEOUT_MS, canMaximize: false, canResize: false, createWindow: (attempt) => this.createQuestionWindow(syntheticCapture, session, attempt), loadRenderer: (window) => loadRenderer(window, 'question', { session: id }), isWindowCurrent: (window) => this.sessions.get(id) === session && session.window === window, beforeRetry: (window) => { if (session.window === window) session.window = null } })
+      const opened = await openBrowserWindowWithChrome({
+        kind: 'question',
+        label: 'Question window',
+        initialMaterial: material,
+        surfaceSize: QUESTION_WINDOW_SIZES.surfaceSize,
+        minimumSurfaceSize: QUESTION_WINDOW_SIZES.minimumSurfaceSize,
+        screenSource: screen,
+        timeoutMs: QUESTION_WINDOW_READY_TIMEOUT_MS,
+        canMaximize: false,
+        canResize: true,
+        createWindow: (attempt) => this.createQuestionWindow(syntheticCapture, session, attempt),
+        loadRenderer: (window) => loadRenderer(window, 'question', { session: id }),
+        isWindowCurrent: (window) => this.sessions.get(id) === session && session.window === window,
+        beforeRetry: (window) => {
+          if (session.window === window) session.window = null
+        }
+      })
       if (session.window === opened.window && !opened.window.isDestroyed()) opened.window.focus()
     } catch (error) {
       await this.cleanup(id)
@@ -201,7 +298,23 @@ export class QuestionSessions {
       }
     }
     try {
-      const opened = await openBrowserWindowWithChrome({ kind: 'question', label: 'Question window', initialMaterial: material, surfaceSize: QUESTION_WINDOW_SIZES.surfaceSize, minimumSurfaceSize: QUESTION_WINDOW_SIZES.minimumSurfaceSize, screenSource: screen, timeoutMs: QUESTION_WINDOW_READY_TIMEOUT_MS, canMaximize: false, canResize: false, createWindow: (attempt) => this.createQuestionWindow(syntheticCapture, session, attempt), loadRenderer: (window) => loadRenderer(window, 'question', { session: id }), isWindowCurrent: (window) => this.sessions.get(id) === session && session.window === window, beforeRetry: (window) => { if (session.window === window) session.window = null } })
+      const opened = await openBrowserWindowWithChrome({
+        kind: 'question',
+        label: 'Question window',
+        initialMaterial: material,
+        surfaceSize: QUESTION_WINDOW_SIZES.surfaceSize,
+        minimumSurfaceSize: QUESTION_WINDOW_SIZES.minimumSurfaceSize,
+        screenSource: screen,
+        timeoutMs: QUESTION_WINDOW_READY_TIMEOUT_MS,
+        canMaximize: false,
+        canResize: true,
+        createWindow: (attempt) => this.createQuestionWindow(syntheticCapture, session, attempt),
+        loadRenderer: (window) => loadRenderer(window, 'question', { session: id }),
+        isWindowCurrent: (window) => this.sessions.get(id) === session && session.window === window,
+        beforeRetry: (window) => {
+          if (session.window === window) session.window = null
+        }
+      })
       if (session.window === opened.window && !opened.window.isDestroyed()) opened.window.focus()
     } catch (error) {
       await this.cleanup(id)
@@ -248,6 +361,13 @@ export class QuestionSessions {
     return Boolean(session?.window && !session.window.isDestroyed() && session.window.webContents.id === webContentsId)
   }
 
+  /** True for the question window or the open image-preview window of the session. */
+  ownsOrPreviews(id: string, webContentsId: number): boolean {
+    if (this.owns(id, webContentsId)) return true
+    const preview = this.sessions.get(id)?.previewWindow
+    return Boolean(preview && !preview.isDestroyed() && preview.webContents.id === webContentsId)
+  }
+
   async importImagePaths(id: string, paths: string[]): Promise<ImageImportResult> {
     return this.importImages(id, paths.map((path) => ({
       name: basename(path),
@@ -257,7 +377,10 @@ export class QuestionSessions {
   }
 
   async importClipboardImage(id: string, png: Buffer): Promise<ImageImportResult> {
-    return this.importImages(id, [{ name: 'Clipboard image', load: async () => [await this.requireFiles().prepareImage(png)] }])
+    return this.importImages(
+      id,
+      [{ name: 'Clipboard image', load: async () => [await this.requireFiles().prepareImage(png)] }]
+    )
   }
 
   private requireFiles(): Pick<FileAnalysisService, 'prepareFile' | 'prepareImage'> {
@@ -271,7 +394,11 @@ export class QuestionSessions {
     return this.recogniseAttachment(session, attachment)
   }
 
-  private async recogniseAttachment(session: QuestionSessionState, attachment: SessionAttachment, languageCode?: string): Promise<OcrResult> {
+  private async recogniseAttachment(
+    session: QuestionSessionState,
+    attachment: SessionAttachment,
+    languageCode?: string
+  ): Promise<OcrResult> {
     const revision = ++attachment.ocrRevision
     attachment.ocrResult = null
     attachment.ocrSelectedRegionIds.clear()
@@ -449,7 +576,11 @@ export class QuestionSessions {
     return state
   }
 
-  async applyAttachmentEdits(id: string, attachmentId: string, operations: ImageEditOperation[]): Promise<QuestionViewState> {
+  async applyAttachmentEdits(
+    id: string,
+    attachmentId: string,
+    operations: ImageEditOperation[]
+  ): Promise<QuestionViewState> {
     const session = await this.requireInitializedSession(id)
     if (session.busy) throw new Error('Wait for the current answer or press Stop before editing a screenshot.')
     const attachment = requireSessionAttachment(session.attachments, attachmentId)
@@ -461,18 +592,29 @@ export class QuestionSessions {
     attachment.edited = true
     await this.screenshots.delete(sourcePath)
     const image = nativeImage.createFromPath(derivativePath)
-    attachment.thumbnailDataUrl = image.resize({ width: Math.min(380, image.getSize().width), quality: 'good' }).toDataURL()
+    attachment.thumbnailDataUrl = image.resize({
+      width: Math.min(380, image.getSize().width),
+      quality: 'good'
+    }).toDataURL()
     const state = this.snapshot(session)
     this.emitChanged(session, state)
     return state
   }
 
   async send(id: string, text: string, preferWebSearch = false): Promise<void> {
-    const session = await this.requireInitializedSession(id); const question = text.trim()
-    if (!question) throw new Error('Type a question first.'); if (question.length > 10_000) throw new Error('The question is too long.'); if (session.busy) throw new Error('Wait for the current answer or press Stop.'); if (!session.selection) throw new Error('Choose an authenticated provider profile and model first.')
+    const session = await this.requireInitializedSession(id)
+    const question = text.trim()
+    if (!question) throw new Error('Type a question first.')
+    if (question.length > 10_000) throw new Error('The question is too long.')
+    if (session.busy) throw new Error('Wait for the current answer or press Stop.')
+    if (!session.selection) throw new Error('Choose an authenticated provider profile and model first.')
     if (this.pendingWebSearch(session)) throw new Error('Approve or decline the pending web search before sending another message.')
     await this.providers.validateSelection(session.selection)
-    let providerSegment = session.segments.at(-1); if (!providerSegment) { this.startSegment(session, false); providerSegment = session.segments.at(-1)! }
+    let providerSegment = session.segments.at(-1)
+    if (!providerSegment) {
+      this.startSegment(session, false)
+      providerSegment = session.segments.at(-1)!
+    }
     const freshProviderContext = !providerSegment.conversationId
     const requestAttachmentIds = requestAttachmentIdsForSession(session)
     if (freshProviderContext) providerSegment.conversationId = await this.providers.createConversation(session.selection)
@@ -495,21 +637,23 @@ export class QuestionSessions {
     if (ocrContext) session.ocrContextByExchangeId.set(exchange.id, ocrContext)
     this.clearIncludedOcr(session)
     session.draft = null
-    session.exchanges.push(exchange); session.busy = true; this.setPhase(session, exchange, 'connecting')
+    session.exchanges.push(exchange)
+    session.busy = true
+    this.setPhase(session, exchange, 'connecting')
     this.emitChanged(session)
+    // A ChatGPT thread remembers its own turns, so only a fresh thread needs the transcript, and it
+    // needs it in text. API-key endpoints remember nothing, so they get every prior exchange as
+    // structured messages on every turn instead.
+    const history = providerHistory(session, providerSegment, previousExchanges)
+    const prompt = !history && freshProviderContext && previousExchanges.length ? continuationPrompt(previousExchanges, question) : question
     await this.runTurn(
       session,
       exchange,
       providerSegment,
       {
-        text: responsePrompt(
-          freshProviderContext && previousExchanges.length ? continuationPrompt(previousExchanges, question) : question,
-          false,
-          preferWebSearch,
-          preferWebSearch,
-          ocrContext
-        ),
+        text: responsePrompt(prompt, false, preferWebSearch, preferWebSearch, ocrContext),
         ...(imagePaths.length ? { imagePaths } : {}),
+        ...(history?.length ? { history } : {}),
         webSearchAllowed: preferWebSearch,
         webSearchPreferred: preferWebSearch
       },
@@ -526,22 +670,49 @@ export class QuestionSessions {
     if (!session.selection) throw new Error('Choose an authenticated provider profile and model first.')
     await this.providers.validateSelection(session.selection)
     const conversationId = await this.providers.createConversation(session.selection)
-    const providerSegment = this.startSegment(session, false, 'Response regenerated in a fresh provider context using the current profile and model. Earlier transcript remains visible locally.')
+    const providerSegment = this.startSegment(
+      session,
+      false,
+      'Response regenerated in a fresh provider context using the current profile and model. Earlier transcript remains visible locally.'
+    )
     if (!providerSegment) throw new Error('The regeneration provider context could not be created.')
     providerSegment.conversationId = conversationId
     const attachmentIds = session.attachments.filter((attachment) => attachment.status === 'sent').map((attachment) => attachment.id)
-    const exchange: ConversationExchange = { id: randomUUID(), question: target.question, answer: '', phase: 'connecting', segmentId: providerSegment.segment.id, attachmentIds, automatic: target.automatic, retryOf: target.id, createdAt: new Date().toISOString() }
+    const exchange: ConversationExchange = {
+      id: randomUUID(),
+      question: target.question,
+      answer: '',
+      phase: 'connecting',
+      segmentId: providerSegment.segment.id,
+      attachmentIds,
+      automatic: target.automatic,
+      retryOf: target.id,
+      createdAt: new Date().toISOString()
+    }
     const ocrContext = session.ocrContextByExchangeId.get(target.id) ?? ''
     if (ocrContext) session.ocrContextByExchangeId.set(exchange.id, ocrContext)
     const previousExchanges = [...session.exchanges]
     session.exchanges.push(exchange)
     session.busy = true
     this.setPhase(session, exchange, 'connecting')
+    // The attempt being replaced is left out of the replayed history (its id is now a `retryOf`),
+    // and a provider that receives structured history does not get the transcript pasted as well.
+    const history = providerHistory(session, providerSegment, previousExchanges)
     await this.runTurn(
       session,
       exchange,
       providerSegment,
-      { text: responsePrompt(regenerationPrompt(previousExchanges, target), target.automatic, false, false, ocrContext), imagePaths: pathsForAttachmentIds(session.attachments, attachmentIds) },
+      {
+        text: responsePrompt(
+          regenerationPrompt(history ? [] : previousExchanges, target),
+          target.automatic,
+          false,
+          false,
+          ocrContext
+        ),
+        imagePaths: pathsForAttachmentIds(session.attachments, attachmentIds),
+        ...(history?.length ? { history } : {})
+      },
       { detectMetadata: true, detectWebSearch: true }
     )
   }
@@ -571,6 +742,7 @@ export class QuestionSessions {
     exchange.error = undefined
     session.busy = true
     this.setPhase(session, exchange, 'connecting')
+    const history = providerHistory(session, segment, session.exchanges.slice(0, session.exchanges.indexOf(exchange)))
     await this.runTurn(
       session,
       exchange,
@@ -584,6 +756,7 @@ export class QuestionSessions {
           session.ocrContextByExchangeId.get(exchange.id) ?? ''
         ),
         imagePaths: pathsForAttachmentIds(session.attachments, requestAttachmentIdsForSession(session)),
+        ...(history?.length ? { history } : {}),
         webSearchAllowed: true
       },
       { detectMetadata: true, detectWebSearch: false }
@@ -609,7 +782,11 @@ export class QuestionSessions {
     }
     this.emitChanged(session)
   }
-  async close(id: string): Promise<void> { const session = this.requireSession(id); if (session.window && !session.window.isDestroyed()) session.window.close(); await this.cleanup(id) }
+  async close(id: string): Promise<void> {
+    const session = this.requireSession(id)
+    if (session.window && !session.window.isDestroyed()) session.window.close()
+    await this.cleanup(id)
+  }
   async addSnip(id: string): Promise<void> {
     const session = await this.requireInitializedSession(id)
     if (session.busy) throw new Error('Wait for the current answer or press Stop before adding another screenshot.')
@@ -635,12 +812,24 @@ export class QuestionSessions {
     await this.ocr.dispose()
   }
 
-  private async selectInitial(session: QuestionSessionState, preferWebSearch = false, extractText = false, ocrLanguageCode?: string, initialQuestion?: string): Promise<void> {
+  private async selectInitial(
+    session: QuestionSessionState,
+    preferWebSearch = false,
+    extractText = false,
+    ocrLanguageCode?: string,
+    initialQuestion?: string
+  ): Promise<void> {
     if (extractText) this.startInitialOcr(session, ocrLanguageCode)
     if (!await this.applyDefaultSelection(session)) return
     if (!extractText) {
       const segment = this.startSegment(session, false)
-      if (segment) this.startInitialAnalysis(session, segment, preferWebSearch, initialQuestion ?? INITIAL_QUESTION, !initialQuestion)
+      if (segment) this.startInitialAnalysis(
+        session,
+        segment,
+        preferWebSearch,
+        initialQuestion ?? INITIAL_QUESTION,
+        !initialQuestion
+      )
     }
   }
 
@@ -655,7 +844,10 @@ export class QuestionSessions {
     for (const candidate of candidates) {
       // Checked per candidate, since one PDF can contribute several pages.
       if (session.attachments.length >= MAX_CONVERSATION_ATTACHMENTS) {
-        failures.push({ name: candidate.name, message: `A conversation can contain up to ${MAX_CONVERSATION_ATTACHMENTS} images.` })
+        failures.push({
+          name: candidate.name,
+          message: `A conversation can contain up to ${MAX_CONVERSATION_ATTACHMENTS} images.`
+        })
         continue
       }
       let imagePaths: string[]
@@ -672,7 +864,10 @@ export class QuestionSessions {
       const room = MAX_CONVERSATION_ATTACHMENTS - session.attachments.length
       for (const imagePath of imagePaths.slice(room)) await this.screenshots.delete(imagePath)
       if (imagePaths.length > room) {
-        failures.push({ name: candidate.name, message: `A conversation can contain up to ${MAX_CONVERSATION_ATTACHMENTS} images.` })
+        failures.push({
+          name: candidate.name,
+          message: `A conversation can contain up to ${MAX_CONVERSATION_ATTACHMENTS} images.`
+        })
       }
       for (const imagePath of imagePaths.slice(0, room)) {
         session.attachments.push(createSessionAttachment(imagePath, 'draft'))
@@ -756,9 +951,19 @@ export class QuestionSessions {
     this.startInitialAnalysis(session, segment, action === 'web-search', INITIAL_FILE_QUESTION, true, 'file')
   }
   private async applyDefaultSelection(session: QuestionSessionState): Promise<boolean> {
-    const profiles = this.providers.listProfiles(); const profile = profiles.find((item) => item.isDefault) ?? profiles[0]; if (!profile) return false
-    const models = await this.safeModels(profile.id); session.models = models; const model = models.find((item) => item.id === profile.defaultModelId) ?? models.find((item) => item.isDefault) ?? models[0]; if (!model) return false
-    session.selection = { profileId: profile.id, provider: profile.provider, modelId: model.id, reasoningEffort: profile.defaultReasoningEffort && model.supportedReasoningEfforts.includes(profile.defaultReasoningEffort) ? profile.defaultReasoningEffort : model.defaultReasoningEffort ?? null }
+    const profiles = this.providers.listProfiles()
+    const profile = profiles.find((item) => item.isDefault) ?? profiles[0]
+    if (!profile) return false
+    const models = await this.safeModels(profile.id)
+    session.models = models
+    const model = models.find((item) => item.id === profile.defaultModelId) ?? models.find((item) => item.isDefault) ?? models[0]
+    if (!model) return false
+    session.selection = {
+      profileId: profile.id,
+      provider: profile.provider,
+      modelId: model.id,
+      reasoningEffort: profile.defaultReasoningEffort && model.supportedReasoningEfforts.includes(profile.defaultReasoningEffort) ? profile.defaultReasoningEffort : model.defaultReasoningEffort ?? null
+    }
     return true
   }
   private startInitialOcr(session: QuestionSessionState, ocrLanguageCode?: string): void {
@@ -813,7 +1018,14 @@ export class QuestionSessions {
       }
     })()
   }
-  private startInitialAnalysis(session: QuestionSessionState, providerSegment: ProviderSegmentState, preferWebSearch = false, question = INITIAL_QUESTION, automatic = true, source: AnalysisSource = 'capture'): void {
+  private startInitialAnalysis(
+    session: QuestionSessionState,
+    providerSegment: ProviderSegmentState,
+    preferWebSearch = false,
+    question = INITIAL_QUESTION,
+    automatic = true,
+    source: AnalysisSource = 'capture'
+  ): void {
     const attachmentIds = session.attachments.map((attachment) => attachment.id)
     // Imported document text is resent on every turn, so the opening exchange records it too and
     // a regeneration keeps the same grounding.
@@ -864,17 +1076,37 @@ export class QuestionSessions {
       }
     })()
   }
-  private startSegment(session: QuestionSessionState, switchedProvider: boolean, disclosureOverride?: string): ProviderSegmentState | undefined {
+  private startSegment(
+    session: QuestionSessionState,
+    switchedProvider: boolean,
+    disclosureOverride?: string
+  ): ProviderSegmentState | undefined {
     if (!session.selection) return undefined
     const disclosure = disclosureOverride ?? (switchedProvider ? 'Provider changed. The new provider receives the conversation screenshots required for this turn and only messages sent from this point; earlier transcript remains local.' : null)
-    const segment: ConversationSegment = { id: randomUUID(), selection: structuredClone(session.selection), startedAt: new Date().toISOString(), disclosure }
+    const segment: ConversationSegment = {
+      id: randomUUID(),
+      selection: structuredClone(session.selection),
+      startedAt: new Date().toISOString(),
+      disclosure
+    }
     const state: ProviderSegmentState = { segment, conversationId: null }
-    session.segments.push(state); session.disclosure = disclosure
+    session.segments.push(state)
+    session.disclosure = disclosure
     return state
   }
-  private setPhase(session: QuestionSessionState, exchange: ConversationExchange, phase: ResponsePhase): void { setTurnPhase(session, exchange, phase) }
-  private pendingWebSearch(session: QuestionSessionState): ConversationExchange | undefined { return session.exchanges.find((exchange) => exchange.webSearch?.status === 'requested') }
-  private async runTurn(session: QuestionSessionState, exchange: ConversationExchange, providerSegment: ProviderSegmentState, input: { text: string; imagePaths?: string[]; webSearchAllowed?: boolean; webSearchPreferred?: boolean }, controls: ResponseControlOptions): Promise<void> {
+  private setPhase(session: QuestionSessionState, exchange: ConversationExchange, phase: ResponsePhase): void {
+    setTurnPhase(session, exchange, phase)
+  }
+  private pendingWebSearch(session: QuestionSessionState): ConversationExchange | undefined {
+    return session.exchanges.find((exchange) => exchange.webSearch?.status === 'requested')
+  }
+  private async runTurn(
+    session: QuestionSessionState,
+    exchange: ConversationExchange,
+    providerSegment: ProviderSegmentState,
+    input: ProviderTurnInput,
+    controls: ResponseControlOptions
+  ): Promise<void> {
     await runQuestionTurn({
       session,
       exchange,
@@ -884,9 +1116,15 @@ export class QuestionSessions {
       persist: () => this.persistHistory(session)
     })
   }
-  private async safeModels(profileId: string): Promise<ProviderModelCapability[]> { try { return await this.providers.listModels(profileId) } catch { return [] } }
-  private emit(session: QuestionSessionState, event: ProviderEvent): void { if (session.window && !session.window.isDestroyed()) session.window.webContents.send(IPC.questionEvent, session.id, event) }
-  private emitChanged(session: QuestionSessionState, state = this.snapshot(session)): void { if (session.window && !session.window.isDestroyed()) session.window.webContents.send(IPC.questionStateChanged, state) }
+  private async safeModels(profileId: string): Promise<ProviderModelCapability[]> {
+    try { return await this.providers.listModels(profileId) } catch { return [] }
+  }
+  private emit(session: QuestionSessionState, event: ProviderEvent): void {
+    if (session.window && !session.window.isDestroyed()) session.window.webContents.send(IPC.questionEvent, session.id, event)
+  }
+  private emitChanged(session: QuestionSessionState, state = this.snapshot(session)): void {
+    if (session.window && !session.window.isDestroyed()) session.window.webContents.send(IPC.questionStateChanged, state)
+  }
 
   private readyOcrState(attachment: SessionAttachment, includeNextRequest: boolean): Extract<QuestionAttachment['ocr'], { status: 'ready' }> {
     const result = attachment.ocrResult
@@ -917,15 +1155,33 @@ export class QuestionSessions {
     const detail = error instanceof Error ? error.message : String(error)
     const code = error instanceof OcrServiceError ? error.code : 'ocr-failed'
     if (code === 'ocr-language-unavailable') {
-      return createAppError(code, 'English OCR unavailable', 'The bundled English recognition model could not be loaded. You can keep using the screenshot normally.', 'none', detail)
+      return createAppError(
+        code,
+        'English OCR unavailable',
+        'The bundled English recognition model could not be loaded. You can keep using the screenshot normally.',
+        'none',
+        detail
+      )
     }
     if (code === 'ocr-unavailable') {
-      return createAppError(code, 'Text extraction unavailable', 'The local recognition engine could not start. You can keep using the screenshot normally.', 'retry', detail)
+      return createAppError(
+        code,
+        'Text extraction unavailable',
+        'The local recognition engine could not start. You can keep using the screenshot normally.',
+        'retry',
+        detail
+      )
     }
     if (code === 'ocr-cancelled') {
       return createAppError('validation', 'Text extraction stopped', 'Text extraction was stopped.', 'none')
     }
-    return createAppError(code, 'Text extraction failed', 'Fovea could not recognise text in this screenshot. You can retry or keep using the image normally.', 'retry', detail)
+    return createAppError(
+      code,
+      'Text extraction failed',
+      'Fovea could not recognise text in this screenshot. You can retry or keep using the image normally.',
+      'retry',
+      detail
+    )
   }
 
   /**
@@ -1004,17 +1260,87 @@ export class QuestionSessions {
     this.emitChanged(session)
     if (session.window && !session.window.isDestroyed()) session.window.focus()
   }
-  private createQuestionWindow(capture: CompletedCapture, session: QuestionSessionState, material: WindowMaterial): BrowserWindow {
-    const appearance = getWindowAppearanceOptions(QUESTION_WINDOW_SIZES, material, capture.display.workArea)
-    const selection = { x: capture.display.bounds.x + capture.selectedBounds.x, y: capture.display.bounds.y + capture.selectedBounds.y, width: capture.selectedBounds.width, height: capture.selectedBounds.height }
+  private createQuestionWindow(
+    capture: CompletedCapture,
+    session: QuestionSessionState,
+    material: WindowMaterial
+  ): BrowserWindow {
+    const sizes: WindowSurfaceSizes = {
+      surfaceSize: rememberedQuestionSurfaceSize ?? QUESTION_WINDOW_SIZES.surfaceSize,
+      minimumSurfaceSize: QUESTION_WINDOW_SIZES.minimumSurfaceSize
+    }
+    const appearance = getWindowAppearanceOptions(sizes, material, capture.display.workArea)
+    const selection = {
+      x: capture.display.bounds.x + capture.selectedBounds.x,
+      y: capture.display.bounds.y + capture.selectedBounds.y,
+      width: capture.selectedBounds.width,
+      height: capture.selectedBounds.height
+    }
     const placement = placeWindowAdjacentToSelection(selection, appearance.size, capture.display.workArea)
-    const window = secureWindow({ x: placement.x, y: placement.y, width: placement.width, height: placement.height, minWidth: appearance.minimumSize.width, minHeight: appearance.minimumSize.height, frame: appearance.frame, transparent: appearance.transparent, backgroundColor: appearance.backgroundColor, show: appearance.show, useContentSize: appearance.useContentSize, hasShadow: appearance.hasShadow, resizable: false, maximizable: false, minimizable: appearance.minimizable, closable: appearance.closable, movable: appearance.movable, fullscreenable: appearance.fullscreenable, thickFrame: false, roundedCorners: appearance.roundedCorners, alwaysOnTop: session.pinned, skipTaskbar: false, title: 'Fovea', autoHideMenuBar: true })
-    session.window = window; window.webContents.setWindowOpenHandler(() => ({ action: 'deny' })); window.once('closed', () => { if (session.window === window) void this.cleanup(session.id) }); return window
+    // Transparent windows resize through the chrome's own edge regions; the solid fallback has no
+    // such regions, so it keeps the native thick frame that appearance already pairs with it.
+    const window = secureWindow({
+      x: placement.x,
+      y: placement.y,
+      width: placement.width,
+      height: placement.height,
+      minWidth: appearance.minimumSize.width,
+      minHeight: appearance.minimumSize.height,
+      frame: appearance.frame,
+      transparent: appearance.transparent,
+      backgroundColor: appearance.backgroundColor,
+      show: appearance.show,
+      useContentSize: appearance.useContentSize,
+      hasShadow: appearance.hasShadow,
+      resizable: appearance.resizable,
+      maximizable: false,
+      minimizable: appearance.minimizable,
+      closable: appearance.closable,
+      movable: appearance.movable,
+      fullscreenable: appearance.fullscreenable,
+      thickFrame: appearance.thickFrame,
+      roundedCorners: appearance.roundedCorners,
+      alwaysOnTop: session.pinned,
+      skipTaskbar: false,
+      title: 'Fovea',
+      autoHideMenuBar: true
+    })
+    window.on('resize', () => {
+      if (window.isDestroyed()) return
+      const bounds = window.getBounds()
+      // A minimised window reports its iconic rectangle, which is far below the minimum outer size
+      // and must not become the size every later window opens at.
+      if (bounds.width < appearance.minimumSize.width || bounds.height < appearance.minimumSize.height) return
+      rememberedQuestionSurfaceSize = {
+        width: bounds.width - appearance.inset * 2,
+        height: bounds.height - appearance.inset * 2
+      }
+    })
+    session.window = window
+    window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+    window.once('closed', () => { if (session.window === window) void this.cleanup(session.id) })
+    return window
   }
-  private snapshot(session: QuestionSessionState): QuestionViewState { return questionSessionSnapshot(session, this.providers.listProfiles()) }
-  private async requireInitializedSession(id: string): Promise<QuestionSessionState> { const session = this.requireSession(id); await session.initialization; if (this.sessions.get(id) !== session) throw new Error('This capture session has already closed.'); return session }
-  private requireSession(id: string): QuestionSessionState { const session = this.sessions.get(id); if (!session) throw new Error('This capture session has already closed.'); return session }
-  private closePreview(session: QuestionSessionState): void { const preview = session.previewWindow; session.previewWindow = null; session.previewAttachmentId = null; if (preview && !preview.isDestroyed()) preview.close() }
+  private snapshot(session: QuestionSessionState): QuestionViewState {
+    return questionSessionSnapshot(session, this.providers.listProfiles())
+  }
+  private async requireInitializedSession(id: string): Promise<QuestionSessionState> {
+    const session = this.requireSession(id)
+    await session.initialization
+    if (this.sessions.get(id) !== session) throw new Error('This capture session has already closed.')
+    return session
+  }
+  private requireSession(id: string): QuestionSessionState {
+    const session = this.sessions.get(id)
+    if (!session) throw new Error('This capture session has already closed.')
+    return session
+  }
+  private closePreview(session: QuestionSessionState): void {
+    const preview = session.previewWindow
+    session.previewWindow = null
+    session.previewAttachmentId = null
+    if (preview && !preview.isDestroyed()) preview.close()
+  }
   private async initialiseRestored(session: QuestionSessionState): Promise<void> {
     if (!session.selection) return
     session.models = await this.safeModels(session.selection.profileId)
@@ -1109,6 +1435,60 @@ function regenerationPrompt(exchanges: ConversationExchange[], target: Conversat
     ...(priorTranscript ? ['Prior conversation context:', priorTranscript] : []),
     `Final user request:\n${target.question}`
   ].join('\n\n')
+}
+
+type ProviderTurnInput = Parameters<ProviderRegistry['send']>[2]
+type ProviderHistory = NonNullable<ProviderTurnInput['history']>
+
+/** Characters of prior conversation replayed to a stateless provider; the oldest turns go first. */
+const PROVIDER_HISTORY_BUDGET = 12_000
+
+/**
+ * The earlier exchanges an API-key provider must be shown again, because its endpoint keeps no
+ * conversation state between requests. Returns `undefined` for ChatGPT, whose thread remembers
+ * its own turns.
+ *
+ * The scope is the current segment together with the segments immediately before it that used
+ * the same profile, so a model or effort change and a regeneration keep the same provider's
+ * memory, while a provider change starts from the exchanges sent after it, as its disclosure
+ * promises. Local OCR results belong to no provider and are always available. Exchanges without
+ * an answer, and attempts that were since regenerated, are left out.
+ */
+function providerHistory(
+  session: QuestionSessionState,
+  segment: ProviderSegmentState,
+  before: ConversationExchange[]
+): ProviderHistory | undefined {
+  if (segment.segment.selection.provider === 'chatgpt') return undefined
+  const profileId = segment.segment.selection.profileId
+  const scopedSegmentIds = new Set<string>()
+  const segmentIndex = session.segments.indexOf(segment)
+  for (let index = segmentIndex < 0 ? session.segments.length - 1 : segmentIndex; index >= 0; index -= 1) {
+    const candidate = session.segments[index]!
+    if (candidate.segment.selection.profileId !== profileId) break
+    scopedSegmentIds.add(candidate.segment.id)
+  }
+  const regenerated = new Set(session.exchanges.flatMap((exchange) => exchange.retryOf ? [exchange.retryOf] : []))
+  const entries: ProviderHistory = []
+  let remaining = PROVIDER_HISTORY_BUDGET
+  for (const exchange of [...before].reverse()) {
+    if (regenerated.has(exchange.id)) continue
+    if (exchange.source !== 'ocr' && !scopedSegmentIds.has(exchange.segmentId)) continue
+    const answer = [exchange.metadata?.summary, exchange.answer].filter(Boolean).join('\n')
+    if (!answer) continue
+    const question = exchange.question
+    if (question.length + answer.length > remaining) {
+      // The newest exchange is always worth showing, even when only its opening fits.
+      if (entries.length) break
+      const room = Math.max(0, remaining - question.length)
+      if (!room) break
+      entries.push({ role: 'assistant', text: answer.slice(0, room) }, { role: 'user', text: question })
+      break
+    }
+    entries.push({ role: 'assistant', text: answer }, { role: 'user', text: question })
+    remaining -= question.length + answer.length
+  }
+  return entries.reverse()
 }
 
 function continuationPrompt(exchanges: ConversationExchange[], question: string): string {

@@ -110,11 +110,24 @@ body,
     var(--fovea-space-2)
     var(--fovea-space-4);
   margin: var(--fovea-space-4) var(--fovea-space-6) 0;
-  background: var(--fovea-glass-fill-default);
   border: var(--fovea-border-glass);
   border-radius: var(--fovea-radius-lg);
   box-shadow: var(--fovea-shadow-surface);
+  isolation: isolate;
   -webkit-app-region: drag;
+}
+
+/* The glass material lives on a pseudo-element rather than the header itself: a backdrop filter
+ * turns its element into the containing block for fixed descendants, and the Ask menu below must
+ * measure itself against the window surface, not this strip. */
+.response-card__header::before {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  border-radius: inherit;
+  background-color: var(--fovea-glass-fill-default);
+  content: '';
+  pointer-events: none;
   backdrop-filter: blur(var(--fovea-material-blur-strong)) saturate(var(--fovea-material-saturation));
   -webkit-backdrop-filter: blur(var(--fovea-material-blur-strong)) saturate(var(--fovea-material-saturation));
 }
@@ -193,15 +206,24 @@ body,
   -webkit-backdrop-filter: blur(var(--fovea-material-blur-strong)) saturate(var(--fovea-material-saturation));
 }
 
+/* Fixed against the window surface (its backdrop filter is the containing block), so the offsets
+ * and the percentage max-height are measured from the visible glass edge rather than the
+ * transparent frame inset. The menu opens just under the header strip and always stops short of
+ * the surface's bottom edge, scrolling internally when the suggestions need more room. */
 .ask-menu {
+  --ask-menu-top: calc(var(--fovea-control-target-default) + var(--fovea-space-10));
+  --ask-menu-bottom-gap: var(--fovea-space-8);
+
   position: fixed;
-  top: calc(var(--fovea-control-target-default) + var(--fovea-space-16));
+  top: var(--ask-menu-top);
   right: var(--fovea-space-10);
   left: var(--fovea-space-10);
   width: auto;
-  max-height: calc(100vh - var(--fovea-space-24) - var(--fovea-control-target-default));
+  max-height: calc(100% - var(--ask-menu-top) - var(--ask-menu-bottom-gap));
   overflow-x: hidden;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 .ask-menu__heading,
@@ -431,11 +453,12 @@ body,
   scroll-behavior: smooth;
 }
 
+/* Short conversations start at the top of the scroll region rather than sinking to its floor; the
+ * renderer still follows the newest text to the bottom while an answer streams in. */
 .conversation-thread {
   display: flex;
-  min-height: 100%;
   flex-direction: column;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: var(--fovea-space-10);
 }
 
@@ -1209,53 +1232,6 @@ body,
   height: var(--fovea-space-4);
 }
 
-.external-link-dialog__backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: var(--fovea-z-overlay);
-  display: grid;
-  place-items: center;
-  padding: var(--fovea-space-6);
-  background: var(--fovea-color-scrim);
-}
-
-.external-link-dialog {
-  display: grid;
-  width: min(30rem, 100%);
-  max-height: 100%;
-  gap: var(--fovea-space-4);
-  overflow: auto;
-}
-
-.external-link-dialog h2,
-.external-link-dialog p {
-  margin: 0;
-}
-
-.external-link-dialog__destination {
-  display: grid;
-  gap: var(--fovea-space-2);
-  padding: var(--fovea-space-4);
-  border-radius: var(--fovea-radius-md);
-  background: var(--fovea-glass-fill-subtle);
-}
-
-.external-link-dialog__destination code {
-  color: var(--fovea-color-text-secondary);
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
-}
-
-.external-link-dialog__error {
-  color: var(--fovea-color-danger);
-}
-
-.external-link-dialog__actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--fovea-space-3);
-}
-
 .screenshot-editor {
   position: fixed;
   z-index: 20;
@@ -1441,6 +1417,40 @@ body,
 
 .response-actions__spacer {
   flex: 1;
+}
+
+/* Dock actions pair an icon with a short word. They take the dock's pill geometry so the labelled
+ * buttons and the round window controls stay in one rounded family. */
+.response-actions__button {
+  min-width: var(--fovea-control-target-compact);
+  padding-right: var(--fovea-space-6);
+  padding-left: var(--fovea-space-4);
+  border-radius: var(--fovea-radius-round);
+  white-space: nowrap;
+}
+
+.response-actions__button .fui-button__content {
+  gap: var(--fovea-space-2);
+}
+
+.response-actions__button .mono-icon {
+  flex: none;
+}
+
+.response-actions__text {
+  font-size: var(--fovea-type-label);
+}
+
+/* At the minimum window width every word no longer fits beside its icon, so the two left-hand
+ * actions fall back to icons with tooltips while Regenerate, Stop, and Copy keep their words. */
+@media (max-width: 460px) {
+  .response-actions__button:has(.response-actions__text--optional) {
+    padding-right: var(--fovea-space-4);
+  }
+
+  .response-actions__text--optional {
+    display: none;
+  }
 }
 
 .model-menu {

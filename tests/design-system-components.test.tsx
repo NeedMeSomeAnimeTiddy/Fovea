@@ -6,6 +6,7 @@ import {
   Badge,
   Button,
   Card,
+  ConfirmDialog,
   GlassPanel,
   IconButton,
   Select,
@@ -115,6 +116,26 @@ describe('Fovea design-system components', () => {
     expect(markup).toContain('disabled=""')
     expect(markup).toContain('name="launchAtStartup"')
     expect(markup).not.toContain('role="switch"')
+  })
+
+  it('renders ConfirmDialog as a labelled modal card with the cancel action focused first', () => {
+    const markup = renderToStaticMarkup(
+      <ConfirmDialog cancelLabel="Keep" confirmLabel="Delete all history" destination="everything.json" title="Delete history?" tone="danger" onCancel={() => undefined} onConfirm={() => undefined}>
+        This cannot be undone.
+      </ConfirmDialog>
+    )
+
+    expect(markup).toContain('role="presentation"')
+    expect(markup).toContain('role="dialog"')
+    expect(markup).toContain('aria-modal="true"')
+    expect(markup).toMatch(/aria-labelledby="([^"]+)"[^>]*>[\s\S]*id="\1"[^>]*>Delete history\?</)
+    expect(markup).toMatch(/aria-describedby="([^"]+)"[^>]*>[\s\S]*id="\1"[^>]*>This cannot be undone\.</)
+    expect(markup).toContain('class="fui-card fui-confirm-dialog"')
+    expect(markup).toContain('data-tone="danger"')
+    expect(markup).toContain('<code>everything.json</code>')
+    expect(markup).toMatch(/<button[^>]*data-modal-initial-focus="true"[^>]*data-variant="secondary"[^>]*>[\s\S]*?Keep</)
+    expect(markup).toMatch(/<button[^>]*data-variant="danger"[^>]*>[\s\S]*?Delete all history</)
+    expect(markup).not.toContain('role="alert"')
   })
 
   it('renders semantic surface elements without adding behaviour', () => {

@@ -43,6 +43,54 @@ test.describe('Question visual states', () => {
     await expect(page).toHaveScreenshot('question--answer-long--dark--transparent--504x504--dsf1.png')
   })
 
+  test('open Ask menu stays inside the window over a long answer', async ({ page }) => {
+    await openVisual(page, { renderer: 'question', scenario: 'long-answer', theme: 'dark' })
+    await page.locator('.ask-trigger').click()
+    const menu = page.getByRole('menu', { name: 'Questions about this capture' })
+    await expect(menu).toBeVisible()
+    await expect(page.getByRole('menuitem', { name: 'Custom question' })).toBeVisible()
+    const askMenuGeometry = () => page.evaluate(() => {
+      const surface = document.querySelector('.window-surface')!.getBoundingClientRect()
+      const header = document.querySelector('.response-card__header')!.getBoundingClientRect()
+      const element = document.querySelector('.ask-menu')!
+      const rect = element.getBoundingClientRect()
+      return {
+        opensBelowHeader: rect.top >= header.bottom,
+        insideSurface: rect.bottom <= surface.bottom && rect.left >= surface.left && rect.right <= surface.right,
+        scrollsInternally: element.scrollHeight > element.clientHeight
+      }
+    })
+    // At the default size every suggestion fits; the menu must still end above the surface edge.
+    expect(await askMenuGeometry()).toEqual({ opensBelowHeader: true, insideSurface: true, scrollsInternally: false })
+    await expect(page).toHaveScreenshot('question--ask-menu-open--dark--transparent--504x504--dsf1.png')
+
+    // At the minimum window size the same menu scrolls inside itself rather than being clipped.
+    await page.setViewportSize({ width: 424, height: 344 })
+    expect(await askMenuGeometry()).toEqual({ opensBelowHeader: true, insideSurface: true, scrollsInternally: true })
+    await page.getByRole('menuitem', { name: 'Custom question' }).scrollIntoViewIfNeeded()
+    await expect(page.getByRole('menuitem', { name: 'Custom question' })).toBeInViewport()
+  })
+
+  test('short answers start at the top of the scroll region', async ({ page }) => {
+    await openVisual(page, { renderer: 'question', scenario: 'default', theme: 'dark' })
+    const offset = await page.evaluate(() => {
+      const content = document.querySelector('.response-content')!
+      const thread = document.querySelector('.conversation-thread')!
+      const padding = parseFloat(getComputedStyle(content).paddingTop)
+      return thread.getBoundingClientRect().top - content.getBoundingClientRect().top - padding
+    })
+    expect(Math.abs(offset)).toBeLessThan(1)
+  })
+
+  test('labelled dock actions fit the minimum window size', async ({ page }) => {
+    await page.setViewportSize({ width: 424, height: 344 })
+    await openVisual(page, { renderer: 'question', scenario: 'default', theme: 'dark' })
+    await expect(page.getByRole('button', { name: 'Generate a fresh answer' })).toContainText('Regenerate')
+    await expect(page.getByRole('button', { name: 'Copy answer' })).toContainText('Copy')
+    const overflow = await page.locator('.response-actions').evaluate((element) => element.scrollWidth - element.clientWidth)
+    expect(overflow).toBe(0)
+  })
+
   test('wide tall and tiny attachments', async ({ page }) => {
     await openVisual(page, { renderer: 'question', scenario: 'attachments', theme: 'light' })
     await expect(page.getByRole('region', { name: 'Conversation images' })).toContainText('3 images')

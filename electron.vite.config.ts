@@ -1,6 +1,7 @@
 import { resolve } from 'node:path'
 import react from '@vitejs/plugin-react'
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
+import { rendererCspPlugin } from './build/renderer-csp'
 
 export default defineConfig({
   main: {
@@ -15,7 +16,8 @@ export default defineConfig({
   },
   renderer: {
     resolve: { alias: { '@shared': resolve('src/shared') } },
-    plugins: [react()],
+    // The CSP is added to built pages only; the dev server needs inline HMR and react-refresh scripts.
+    plugins: [react(), rendererCspPlugin()],
     build: {
       rollupOptions: {
         input: {

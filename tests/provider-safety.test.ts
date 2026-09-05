@@ -104,6 +104,54 @@ describe('provider stream failures', () => {
     expect(events.some((providerEvent) => providerEvent.type === 'completed')).toBe(false)
   })
 
+  it('delivers the text Anthropic managed to produce, then reports the max_tokens cut-off as incomplete', async () => {
+    const body = [
+      `event: message_start\ndata: ${JSON.stringify({ type: 'message_start', message: { id: 'msg_1', stop_reason: null } })}\n\n`,
+      `event: content_block_delta\ndata: ${JSON.stringify({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'The first half of a long answer' } })}\n\n`,
+      `event: message_delta\ndata: ${JSON.stringify({ type: 'message_delta', delta: { stop_reason: 'max_tokens', stop_sequence: null }, usage: { output_tokens: 8192 } })}\n\n`,
+      `event: message_stop\ndata: ${JSON.stringify({ type: 'message_stop' })}\n\n`
+    ].join('')
+    const provider = new DirectApiProvider('anthropic', vi.fn(async () => streamResponse(body)) as unknown as typeof fetch)
+
+    const { error, events } = await captureStreamFailure(provider)
+
+    expect(events).toContainEqual({ type: 'delta', text: 'The first half of a long answer' })
+    expect(events.some((event) => event.type === 'completed')).toBe(false)
+    expect(error.appError.code).toBe('provider-unavailable')
+    expect(error.appError.title).toBe('Provider response incomplete')
+    expect(error.appError.recovery).toBe('retry')
+    expect(error.appError.technicalDetails).toContain('max_tokens')
+  })
+
+  it('lets an Anthropic answer that ended on its own complete normally', async () => {
+    const body = [
+      `event: content_block_delta\ndata: ${JSON.stringify({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Done.' } })}\n\n`,
+      `event: message_delta\ndata: ${JSON.stringify({ type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null } })}\n\n`
+    ].join('')
+    const provider = new DirectApiProvider('anthropic', vi.fn(async () => streamResponse(body)) as unknown as typeof fetch)
+    const events: ProviderEvent[] = []
+
+    for await (const event of provider.send(API_KEY, { modelId: 'vision-model', reasoningEffort: null, text: 'Question' })) {
+      events.push(event)
+    }
+
+    expect(events).toContainEqual({ type: 'delta', text: 'Done.' })
+    expect(events.at(-1)).toMatchObject({ type: 'completed' })
+  })
+
+  it('reports a chat-completion choice that stopped for length as incomplete after its text', async () => {
+    const body = `data: ${JSON.stringify({ choices: [{ delta: { content: 'Partial' }, finish_reason: null }] })}\n\ndata: ${JSON.stringify({ choices: [{ delta: { content: ' answer' }, finish_reason: 'length' }] })}\n\ndata: [DONE]\n\n`
+    const provider = new DirectApiProvider('custom', vi.fn(async () => streamResponse(body)) as unknown as typeof fetch, {
+      baseUrl: 'https://provider.example/v1'
+    })
+
+    const { error, events } = await captureStreamFailure(provider)
+
+    expect(events.filter((event) => event.type === 'delta')).toEqual([{ type: 'delta', text: 'Partial' }, { type: 'delta', text: ' answer' }])
+    expect(error.appError.title).toBe('Provider response incomplete')
+    expect(error.appError.technicalDetails).toContain('length')
+  })
+
   it.each([
     { field: 'code', value: 'invalid_api_key', code: 'authentication-required', recovery: 'authenticate' },
     { field: 'type', value: 'rate_limit_error', code: 'rate-limited', recovery: 'retry' }

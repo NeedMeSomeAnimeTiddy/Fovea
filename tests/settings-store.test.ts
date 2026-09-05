@@ -27,7 +27,7 @@ describe('SettingsStore corruption recovery', () => {
     const store = new SettingsStore(path)
     await store.load()
 
-    expect(store.get().appearance).toBe('light')
+    expect(store.get().appearance).toBe('system')
     await expect(readFile(`${path}.corrupt.bak`, 'utf8')).resolves.toBe(malformed)
     await expect(readFile(path, 'utf8')).rejects.toThrow()
     expect(warning).toHaveBeenCalledWith(expect.stringContaining('.corrupt.bak'))
@@ -35,6 +35,30 @@ describe('SettingsStore corruption recovery', () => {
     await store.update({ appearance: 'dark' })
     expect(JSON.parse(await readFile(path, 'utf8'))).toMatchObject({ appearance: 'dark' })
     await expect(readFile(`${path}.corrupt.bak`, 'utf8')).resolves.toBe(malformed)
+  })
+})
+
+describe('SettingsStore appearance', () => {
+  it('follows the operating system on a fresh install', async () => {
+    const store = new SettingsStore(await settingsPath())
+    await store.load()
+    expect(store.get().appearance).toBe('system')
+  })
+
+  it('keeps an explicit light preference written by an earlier version', async () => {
+    const path = await settingsPath()
+    await writeFile(path, JSON.stringify({ version: 4, appearance: 'light' }))
+    const store = new SettingsStore(path)
+    await store.load()
+    expect(store.get().appearance).toBe('light')
+  })
+
+  it('falls back to the system appearance for an unrecognised stored value', async () => {
+    const path = await settingsPath()
+    await writeFile(path, JSON.stringify({ version: 5, appearance: 'sepia' }))
+    const store = new SettingsStore(path)
+    await store.load()
+    expect(store.get().appearance).toBe('system')
   })
 })
 

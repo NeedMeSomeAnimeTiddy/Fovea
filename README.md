@@ -9,10 +9,10 @@ profiles work with the minimal installer. ChatGPT subscription sign-in is an
 explicit optional download of the official Codex CLI `0.144.4`, which runs
 `codex app-server` locally over JSONL/stdin/stdout.
 
-The application is currently packaged and displayed under its original temporary
-name, **Fovea**. This repository is the new Fovea home; product-name rebranding
-is intentionally left for a future enhancement rather than mixed into the initial
-repository preparation.
+The product, the installer, and every user-facing surface are named **Fovea**.
+The repository folder and Git remote still carry the older working name
+*SnipChat*; that is a historical label only, and no rename of the repository is
+planned here.
 
 The integration follows the current official [Codex App Server documentation](https://developers.openai.com/codex/app-server)
 and pins the official [OpenAI Codex 0.144.4 release](https://github.com/openai/codex/releases/tag/rust-v0.144.4).
@@ -86,6 +86,8 @@ The root `npm test` command discovers only desktop Vitest files, while root lint
 also checks the Playwright harness. Playwright owns execution of `tests/visual/`
 through the `test:visual` commands. The nested `website/` project keeps its
 independent `npm test` and `npm run lint` commands and dependency set.
+[The architecture overview](docs/architecture.md) explains how the main process,
+preload bridge, renderers, providers, storage, and test layers fit together.
 
 ## Package-size budget
 

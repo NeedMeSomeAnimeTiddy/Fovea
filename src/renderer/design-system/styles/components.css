@@ -759,6 +759,96 @@
   }
 }
 
+.fui-confirm-dialog__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: var(--fovea-z-overlay);
+  display: grid;
+  place-items: center;
+  padding: var(--fovea-space-6);
+  background: var(--fovea-color-scrim);
+  -webkit-app-region: no-drag;
+}
+
+.fui-confirm-dialog {
+  --_confirm-accent: var(--fovea-color-accent);
+
+  display: grid;
+  width: min(30rem, 100%);
+  max-height: 100%;
+  gap: var(--fovea-space-4);
+  overflow: auto;
+  box-shadow: var(--fovea-elevation-floating);
+  animation: fui-confirm-dialog-in var(--fovea-motion-standard) var(--fovea-ease-enter);
+}
+
+.fui-confirm-dialog[data-tone='danger'] {
+  --_confirm-accent: var(--fovea-color-danger);
+}
+
+.fui-confirm-dialog__title {
+  margin: 0;
+  font-size: var(--fovea-type-title-sm);
+  font-weight: var(--fovea-weight-semibold);
+  line-height: var(--fovea-leading-tight);
+}
+
+.fui-confirm-dialog__body {
+  color: var(--fovea-color-text-secondary);
+  font-size: var(--fovea-type-body-sm);
+  line-height: var(--fovea-leading-body);
+}
+
+.fui-confirm-dialog__body p {
+  margin: 0;
+}
+
+.fui-confirm-dialog__body p + p {
+  margin-top: var(--fovea-space-3);
+}
+
+.fui-confirm-dialog__destination {
+  display: grid;
+  gap: var(--fovea-space-2);
+  padding: var(--fovea-space-4);
+  border-left: var(--fovea-border-width-strong) var(--fovea-border-style) var(--_confirm-accent);
+  border-radius: var(--fovea-radius-md);
+  background: var(--fovea-glass-fill-subtle);
+}
+
+.fui-confirm-dialog__destination code {
+  color: var(--fovea-color-text-secondary);
+  font-family: var(--fovea-font-mono);
+  font-size: var(--fovea-type-label);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.fui-confirm-dialog__error {
+  margin: 0;
+  color: var(--fovea-color-danger);
+  font-size: var(--fovea-type-body-sm);
+}
+
+.fui-confirm-dialog__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--fovea-space-3);
+}
+
+@keyframes fui-confirm-dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--fovea-space-2)) scale(0.985);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 @keyframes fui-tooltip-in-above {
   from {
     opacity: 0;
@@ -780,6 +870,7 @@
   }
 
   .fui-button__spinner,
+  .fui-confirm-dialog,
   .fui-spinner,
   .fui-tooltip,
   .fui-toast {
