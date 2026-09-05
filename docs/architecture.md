@@ -220,9 +220,10 @@ Renderer stylesheets (`settings.css`, `overlay.css`, `question.css`,
 
 ## Release pipeline
 
-- `.github/workflows/desktop.yml` runs on every push to `main` and every
-  same-repository pull request on the self-hosted Windows runner (fork pull
-  requests are skipped, since the runner is a personal machine): `npm ci`,
+- `.github/workflows/desktop.yml` runs on every push to `main` (and on manual
+  dispatch) on the self-hosted Windows runner. Pull requests deliberately do
+  not trigger any workflow: the runner is a personal machine and a fork could
+  otherwise run modified workflow code on it. `npm ci`,
   restore the cached Codex sidecar, `sidecar:fetch`
   (generates `resources/codex-schema` needed by typecheck), then `typecheck`,
   `lint`, `test`, `assets:validate`, and `build`.

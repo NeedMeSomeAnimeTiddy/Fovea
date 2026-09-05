@@ -1,10 +1,6 @@
 name: Website validation
 
 on:
-  pull_request:
-    paths:
-      - '.github/workflows/website.yml'
-      - 'website/**'
   push:
     branches: [main]
     paths:
@@ -23,9 +19,6 @@ jobs:
   validate:
     name: Lint, build, and test
     runs-on: [self-hosted, windows]
-    # A self-hosted runner executes workflow code on a personal machine, so pull requests from
-    # forks of this public repository are not run here; same-repository branches and pushes are.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     timeout-minutes: 15
 
     defaults:

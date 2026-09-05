@@ -85,7 +85,7 @@ question--streaming--dark--transparent--504x504--dsf1.png
 Rules:
 
 1. Generate and compare baselines on the self-hosted Windows CI runner with the Chromium version from the lockfile. Browser rendering varies by OS, fonts, browser, headless mode, and hardware, so baselines from another environment are review aids, not replacements.
-2. Pull-request CI compares only. It never runs `--update-snapshots`.
+2. Push CI compares only. It never runs `--update-snapshots`. Pull requests do not run CI on the self-hosted runner; push to `main` or dispatch manually.
 3. To request fresh images, manually dispatch the visual workflow with **update_baselines** enabled (`gh workflow run visual.yml --ref main -f update_baselines=true`). The runner regenerates every baseline and pushes the changed files to a `visual-baselines/run-<id>` branch; fetch it, inspect every candidate, and merge only intentional files. The same run also tries to upload an artifact, which is a fallback and may be skipped when the account's artifact storage quota is exhausted.
 4. Never accept a broad replacement because a run is red. Review expected, actual, and diff images and explain the intended UI change in the pull request.
 5. Update only affected explicit names. A Playwright, Windows image, Chromium, font, threshold, or fixture change must be isolated from product UI changes where practical.

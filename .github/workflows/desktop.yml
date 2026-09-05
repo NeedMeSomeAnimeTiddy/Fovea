@@ -1,7 +1,6 @@
 name: Desktop validation
 
 on:
-  pull_request:
   push:
     branches: [main]
   workflow_dispatch:
@@ -17,9 +16,6 @@ jobs:
   validate:
     name: Type, lint, test, and build
     runs-on: [self-hosted, windows]
-    # A self-hosted runner executes workflow code on a personal machine, so pull requests from
-    # forks of this public repository are not run here; same-repository branches and pushes are.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     timeout-minutes: 30
 
     steps:
