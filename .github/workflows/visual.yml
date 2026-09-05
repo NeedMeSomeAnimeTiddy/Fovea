@@ -45,9 +45,6 @@ jobs:
     # forks of this public repository are not run here; same-repository branches and pushes are.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     timeout-minutes: 25
-    defaults:
-      run:
-        shell: pwsh
 
     steps:
       - name: Check out repository
@@ -66,7 +63,6 @@ jobs:
         run: npx playwright install chromium
 
       - name: Compare approved baselines
-        shell: pwsh
         env:
           # Set for the whole step so every Playwright worker inherits it. A worker cannot see the
           # --update-snapshots flag, and without this it would skip the screenshots and write none.
@@ -82,7 +78,6 @@ jobs:
       # directory always holds its README. Count the images instead.
       - name: Verify baseline candidates were written
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.update_baselines }}
-        shell: pwsh
         run: |
           $root = 'tests/visual/__snapshots__'
           $count = 0

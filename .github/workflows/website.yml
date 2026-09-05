@@ -30,7 +30,6 @@ jobs:
 
     defaults:
       run:
-        shell: pwsh
         working-directory: website
 
     steps:
