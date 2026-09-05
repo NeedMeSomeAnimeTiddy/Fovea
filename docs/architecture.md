@@ -233,6 +233,12 @@ Renderer stylesheets (`settings.css`, `overlay.css`, `question.css`,
   `website/` project when it changes, on the same self-hosted runner.
 - Every validation workflow uses `runs-on: [self-hosted, windows]`; only the
   signed release workflow still uses GitHub-hosted `windows-latest`.
+- The runner is a Windows 11 VM on the home Proxmox server. A fresh VM needs
+  Git, Node 22, PowerShell 7, and the Visual C++ 2015+ x64 redistributable
+  (Electron's installer loads a native module and fails with
+  `ERR_DLOPEN_FAILED` without it). The Windows time service must be running
+  and the VM's RTC set to local time in Proxmox: with a skewed clock the runner
+  reports "the runner registration had been deleted" and never connects.
 - `.github/workflows/release.yml` fires on `v*.*.*` tags: it validates the tag
   (`build/validate-release-tag.cjs`), runs `release:check`, builds with
   `build/electron-builder.release.cjs` (`forceCodeSigning: true`, GitHub publish
