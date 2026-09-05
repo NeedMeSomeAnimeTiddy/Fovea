@@ -25,13 +25,15 @@ on:
   workflow_dispatch:
     inputs:
       update_baselines:
-        description: Produce baseline candidate artifact
+        description: Regenerate baselines on the runner and push them to a visual-baselines/run-<id> branch for review
         required: false
         default: false
         type: boolean
 
+# The compare job pushes baseline candidates to a review branch when dispatched with
+# update_baselines, which needs write access. It never writes on pull_request or push runs.
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: visual-${{ github.workflow }}-${{ github.ref }}
@@ -89,8 +91,27 @@ jobs:
           }
           Write-Host "Wrote $count baseline candidates."
 
+      # Candidates travel as a branch rather than an artifact: artifacts count against the account's
+      # storage quota and were unavailable when this was written, and a branch is easier to review.
+      - name: Push baseline candidates to a review branch
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.update_baselines }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          $branch = "visual-baselines/run-${{ github.run_id }}"
+          git add tests/visual/__snapshots__
+          if (-not (git status --porcelain -- tests/visual/__snapshots__)) {
+            Write-Host 'Every regenerated baseline matched the committed one; nothing to push.'
+            exit 0
+          }
+          git checkout -b $branch
+          git commit -m "Regenerate visual baselines on the CI runner (run ${{ github.run_id }})"
+          git push origin $branch
+          Write-Host "Pushed $branch for review."
+
       - name: Upload visual failure evidence
         if: failure()
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: visual-failure-${{ github.run_id }}
@@ -102,6 +123,7 @@ jobs:
 
       - name: Upload baseline candidates
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.update_baselines }}
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: visual-baseline-candidates-${{ github.run_id }}
